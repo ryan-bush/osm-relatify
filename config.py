@@ -5,9 +5,9 @@ import sentry_sdk
 from githead import githead
 
 VERSION = 'git#' + githead()[:7]
-WEBSITE = os.getenv('WEBSITE', 'https://github.com/Zaczero/osm-relatify')
+WEBSITE = os.getenv('WEBSITE', 'https://github.com/ryan-bush/osm-relatify')
 CREATED_BY = f'osm-relatify {VERSION}'
-USER_AGENT = f'osm-relatify/{VERSION} (+https://github.com/Zaczero/osm-relatify)'
+USER_AGENT = f'osm-relatify/{VERSION} (+{WEBSITE})'
 
 TEST_ENV = os.getenv('TEST_ENV', '0').strip().lower() in ('1', 'true', 'yes')
 if TEST_ENV:
