@@ -15,7 +15,21 @@ if TEST_ENV:
 
 # Dedicated instance unavailable? Pick one from the public list:
 # https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances
-OVERPASS_API_INTERPRETER = os.getenv('OVERPASS_API_INTERPRETER', 'https://overpass-api.de/api/interpreter')
+# Multiple comma-separated endpoints may be given; they are tried in order whenever
+# the preceding one is unreachable or overloaded. Only worldwide instances are
+# suitable here - a regional extract (overpass.osm.ch, overpass.osm.jp, ...) silently
+# answers with no data outside of its own area.
+OVERPASS_API_INTERPRETER = os.getenv(
+    'OVERPASS_API_INTERPRETER',
+    'https://overpass-api.de/api/interpreter,'
+    'https://overpass.kumi.systems/api/interpreter,'
+    'https://overpass.private.coffee/api/interpreter',
+)
+OVERPASS_API_INTERPRETERS = tuple(u.strip() for u in OVERPASS_API_INTERPRETER.split(',') if u.strip())
+assert OVERPASS_API_INTERPRETERS, 'OVERPASS_API_INTERPRETER must contain at least one URL'
+
+# Number of attempts per endpoint before moving on to the next one
+OVERPASS_API_ATTEMPTS = int(os.getenv('OVERPASS_API_ATTEMPTS', '2'))
 
 TAG_MAX_LENGTH = 255
 
