@@ -4,7 +4,7 @@ import ssl
 import time
 from contextlib import contextmanager
 
-from httpx import AsyncClient
+from httpx import AsyncClient, AsyncHTTPTransport
 
 from config import USER_AGENT
 
@@ -19,7 +19,9 @@ def get_http_client(base_url: str = '', *, headers: dict | None = None) -> Async
         follow_redirects=True,
         timeout=30,
         headers={'User-Agent': USER_AGENT, **headers},
-        verify=_SSL_CONTEXT,
+        # retries transparently recover from connection-establishment failures,
+        # which happen regularly with the public Overpass instances
+        transport=AsyncHTTPTransport(verify=_SSL_CONTEXT, retries=3),
     )
 
 

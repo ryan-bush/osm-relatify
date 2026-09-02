@@ -1,9 +1,11 @@
+import asyncio
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from itertools import chain
 from typing import NamedTuple
 
+import httpx
 import xmltodict
 from asyncache import cached
 from cachetools import TTLCache
@@ -11,7 +13,12 @@ from fastapi import HTTPException
 from starlette import status
 
 from bus_collection_builder import build_bus_stop_collections
-from config import DOWNLOAD_RELATION_GRID_CELL_EXPAND, DOWNLOAD_RELATION_WAY_BB_EXPAND, OVERPASS_API_INTERPRETER
+from config import (
+    DOWNLOAD_RELATION_GRID_CELL_EXPAND,
+    DOWNLOAD_RELATION_WAY_BB_EXPAND,
+    OVERPASS_API_ATTEMPTS,
+    OVERPASS_API_INTERPRETERS,
+)
 from models.bounding_box import BoundingBox
 from models.bounding_box_collection import BoundingBoxCollection
 from models.download_history import Cell, DownloadHistory
@@ -21,6 +28,39 @@ from utils import HTTP
 from xmltodict_postprocessor import postprocessor
 
 # TODO: right hand side detection by querying roundabouts, and first/last bus stop
+
+
+# Overpass sometimes refuses new connections or replies with a temporary error
+# (rate limit, gateway timeout, server overloaded); retry and fall back to the
+# other configured instances instead of failing the whole request.
+_RETRY_STATUS_CODES = frozenset((429, 502, 503, 504))
+
+
+async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
+    last_error: Exception | None = None
+
+    for url in OVERPASS_API_INTERPRETERS:
+        for attempt in range(1, OVERPASS_API_ATTEMPTS + 1):
+            try:
+                r = await HTTP.post(url, data={'data': query}, timeout=query_timeout * 2)
+            except httpx.HTTPError as e:
+                last_error = e
+                print(f'[OVERPASS] ⚠️ {url} unreachable (attempt {attempt}): {e!r}')
+            else:
+                if r.status_code not in _RETRY_STATUS_CODES:
+                    r.raise_for_status()
+                    return r
+
+                last_error = httpx.HTTPStatusError(f'{url} returned {r.status_code}', request=r.request, response=r)
+                print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
+
+            if attempt < OVERPASS_API_ATTEMPTS:
+                await asyncio.sleep(2 ** (attempt - 1))
+
+    raise HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        'Overpass API is currently unavailable, please try again later',
+    ) from last_error
 
 
 class QueryParentsResult(NamedTuple):
@@ -440,8 +480,7 @@ class Overpass:
         query: str,
         http_timeout: float,
     ) -> list[list[dict]]:
-        r = await HTTP.post(OVERPASS_API_INTERPRETER, data={'data': query}, timeout=http_timeout * 2)
-        r.raise_for_status()
+        r = await overpass_post(query, http_timeout)
         elements: list[dict] = r.json()['elements']
         return split_by_count(elements)
 
@@ -500,8 +539,7 @@ class Overpass:
         if download_targets is None:
             timeout = 60
             query = build_bb_query(relation_id, timeout)
-            r = await HTTP.post(OVERPASS_API_INTERPRETER, data={'data': query}, timeout=timeout * 2)
-            r.raise_for_status()
+            r = await overpass_post(query, timeout)
 
             elements: list[dict] = r.json()['elements']
             if not elements:
@@ -609,8 +647,7 @@ class Overpass:
     async def query_parents(self, way_ids_set: frozenset[int]) -> QueryParentsResult:
         timeout = 60
         query = build_parents_query(way_ids_set, timeout)
-        r = await HTTP.post(OVERPASS_API_INTERPRETER, data={'data': query}, timeout=timeout * 2)
-        r.raise_for_status()
+        r = await overpass_post(query, timeout)
 
         data: dict[str, list[dict]] = xmltodict.parse(
             r.text,
