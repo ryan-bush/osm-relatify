@@ -25,6 +25,16 @@ dependencies = [
   "xmltodict",
 ]
 
+[dependency-groups]
+dev = [
+  "pytest",
+]
+
+[tool.pytest.ini_options]
+# tests import the top-level modules directly; this repo is not an installed package
+pythonpath = ["."]
+testpaths = ["tests"]
+
 [tool.ruff]
 indent-width = 4
 line-length = 120
