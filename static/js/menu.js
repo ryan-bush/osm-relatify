@@ -28,6 +28,7 @@ const sumitBackBtn = document.querySelector("#view-submit .btn-back")
 const routeSummary = document.getElementById("route-summary")
 const submitUploadBtn = document.querySelector("#view-submit .btn-upload")
 const submitDownloadBtn = document.querySelector("#view-submit .btn-download")
+const submitComment = document.getElementById("submit-comment")
 
 export let relationId = null
 
@@ -205,6 +206,7 @@ const unload = () => {
     processRelationDownloadTriggers(null)
     processBusStopData(null)
     unloadRelationTags()
+    submitComment.value = ""
 
     relationId = null
 }
@@ -254,7 +256,24 @@ editReloadBtn.onclick = async () => {
         })
 }
 
+// mirrors make_comment() in main.py purely to show what will be used when the field is
+// left blank; the server generates the comment it actually uploads
+const makeDefaultComment = () => {
+    const name = (relationTags.name ?? "").trim()
+    let ref = (relationTags.ref ?? "").trim()
+
+    // only include ref if it's not already in the name
+    if (ref && name.includes(ref)) ref = ""
+
+    if (name && ref) return `Updated route: ${ref} ${name}, #${relationId}`
+    if (name) return `Updated route: ${name}, #${relationId}`
+    if (ref) return `Updated route: ${ref}, #${relationId}`
+    return `Updated route #${relationId}`
+}
+
 editSubmitBtn.onclick = () => {
+    // tags may have changed since the last visit to this view
+    submitComment.placeholder = makeDefaultComment()
     switchView("submit")
 }
 
@@ -341,6 +360,7 @@ submitUploadBtn.onclick = async () => {
             route: routeData,
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
+            comment: submitComment.value,
         }),
     })
         .then(async (resp) => {

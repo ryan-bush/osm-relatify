@@ -14,7 +14,7 @@ from fastapi.responses import ORJSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from httpx import HTTPStatusError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sentry_sdk import start_transaction
 from starlette.websockets import WebSocketState
 
@@ -26,6 +26,7 @@ from config import (
     OSM_CLIENT,
     OSM_SCOPES,
     OSM_SECRET,
+    TAG_MAX_LENGTH,
     TEST_ENV,
     WEBSITE,
 )
@@ -303,8 +304,13 @@ class PostDownloadOsmChangeModel(BaseModel):
     # tags exactly as the client loaded them; the baseline the tag edits are diffed against.
     # absent (older clients) means no tag editing, in which case relation tags are left alone.
     tagsOriginal: dict[str, str] | None = None
+    # overrides the generated changeset comment when the user provides one
+    comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
 
     def make_comment(self) -> str:
+        if self.comment is not None and (comment := self.comment.strip()):
+            return comment
+
         tags_name = self.tags.get('name', '')
         tags_ref = self.tags.get('ref', '')
 
