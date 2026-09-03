@@ -89,6 +89,68 @@
   color: #333;
 }
 
+.table-tags td {
+  vertical-align: middle;
+}
+
+.table-tags .remove {
+  width: 1%;
+  text-align: center;
+}
+
+/* the inputs should read as table cells until they are focused */
+.table-tags input,
+.table-tags select {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* keep the dropdown caret; only the background colour is cleared above */
+.table-tags select {
+  padding-right: 1.2rem;
+  background-position: right center;
+}
+
+.table-tags .key input {
+  font-family: monospace;
+  font-weight: bold;
+}
+
+.table-tags input:focus,
+.table-tags select:focus {
+  outline: 0;
+  box-shadow: none;
+  background-color: #fffbe6;
+}
+
+.table-tags input:disabled,
+.table-tags select:disabled {
+  background-color: transparent;
+  color: #6c757d;
+}
+
+.table-tags .tag-locked {
+  opacity: .65;
+}
+
+.table-tags .tag-modified .key,
+.table-tags .tag-modified .key input {
+  color: #0d6efd;
+}
+
+.table-tags .tag-modified td:first-child {
+  border-left: 2px solid #0d6efd;
+}
+
+.table-tags .tag-duplicate td {
+  background-color: #f8d7da;
+}
+
 .warning {
   background: #f2f2f2;
   padding: 6px 6px 6px 10px;
