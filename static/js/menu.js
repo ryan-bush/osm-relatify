@@ -2,10 +2,17 @@ import { busStopData, processBusStopData } from "./busStopsLayer.js"
 import { downloadHistoryData, processRelationDownloadTriggers } from "./downloadTriggers.js"
 import { map } from "./map.js"
 import { showMessage } from "./messageBox.js"
+import {
+    processRelationTags,
+    relationTags,
+    relationTagsOriginal,
+    setRecalcHandler,
+    unloadRelationTags,
+} from "./tagEditor.js"
 import { createElementFromHTML, deflateCompress, getBusCollectionName } from "./utils.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
 import { processRelationWaysData, removeMembersList, waysData } from "./waysLayer.js"
-import { routeData } from "./waysRoute.js"
+import { requestCalcBusRoute, routeData } from "./waysRoute.js"
 
 const busAnimationElement = document.getElementById("bus-animation")
 const loadRelationForm = document.getElementById("load-relation-form")
@@ -15,16 +22,21 @@ const relationIdElements = document.querySelectorAll(".view .relation-id")
 const relationUrlElements = document.querySelectorAll(".view .relation-url")
 const editBackBtn = document.querySelector("#view-edit .btn-back")
 const editReloadBtn = document.querySelector("#view-edit .btn-reload")
-const editTags = document.getElementById("edit-tags")
 const editWarnings = document.getElementById("edit-warnings")
 const editSubmitBtn = document.querySelector("#view-edit .btn-next")
 const sumitBackBtn = document.querySelector("#view-submit .btn-back")
 const routeSummary = document.getElementById("route-summary")
 const submitUploadBtn = document.querySelector("#view-submit .btn-upload")
 const submitDownloadBtn = document.querySelector("#view-submit .btn-download")
+const submitComment = document.getElementById("submit-comment")
 
 export let relationId = null
-export let relationTags = null
+
+// tagEditor.js cannot import the route module directly without closing an import cycle,
+// so the dependency is registered from here instead. The call is wrapped rather than
+// passed by reference so the binding is only read once the modules have finished loading.
+setRecalcHandler(() => requestCalcBusRoute())
+
 let activeView = "load"
 
 const switchView = (name) => {
@@ -106,24 +118,6 @@ export const processFetchRelationData = (data) => {
     // order is not important here
     processRelationDownloadTriggers(data)
     processBusStopData(data)
-}
-
-export const processRelationTags = (data) => {
-    relationTags = data.tags
-
-    const dummyDiv = document.createElement("div")
-
-    if (data.nameOrRef) dummyDiv.appendChild(createElementFromHTML(`<tr><td colspan="2">${data.nameOrRef}</td></tr>`))
-
-    const interestingTags = ["fixme", "note", "from", "via", "to", "network", "operator", "roundtrip"]
-
-    for (const tag of interestingTags)
-        if (data.tags[tag])
-            dummyDiv.appendChild(
-                createElementFromHTML(`<tr><td class="key">${tag}</td><td class="value">${data.tags[tag]}</td></tr>`),
-            )
-
-    editTags.innerHTML = dummyDiv.innerHTML
 }
 
 export const processRouteWarnings = (data) => {
@@ -211,6 +205,8 @@ const unload = () => {
     processRelationWaysData(null)
     processRelationDownloadTriggers(null)
     processBusStopData(null)
+    unloadRelationTags()
+    submitComment.value = ""
 
     relationId = null
 }
@@ -260,7 +256,24 @@ editReloadBtn.onclick = async () => {
         })
 }
 
+// mirrors make_comment() in main.py purely to show what will be used when the field is
+// left blank; the server generates the comment it actually uploads
+const makeDefaultComment = () => {
+    const name = (relationTags.name ?? "").trim()
+    let ref = (relationTags.ref ?? "").trim()
+
+    // only include ref if it's not already in the name
+    if (ref && name.includes(ref)) ref = ""
+
+    if (name && ref) return `Updated route: ${ref} ${name}, #${relationId}`
+    if (name) return `Updated route: ${name}, #${relationId}`
+    if (ref) return `Updated route: ${ref}, #${relationId}`
+    return `Updated route #${relationId}`
+}
+
 editSubmitBtn.onclick = () => {
+    // tags may have changed since the last visit to this view
+    submitComment.placeholder = makeDefaultComment()
     switchView("submit")
 }
 
@@ -346,6 +359,8 @@ submitUploadBtn.onclick = async () => {
             relationId: relationId,
             route: routeData,
             tags: relationTags,
+            tagsOriginal: relationTagsOriginal,
+            comment: submitComment.value,
         }),
     })
         .then(async (resp) => {
@@ -393,6 +408,7 @@ submitDownloadBtn.onclick = async () => {
             relationId: relationId,
             route: routeData,
             tags: relationTags,
+            tagsOriginal: relationTagsOriginal,
         }),
     })
         .then(async (resp) => {

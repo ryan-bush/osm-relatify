@@ -4,7 +4,11 @@ import secrets
 import sentry_sdk
 from githead import githead
 
-VERSION = 'git#' + githead()[:7]
+try:
+    VERSION = 'git#' + githead()[:7]
+except OSError:
+    # inside a git worktree .git is a file rather than a directory, which githead cannot read
+    VERSION = 'git#unknown'
 WEBSITE = os.getenv('WEBSITE', 'https://github.com/ryan-bush/osm-relatify')
 CREATED_BY = f'osm-relatify {VERSION}'
 USER_AGENT = f'osm-relatify/{VERSION} (+{WEBSITE})'
@@ -32,6 +36,18 @@ assert OVERPASS_API_INTERPRETERS, 'OVERPASS_API_INTERPRETER must contain at leas
 OVERPASS_API_ATTEMPTS = int(os.getenv('OVERPASS_API_ATTEMPTS', '2'))
 
 TAG_MAX_LENGTH = 255
+
+# Tags the application interprets when loading a relation; editing them would change
+# whether the relation can be loaded at all. See get_route_type() in main.py.
+PROTECTED_TAG_KEYS = frozenset(
+    {
+        'type',
+        'route',
+        'disused:route',
+        'was:route',
+        'public_transport:version',
+    }
+)
 
 OSM_CLIENT = os.getenv('OSM_CLIENT', None)
 OSM_SECRET = os.getenv('OSM_SECRET', None)
