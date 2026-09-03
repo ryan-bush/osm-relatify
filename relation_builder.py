@@ -18,6 +18,7 @@ from models.final_route import FinalRoute
 from models.relation_member import RelationMember
 from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
+from tag_editing import apply_tag_changes
 
 
 class SortedBusEntry(NamedTuple):
@@ -411,7 +412,13 @@ def _update_relations_after_split(
 
 
 async def build_osm_change(
-    relation_id: int, route: FinalRoute, include_changeset_id: bool, overpass: Overpass, osm: OpenStreetMap
+    relation_id: int,
+    route: FinalRoute,
+    include_changeset_id: bool,
+    overpass: Overpass,
+    osm: OpenStreetMap,
+    tags_original: dict[str, str] | None = None,
+    tags_edited: dict[str, str] | None = None,
 ) -> str:
     split_ways_mutable: set[int] = set()
     native_id_element_ids_map: dict[int, dict[int, ElementId]] = defaultdict(dict)
@@ -528,6 +535,10 @@ async def build_osm_change(
 
     # update relation data
     _set_changeset_placeholder(relation_data, include_changeset_id)
+
+    # merge the user's tag edits onto the freshly fetched relation
+    if tags_original is not None and tags_edited is not None:
+        apply_tag_changes(relation_data, tags_original, tags_edited)
 
     relation_data['member'] = [
         {'@type': member.type, '@ref': element_id_unique_map.get(member.id, member.id), '@role': member.role}

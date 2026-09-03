@@ -300,6 +300,9 @@ class PostDownloadOsmChangeModel(BaseModel):
     relationId: int
     route: dict
     tags: dict[str, str]
+    # tags exactly as the client loaded them; the baseline the tag edits are diffed against.
+    # absent (older clients) means no tag editing, in which case relation tags are left alone.
+    tagsOriginal: dict[str, str] | None = None
 
     def make_comment(self) -> str:
         tags_name = self.tags.get('name', '')
@@ -336,6 +339,8 @@ async def post_download_osm_change(model: PostDownloadOsmChangeModel, _=Depends(
             include_changeset_id=False,
             overpass=_OVERPASS,
             osm=_OSM,
+            tags_original=model.tagsOriginal,
+            tags_edited=model.tags,
         )
 
     return Response(content=osm_change, media_type='text/xml; charset=utf-8')
@@ -358,6 +363,8 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
             include_changeset_id=True,
             overpass=_OVERPASS,
             osm=_OSM,
+            tags_original=model.tagsOriginal,
+            tags_edited=model.tags,
         )
 
     async with OpenStreetMap(access_token=access_token) as osm:
