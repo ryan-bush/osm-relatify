@@ -2,11 +2,17 @@ import { busStopData, processBusStopData } from "./busStopsLayer.js"
 import { downloadHistoryData, processRelationDownloadTriggers } from "./downloadTriggers.js"
 import { map } from "./map.js"
 import { showMessage } from "./messageBox.js"
-import { processRelationTags, relationTags, relationTagsOriginal, unloadRelationTags } from "./tagEditor.js"
+import {
+    processRelationTags,
+    relationTags,
+    relationTagsOriginal,
+    setRecalcHandler,
+    unloadRelationTags,
+} from "./tagEditor.js"
 import { createElementFromHTML, deflateCompress, getBusCollectionName } from "./utils.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
 import { processRelationWaysData, removeMembersList, waysData } from "./waysLayer.js"
-import { routeData } from "./waysRoute.js"
+import { requestCalcBusRoute, routeData } from "./waysRoute.js"
 
 const busAnimationElement = document.getElementById("bus-animation")
 const loadRelationForm = document.getElementById("load-relation-form")
@@ -24,6 +30,12 @@ const submitUploadBtn = document.querySelector("#view-submit .btn-upload")
 const submitDownloadBtn = document.querySelector("#view-submit .btn-download")
 
 export let relationId = null
+
+// tagEditor.js cannot import the route module directly without closing an import cycle,
+// so the dependency is registered from here instead. The call is wrapped rather than
+// passed by reference so the binding is only read once the modules have finished loading.
+setRecalcHandler(() => requestCalcBusRoute())
+
 let activeView = "load"
 
 const switchView = (name) => {
