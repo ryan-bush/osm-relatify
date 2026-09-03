@@ -2,6 +2,7 @@ import { busStopData, processBusStopData } from "./busStopsLayer.js"
 import { downloadHistoryData, processRelationDownloadTriggers } from "./downloadTriggers.js"
 import { map } from "./map.js"
 import { showMessage } from "./messageBox.js"
+import { processRelationTags, relationTags, relationTagsOriginal, unloadRelationTags } from "./tagEditor.js"
 import { createElementFromHTML, deflateCompress, getBusCollectionName } from "./utils.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
 import { processRelationWaysData, removeMembersList, waysData } from "./waysLayer.js"
@@ -15,7 +16,6 @@ const relationIdElements = document.querySelectorAll(".view .relation-id")
 const relationUrlElements = document.querySelectorAll(".view .relation-url")
 const editBackBtn = document.querySelector("#view-edit .btn-back")
 const editReloadBtn = document.querySelector("#view-edit .btn-reload")
-const editTags = document.getElementById("edit-tags")
 const editWarnings = document.getElementById("edit-warnings")
 const editSubmitBtn = document.querySelector("#view-edit .btn-next")
 const sumitBackBtn = document.querySelector("#view-submit .btn-back")
@@ -24,7 +24,6 @@ const submitUploadBtn = document.querySelector("#view-submit .btn-upload")
 const submitDownloadBtn = document.querySelector("#view-submit .btn-download")
 
 export let relationId = null
-export let relationTags = null
 let activeView = "load"
 
 const switchView = (name) => {
@@ -106,24 +105,6 @@ export const processFetchRelationData = (data) => {
     // order is not important here
     processRelationDownloadTriggers(data)
     processBusStopData(data)
-}
-
-export const processRelationTags = (data) => {
-    relationTags = data.tags
-
-    const dummyDiv = document.createElement("div")
-
-    if (data.nameOrRef) dummyDiv.appendChild(createElementFromHTML(`<tr><td colspan="2">${data.nameOrRef}</td></tr>`))
-
-    const interestingTags = ["fixme", "note", "from", "via", "to", "network", "operator", "roundtrip"]
-
-    for (const tag of interestingTags)
-        if (data.tags[tag])
-            dummyDiv.appendChild(
-                createElementFromHTML(`<tr><td class="key">${tag}</td><td class="value">${data.tags[tag]}</td></tr>`),
-            )
-
-    editTags.innerHTML = dummyDiv.innerHTML
 }
 
 export const processRouteWarnings = (data) => {
@@ -211,6 +192,7 @@ const unload = () => {
     processRelationWaysData(null)
     processRelationDownloadTriggers(null)
     processBusStopData(null)
+    unloadRelationTags()
 
     relationId = null
 }
@@ -346,6 +328,7 @@ submitUploadBtn.onclick = async () => {
             relationId: relationId,
             route: routeData,
             tags: relationTags,
+            tagsOriginal: relationTagsOriginal,
         }),
     })
         .then(async (resp) => {
@@ -393,6 +376,7 @@ submitDownloadBtn.onclick = async () => {
             relationId: relationId,
             route: routeData,
             tags: relationTags,
+            tagsOriginal: relationTagsOriginal,
         }),
     })
         .then(async (resp) => {

@@ -1,6 +1,7 @@
 import { clearAntPath, processRouteAntPath } from "./antPathLayer.js"
 import { busStopData } from "./busStopsLayer.js"
-import { processRouteStops, processRouteWarnings, relationId, relationTags } from "./menu.js"
+import { processRouteStops, processRouteWarnings, relationId } from "./menu.js"
+import { relationTags } from "./tagEditor.js"
 import { deflateCompress, deflateDecompress } from "./utils.js"
 import { startWay, stopWay } from "./waysEndpoint.js"
 import { waysData } from "./waysLayer.js"
