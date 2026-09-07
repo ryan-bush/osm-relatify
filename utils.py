@@ -4,11 +4,14 @@ import ssl
 import time
 from contextlib import contextmanager
 
+import certifi
 from httpx import AsyncClient, AsyncHTTPTransport
 
 from config import USER_AGENT
 
-_SSL_CONTEXT = ssl.create_default_context(cafile=os.environ['SSL_CERT_FILE'])
+# the nix shell exports SSL_CERT_FILE; outside of it (plain venv) fall back to certifi,
+# as Homebrew Python has no usable default trust store
+_SSL_CONTEXT = ssl.create_default_context(cafile=os.getenv('SSL_CERT_FILE') or certifi.where())
 
 
 def get_http_client(base_url: str = '', *, headers: dict | None = None) -> AsyncClient:

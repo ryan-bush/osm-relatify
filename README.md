@@ -23,6 +23,20 @@ Please note that, for now, OSM Relatify only supports **bus** and **tram** relat
 
 <https://wiki.openstreetmap.org/wiki/Relatify>
 
+## Development
+
+Copy `.env.example` to `.env` and fill in an OAuth 2 client from OpenStreetMap.
+
+With [nix](https://nixos.org) available, `nix-shell` sets up the virtualenv and
+loads `.env` for you, then `run` starts the server. Without nix:
+
+```sh
+uv sync
+.venv/bin/python -m uvicorn main:app --reload
+```
+
+Either way the app is served at <http://localhost:8000>.
+
 ## Features
 
 ### Supported

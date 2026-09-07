@@ -2,7 +2,13 @@ import os
 import secrets
 
 import sentry_sdk
+from dotenv import load_dotenv
 from githead import githead
+
+# the nix shell sources .env itself, but nothing else does; without this, running
+# outside of it silently leaves OSM_CLIENT and friends unset. Real environment
+# variables win, so the nix shell keeps behaving exactly as before.
+load_dotenv()
 
 try:
     VERSION = 'git#' + githead()[:7]
