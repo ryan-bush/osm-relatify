@@ -142,8 +142,9 @@ class FetchRelation:
     downloadHistory: DownloadHistory
     downloadTriggers: dict[ElementId, tuple[Cell, ...]]
     tags: dict[str, str]
-    startWay: FetchRelationElement
-    stopWay: FetchRelationElement
+    # absent until the user picks them, which is the starting state of a new relation
+    startWay: FetchRelationElement | None
+    stopWay: FetchRelationElement | None
     ways: dict[ElementId, FetchRelationElement]
     busStops: list[FetchRelationBusStopCollection]
 
@@ -152,14 +153,16 @@ def find_start_stop_ways(
     ways: dict[ElementId, FetchRelationElement],
     id_map: dict[int, list[ElementId]],
     relation: dict,
-) -> tuple[FetchRelationElement, FetchRelationElement]:
+) -> tuple[FetchRelationElement | None, FetchRelationElement | None]:
     member_ids = [
         way['ref']
         for way in relation['members']
         if way['type'] == 'way' and way['role'] in {'', 'forward', 'backward', 'route'}
     ]
 
-    assert member_ids, 'Relation has no way members'
+    # a relation being created has no members yet; the user picks both endpoints
+    if not member_ids:
+        return None, None
 
     def get_endpoint_id(way_id: int) -> ElementId | None:
         all_way_ids = id_map[way_id]

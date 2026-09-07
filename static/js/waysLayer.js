@@ -125,6 +125,12 @@ function updateWaysVisibility() {
         }
     }
 
+    // a relation being created has no members to grow the selection from, so show
+    // everything that was downloaded and let the user pick the first way
+    if (visibleWays.size === 0) {
+        for (const wayId of Object.keys(waysData)) visibleWays.add(wayId)
+    }
+
     for (const wayId of visibleWays) {
         addWay(waysData[wayId])
     }
@@ -181,7 +187,7 @@ const addWay = (way) => {
     const group = [line, buffer, buffer2]
 
     const onClickHandler = () => {
-        if (way.id === startWay.id || way.id === stopWay.id) return
+        if (way.id === startWay?.id || way.id === stopWay?.id) return
 
         const newMember = !way.member
 
@@ -223,7 +229,7 @@ const addWay = (way) => {
 
 export const removeMembersList = (wayIds) => {
     for (const wayId of wayIds) {
-        if (wayId === startWay.id || wayId === stopWay.id) continue
+        if (wayId === startWay?.id || wayId === stopWay?.id) continue
 
         waysData[wayId].member = false
         removeGroupFromLayers(wayId)

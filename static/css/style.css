@@ -79,6 +79,24 @@
   min-height: calc(.375rem * 2 + 1.5em);
 }
 
+.separator-or {
+  display: flex;
+  align-items: center;
+  color: #888;
+  font-size: .8rem;
+}
+
+.separator-or::before,
+.separator-or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid #ddd;
+}
+
+.separator-or span {
+  padding: 0 .5rem;
+}
+
 .table-tags {
   font-size: .9em;
 }

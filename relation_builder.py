@@ -18,7 +18,7 @@ from models.final_route import FinalRoute
 from models.relation_member import RelationMember
 from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
-from tag_editing import apply_tag_changes
+from tag_editing import apply_tag_changes, normalize_tags
 
 
 class SortedBusEntry(NamedTuple):
@@ -253,7 +253,7 @@ def _initialize_osm_change_structure() -> dict:
         'osmChange': {
             '@version': 0.6,
             '@generator': CREATED_BY,
-            'create': {'way': []},
+            'create': {'way': [], 'relation': []},
             'modify': {'way': [], 'relation': []},
         }
     }
@@ -411,8 +411,13 @@ def _update_relations_after_split(
     return result.values()
 
 
+# the id a relation being created carries inside the changeset, until OSM assigns a
+# real one; way placeholders count down from -1 separately, in their own element type
+NEW_RELATION_PLACEHOLDER_ID = -1
+
+
 async def build_osm_change(
-    relation_id: int,
+    relation_id: int | None,
     route: FinalRoute,
     include_changeset_id: bool,
     overpass: Overpass,
@@ -450,7 +455,9 @@ async def build_osm_change(
             raise AssertionError(f'Split ways are not complete: {", ".join(f"{k}={v}" for k, v in group.items())}')
 
     split_ways = frozenset(split_ways_mutable)
-    relation_task = asyncio.create_task(osm.get_relation(relation_id, json=False))
+    relation_task = None
+    if relation_id is not None:
+        relation_task = asyncio.create_task(osm.get_relation(relation_id, json=False))
 
     result = _initialize_osm_change_structure()
 
@@ -526,25 +533,33 @@ async def build_osm_change(
 
             result['osmChange']['modify']['relation'].append(parent_relation)
 
-    relation_data = await relation_task
+    if relation_task is not None:
+        relation_data = await relation_task
+        relation_action = 'modify'
 
-    # strip unnecessary data
-    relation_data.pop('@timestamp', None)
-    relation_data.pop('@user', None)
-    relation_data.pop('@uid', None)
+        # strip unnecessary data
+        relation_data.pop('@timestamp', None)
+        relation_data.pop('@user', None)
+        relation_data.pop('@uid', None)
 
-    # update relation data
+        # merge the user's tag edits onto the freshly fetched relation
+        if tags_original is not None and tags_edited is not None:
+            apply_tag_changes(relation_data, tags_original, tags_edited)
+    else:
+        # nothing on the server to merge with, so the edited tags are the whole relation
+        relation_data = {
+            '@id': NEW_RELATION_PLACEHOLDER_ID,
+            'tag': [{'@k': k, '@v': v} for k, v in normalize_tags(tags_edited or {}).items()],
+        }
+        relation_action = 'create'
+
     _set_changeset_placeholder(relation_data, include_changeset_id)
-
-    # merge the user's tag edits onto the freshly fetched relation
-    if tags_original is not None and tags_edited is not None:
-        apply_tag_changes(relation_data, tags_original, tags_edited)
 
     relation_data['member'] = [
         {'@type': member.type, '@ref': element_id_unique_map.get(member.id, member.id), '@role': member.role}
         for member in route.members
     ]
 
-    result['osmChange']['modify']['relation'].append(relation_data)
+    result['osmChange'][relation_action]['relation'].append(relation_data)
 
     return xmltodict.unparse(result, pretty=not include_changeset_id)

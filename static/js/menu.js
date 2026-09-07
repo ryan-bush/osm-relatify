@@ -1,5 +1,8 @@
 import { busStopData, processBusStopData } from "./busStopsLayer.js"
-import { downloadHistoryData, processRelationDownloadTriggers } from "./downloadTriggers.js"
+import {
+    downloadHistoryData,
+    processRelationDownloadTriggers,
+} from "./downloadTriggers.js"
 import { map } from "./map.js"
 import { showMessage } from "./messageBox.js"
 import {
@@ -9,17 +12,33 @@ import {
     setRecalcHandler,
     unloadRelationTags,
 } from "./tagEditor.js"
-import { createElementFromHTML, deflateCompress, getBusCollectionName } from "./utils.js"
+import {
+    createElementFromHTML,
+    deflateCompress,
+    getBusCollectionName,
+} from "./utils.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
-import { processRelationWaysData, removeMembersList, waysData } from "./waysLayer.js"
+import {
+    processRelationWaysData,
+    removeMembersList,
+    waysData,
+} from "./waysLayer.js"
 import { requestCalcBusRoute, routeData } from "./waysRoute.js"
 
 const busAnimationElement = document.getElementById("bus-animation")
 const loadRelationForm = document.getElementById("load-relation-form")
 const loadRelationBtn = loadRelationForm.querySelector("button[type=submit]")
-const relationIdInput = loadRelationForm.querySelector("input[name=relation-id]")
+const relationIdInput = loadRelationForm.querySelector(
+    "input[name=relation-id]",
+)
+const createRelationForm = document.getElementById("create-relation-form")
+const createRelationBtn = createRelationForm.querySelector(
+    "button[type=submit]",
+)
+const createRouteType = document.getElementById("create-route-type")
 const relationIdElements = document.querySelectorAll(".view .relation-id")
 const relationUrlElements = document.querySelectorAll(".view .relation-url")
+const editingLabel = document.querySelector("#view-edit .editing-label")
 const editBackBtn = document.querySelector("#view-edit .btn-back")
 const editReloadBtn = document.querySelector("#view-edit .btn-reload")
 const editWarnings = document.getElementById("edit-warnings")
@@ -32,12 +51,38 @@ const submitComment = document.getElementById("submit-comment")
 
 export let relationId = null
 
+// a relation being created has no id until OSM assigns one on upload, so relationId
+// stays null all the way through editing; this distinguishes that from "nothing loaded"
+export let isCreating = false
+
+// with no relation to read tags from, the server needs telling what kind of route this
+// is on every /query, not just the first
+export let newRouteType = null
+
 // tagEditor.js cannot import the route module directly without closing an import cycle,
 // so the dependency is registered from here instead. The call is wrapped rather than
 // passed by reference so the binding is only read once the modules have finished loading.
 setRecalcHandler(() => requestCalcBusRoute())
 
 let activeView = "load"
+
+const showRelationIdentity = () => {
+    const known = relationId !== null
+
+    editingLabel.innerText = known ? "Editing relation" : "Creating relation"
+
+    for (const element of relationIdElements) {
+        element.innerText = known ? `${relationId}` : ""
+        element.parentElement.classList.toggle("d-none", !known)
+    }
+
+    for (const element of relationUrlElements) {
+        element.href = known
+            ? `https://www.openstreetmap.org/relation/${relationId}`
+            : "#"
+        element.classList.toggle("d-none", !known)
+    }
+}
 
 const switchView = (name) => {
     const className = `view-${name}`
@@ -68,10 +113,9 @@ loadRelationForm.addEventListener("submit", (e) => {
     loadRelationBtn.classList.add("is-loading")
     loadRelationBtn.innerHTML = busAnimationElement.innerHTML
 
-    for (const relationIdElement of relationIdElements) relationIdElement.innerText = `${relationId}`
-
-    for (const relationUrlElement of relationUrlElements)
-        relationUrlElement.href = `https://www.openstreetmap.org/relation/${relationId}`
+    isCreating = false
+    newRouteType = null
+    showRelationIdentity()
 
     fetch("/query", {
         method: "POST",
@@ -84,7 +128,11 @@ loadRelationForm.addEventListener("submit", (e) => {
     })
         .then(async (resp) => {
             if (!resp.ok) {
-                showMessage("danger", `❌ Relation load failed - ${resp.status}`, await resp.text())
+                showMessage(
+                    "danger",
+                    `❌ Relation load failed - ${resp.status}`,
+                    await resp.text(),
+                )
                 return
             }
 
@@ -104,6 +152,76 @@ loadRelationForm.addEventListener("submit", (e) => {
             loadRelationBtn.classList.remove("btn-secondary")
             loadRelationBtn.classList.remove("is-loading")
             loadRelationBtn.innerHTML = "Load"
+        })
+})
+
+createRelationForm.addEventListener("submit", (e) => {
+    e.preventDefault()
+
+    if (createRelationBtn.classList.contains("is-loading")) return
+
+    // there is no relation to seed a download area from, so the visible map is it
+    const bounds = map.getBounds()
+
+    relationId = null
+    isCreating = true
+    newRouteType = createRouteType.value
+    showRelationIdentity()
+
+    createRouteType.disabled = true
+    createRelationBtn.classList.add("is-loading")
+    const defaultInnerText = createRelationBtn.innerText
+    createRelationBtn.innerText = "Creating..."
+
+    fetch("/query", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            relationId: null,
+            routeType: newRouteType,
+            bounds: [
+                bounds.getSouth(),
+                bounds.getWest(),
+                bounds.getNorth(),
+                bounds.getEast(),
+            ],
+        }),
+    })
+        .then(async (resp) => {
+            if (!resp.ok) {
+                isCreating = false
+                showMessage(
+                    "danger",
+                    `❌ Could not start a new relation - ${resp.status}`,
+                    await resp.text(),
+                )
+                return
+            }
+
+            return resp.json()
+        })
+        .then((data) => {
+            if (!data) return
+
+            processFetchRelationData(data)
+            showMessage(
+                "info",
+                "🆕 New route started",
+                "Click the ways the route follows, then right-click one to set <b>START</b> and another to set <b>END</b>. " +
+                    "Fill in <b>name</b>, <b>ref</b>, <b>from</b> and <b>to</b> in the tag table before uploading.",
+            )
+        })
+        .catch((error) => {
+            isCreating = false
+            console.error(error)
+            showMessage("danger", "❌ Could not start a new relation", error)
+        })
+        .finally(() => {
+            createRouteType.disabled = false
+            createRelationBtn.classList.remove("is-loading")
+            createRelationBtn.innerText = defaultInnerText
         })
 })
 
@@ -161,7 +279,10 @@ export const processRouteWarnings = (data) => {
             }
 
             editWarnings.appendChild(child)
-        } else if (warning.message === "Some stops are far away" || warning.message === "Some stops are not reached") {
+        } else if (
+            warning.message === "Some stops are far away" ||
+            warning.message === "Some stops are not reached"
+        ) {
             const child = createElementFromHTML(`
             <div class="warning warning-${severityText}">
                 <div class="warning-message">${warning.message}</div>
@@ -174,7 +295,9 @@ export const processRouteWarnings = (data) => {
                 // show me
                 const stopId = warning.extra[0]
                 const stop = busStopData.find(
-                    (c) => (c.platform && c.platform.id === stopId) || (c.stop && c.stop.id === stopId),
+                    (c) =>
+                        (c.platform && c.platform.id === stopId) ||
+                        (c.stop && c.stop.id === stopId),
                 )
 
                 if (stop)
@@ -209,6 +332,8 @@ const unload = () => {
     submitComment.value = ""
 
     relationId = null
+    isCreating = false
+    newRouteType = null
 }
 
 editBackBtn.onclick = unload
@@ -228,6 +353,7 @@ editReloadBtn.onclick = async () => {
         },
         body: await deflateCompress({
             relationId: relationId,
+            routeType: newRouteType,
             downloadHistory: downloadHistoryData,
             downloadTargets: [],
             reload: true,
@@ -235,7 +361,11 @@ editReloadBtn.onclick = async () => {
     })
         .then(async (resp) => {
             if (!resp.ok) {
-                showMessage("danger", `❌ Relation reload failed - ${resp.status}`, await resp.text())
+                showMessage(
+                    "danger",
+                    `❌ Relation reload failed - ${resp.status}`,
+                    await resp.text(),
+                )
                 return
             }
 
@@ -265,10 +395,13 @@ const makeDefaultComment = () => {
     // only include ref if it's not already in the name
     if (ref && name.includes(ref)) ref = ""
 
-    if (name && ref) return `Updated route: ${ref} ${name}, #${relationId}`
-    if (name) return `Updated route: ${name}, #${relationId}`
-    if (ref) return `Updated route: ${ref}, #${relationId}`
-    return `Updated route #${relationId}`
+    const verb = relationId !== null ? "Updated" : "Created"
+    const described = name && ref ? `${ref} ${name}` : name || ref
+
+    if (relationId === null)
+        return described ? `${verb} route: ${described}` : `${verb} route`
+    if (described) return `${verb} route: ${described}, #${relationId}`
+    return `${verb} route #${relationId}`
 }
 
 editSubmitBtn.onclick = () => {
@@ -320,7 +453,9 @@ export const processRouteStops = (data) => {
         )
     }
 
-    const allItems = Array.from(routeSummary.querySelectorAll(".route-summary-item"))
+    const allItems = Array.from(
+        routeSummary.querySelectorAll(".route-summary-item"),
+    )
     const allIcons = allItems.map((item) => item.querySelector(".stop-icon"))
 
     for (const [outerIndex, outerItem] of allItems.entries()) {
@@ -365,7 +500,11 @@ submitUploadBtn.onclick = async () => {
     })
         .then(async (resp) => {
             if (!resp.ok) {
-                showMessage("danger", `❌ Upload failed - ${resp.status}`, await resp.text())
+                showMessage(
+                    "danger",
+                    `❌ Upload failed - ${resp.status}`,
+                    await resp.text(),
+                )
                 return
             }
 
@@ -375,14 +514,24 @@ submitUploadBtn.onclick = async () => {
             if (!data) return
 
             if (!data.ok) {
-                showMessage("danger", `❌ Upload failed - ${data.error_code}`, data.error_message)
+                showMessage(
+                    "danger",
+                    `❌ Upload failed - ${data.error_code}`,
+                    data.error_message,
+                )
                 return
             }
+
+            // OSM assigns the real id on upload; without this the new relation would
+            // be created and then be unreachable from here
+            const created = data.relation_id
+                ? `<br><br>Created relation <a href="https://www.openstreetmap.org/relation/${data.relation_id}" target="_blank">#${data.relation_id}</a>.`
+                : ""
 
             showMessage(
                 "success",
                 "✅ Upload successful",
-                `The changeset <a href="https://www.openstreetmap.org/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.<br><br><i>Something broke? Use <a href="https://revert.monicz.dev/?changesets=${data.changeset_id}" target="_blank">this tool</a> to revert it.</i>`,
+                `The changeset <a href="https://www.openstreetmap.org/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}<br><br><i>Something broke? Use <a href="https://revert.monicz.dev/?changesets=${data.changeset_id}" target="_blank">this tool</a> to revert it.</i>`,
             )
             unload()
         })
@@ -413,7 +562,11 @@ submitDownloadBtn.onclick = async () => {
     })
         .then(async (resp) => {
             if (!resp.ok) {
-                showMessage("danger", `❌ Download failed - ${resp.status}`, await resp.text())
+                showMessage(
+                    "danger",
+                    `❌ Download failed - ${resp.status}`,
+                    await resp.text(),
+                )
                 return
             }
 
@@ -424,7 +577,8 @@ submitDownloadBtn.onclick = async () => {
 
             const a = document.createElement("a")
             a.href = URL.createObjectURL(blob)
-            a.download = `relatify_${relationId}_${new Date().toISOString().replace(/:/g, "_")}.osc`
+            const name = relationId !== null ? `${relationId}` : "new"
+            a.download = `relatify_${name}_${new Date().toISOString().replace(/:/g, "_")}.osc`
             a.click()
         })
         .catch((error) => {
