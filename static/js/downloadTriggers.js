@@ -1,5 +1,5 @@
 import { hideDownloadBar, showDownloadBar } from "./map.js"
-import { processFetchRelationData, relationId } from "./menu.js"
+import { newRouteType, processFetchRelationData, relationId } from "./menu.js"
 import { deflateCompress } from "./utils.js"
 
 export let downloadHistoryData = null
@@ -38,7 +38,9 @@ export function processRelationDownloadTriggers(fetchData) {
 
 export const downloadTrigger = (id) => {
     if (downloadTriggersData?.[id]) {
-        const newScheduledCells = downloadTriggersData[id].filter((cell) => !downloadingCells.includes(cell))
+        const newScheduledCells = downloadTriggersData[id].filter(
+            (cell) => !downloadingCells.includes(cell),
+        )
         if (newScheduledCells.length > 0) {
             scheduledCells = scheduledCells.concat(newScheduledCells)
             processDownloadTriggers()
@@ -68,6 +70,7 @@ export const processDownloadTriggers = async (_retrying = false) => {
         },
         body: await deflateCompress({
             relationId: relationId,
+            routeType: newRouteType,
             downloadHistory: downloadHistoryData,
             downloadTargets: downloadingCells,
         }),

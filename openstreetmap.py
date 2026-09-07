@@ -10,12 +10,33 @@ from config import CHANGESET_ID_PLACEHOLDER, TAG_MAX_LENGTH
 from utils import ensure_list, get_http_client
 
 
+def _parse_created_relation_id(diff_result: str) -> int | None:
+    """Read back the real id OSM assigned to a relation the changeset created."""
+    try:
+        parsed = xmltodict.parse(diff_result, force_list=('relation',))
+    except Exception:
+        print('🚧 Warning: Could not parse the upload diffResult')
+        return None
+
+    for relation in parsed.get('diffResult', {}).get('relation', ()):
+        old_id = relation.get('@old_id')
+        new_id = relation.get('@new_id')
+
+        # a created element is the only one whose id changes
+        if old_id is not None and new_id is not None and int(old_id) < 0:
+            return int(new_id)
+
+    return None
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class UploadResult:
     ok: bool
     error_code: int | None
     error_message: str | None
     changeset_id: int | None
+    # the id OSM assigned to a newly created relation, if the change created one
+    relation_id: int | None = None
 
 
 class OpenStreetMap:
@@ -134,4 +155,5 @@ class OpenStreetMap:
             error_code=None,
             error_message=None,
             changeset_id=changeset_id,
+            relation_id=_parse_created_relation_id(upload_resp.text),
         )

@@ -13,11 +13,27 @@
                 Load
             </button>
         </form>
+
+        <div class="body pt-0">
+            <div class="separator-or my-2"><span>or</span></div>
+            <form id="create-relation-form">
+                <div class="small mb-1">Create a <b>new route</b> from the visible area</div>
+                <div class="input-group">
+                    <select class="form-select" id="create-route-type" aria-label="Route type">
+                        <option value="bus" selected>Bus</option>
+                        <option value="tram">Tram</option>
+                    </select>
+                    <button type="submit" class="btn btn-create btn-outline-primary">
+                        Create
+                    </button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <div class="view d-none" id="view-edit">
         <h5 class="title">
-            Editing relation
+            <span class="editing-label">Editing relation</span>
             <b>#<span class="relation-id"></span></b>
             <a class="relation-url" target="_blank">🔗</a>
         </h5>

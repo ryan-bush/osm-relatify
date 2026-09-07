@@ -32,6 +32,7 @@ from config import (
 )
 from cython_lib.route import calc_bus_route
 from deflate_middleware import DeflateRoute
+from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId
 from models.fetch_relation import (
@@ -142,11 +143,27 @@ def get_route_type(tags: dict[str, str]) -> str | None:
     return type_specifier
 
 
+# a full viewport at low zoom is far too much to download in one go; panning grows
+# the area from a sensible starting point instead
+NEW_RELATION_MAX_CELLS = 256
+
+
 class PostQueryModel(BaseModel):
-    relationId: int
+    # absent when creating a relation that does not exist yet
+    relationId: int | None = None
     downloadHistory: dict | None = None
     downloadTargets: tuple[dict, ...] | None = None
     reload: bool = False
+    # creation only: the route type the user picked, and the map viewport to seed
+    # the first download from, as (minlat, minlon, maxlat, maxlon)
+    routeType: str | None = None
+    bounds: tuple[float, float, float, float] | None = None
+
+
+# the tags that make a relation a PTv2 route, and that the app itself requires to
+# load one back; see get_route_type()
+def make_new_relation_tags(route_type: str) -> dict[str, str]:
+    return {'type': 'route', 'route': route_type, 'public_transport:version': '2'}
 
 
 @app.post('/query')
@@ -169,17 +186,42 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         download_targets = None
 
     with print_run_time('Querying relation data'):
-        try:
-            relation = await _OSM.get_relation(model.relationId)
-        except HTTPStatusError as e:
-            if e.response.status_code == status.HTTP_404_NOT_FOUND:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, 'Relation not found') from e
-            raise
+        if model.relationId is None:
+            # nothing to fetch yet: the relation is invented here and only exists
+            # in OSM once the user uploads
+            route_type = model.routeType
+            if route_type not in {'bus', 'tram'}:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Route type must be bus or tram')
 
-        relation_tags = relation.get('tags', {})
-        route_type = get_route_type(relation_tags)
-        if route_type is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Relation must be a PTv2 bus/tram/trolleybus route')
+            relation = {'tags': make_new_relation_tags(route_type), 'members': []}
+            relation_tags = relation['tags']
+
+            if download_targets is None:
+                if model.bounds is None:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Creating a relation requires map bounds')
+
+                cells = BoundingBox(*model.bounds).get_grid_cells()
+                if len(cells) > NEW_RELATION_MAX_CELLS:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        'Zoom in before creating a relation; the visible area is too large to download. '
+                        'Panning downloads more as you go.',
+                    )
+
+                # sorted for a stable cache key, and query_relation expects a sequence
+                download_targets = tuple(sorted(cells, key=lambda c: (c.x, c.y)))
+        else:
+            try:
+                relation = await _OSM.get_relation(model.relationId)
+            except HTTPStatusError as e:
+                if e.response.status_code == status.HTTP_404_NOT_FOUND:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, 'Relation not found') from e
+                raise
+
+            relation_tags = relation.get('tags', {})
+            route_type = get_route_type(relation_tags)
+            if route_type is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Relation must be a PTv2 bus/tram/trolleybus route')
 
         bounds, download_hist, download_triggers, ways, id_map, bus_stop_collections = await _OVERPASS.query_relation(
             relation_id=model.relationId,
@@ -200,7 +242,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         bounds=bounds,
         downloadHistory=download_hist,
         downloadTriggers=download_triggers,
-        tags=relation['tags'],
+        tags=relation_tags,
         startWay=start_way,
         stopWay=stop_way,
         ways=ways,
@@ -210,7 +252,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class PostCalcBusRouteModel:
-    relationId: int
+    relationId: int | None
     startWay: ElementId
     stopWay: ElementId
     ways: dict[ElementId | str, FetchRelationElement]
@@ -252,7 +294,12 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
 
                 try:
                     async with asyncio.TaskGroup() as tg:
-                        get_task = tg.create_task(_OSM.get_relation(model.relationId))
+                        # a relation being created has no members to preserve roles from
+                        get_task = (
+                            tg.create_task(_OSM.get_relation(model.relationId))
+                            if model.relationId is not None
+                            else None
+                        )
                         route_task = tg.create_task(
                             asyncio.wait_for(
                                 calc_bus_route(
@@ -275,8 +322,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                     print('🛑 Route calculation timed out')
                     raise HTTPException(status.HTTP_408_REQUEST_TIMEOUT, 'Route calculation timed out') from None
 
-                relation = get_task.result()
-                relation_members = get_relation_members(relation)
+                relation_members = get_relation_members(get_task.result()) if get_task is not None else []
 
                 route = route_task.result()
                 route = replace(route, extraWaysToUpdate=tuple(ways_non_members.values()))
@@ -302,7 +348,8 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
 
 
 class PostDownloadOsmChangeModel(BaseModel):
-    relationId: int
+    # absent when the relation is being created by this very changeset
+    relationId: int | None = None
     route: dict
     tags: dict[str, str]
     # tags exactly as the client loaded them; the baseline the tag edits are diffed against.
@@ -322,14 +369,23 @@ class PostDownloadOsmChangeModel(BaseModel):
         if tags_ref and tags_ref in tags_name:
             tags_ref = None
 
+        # there is no id to cite until OSM assigns one
+        verb = 'Updated' if self.relationId is not None else 'Created'
+
         if tags_name and tags_ref:
-            return f'Updated route: {tags_ref} {tags_name}, #{self.relationId}'
+            described = f'{tags_ref} {tags_name}'
         elif tags_name:
-            return f'Updated route: {tags_name}, #{self.relationId}'
+            described = tags_name
         elif tags_ref:
-            return f'Updated route: {tags_ref}, #{self.relationId}'
+            described = tags_ref
         else:
-            return f'Updated route #{self.relationId}'
+            described = None
+
+        if self.relationId is None:
+            return f'{verb} route: {described}' if described else f'{verb} route'
+        if described:
+            return f'{verb} route: {described}, #{self.relationId}'
+        return f'{verb} route #{self.relationId}'
 
 
 @app.post('/download_osm_change')
@@ -391,7 +447,8 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
         )
 
     if upload_result.ok:
-        print(f'✅ Changeset upload success: #{upload_result.changeset_id}')
+        created = f', created relation #{upload_result.relation_id}' if upload_result.relation_id else ''
+        print(f'✅ Changeset upload success: #{upload_result.changeset_id}{created}')
     else:
         print(f'🚩 Changeset upload failure: {upload_result}')
 
