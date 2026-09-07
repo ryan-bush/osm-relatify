@@ -1,6 +1,7 @@
 import { map, openInOpenStreetMap } from "./map.js"
 import { requestCalcBusRoute } from "./waysRoute.js"
 import {
+    isDeadEnd,
     isUTurnAllowed,
     isUTurnFromOsm,
     nearestWayEnd,
@@ -114,6 +115,9 @@ export function showContextMenu(e, way) {
     // build_graph() ignores a U-turn at the start of a oneway, since reaching it
     // would mean driving the way backwards; offering the toggle would be a no-op
     const unusable = isStart && way.oneway
+    // away from a dead end the router models the turn as a teleport between two
+    // junctions, which both misroutes and blows up the search
+    const deadEnd = isDeadEnd(way, isStart)
 
     let uTurnButton
     if (fromOsm) {
@@ -121,6 +125,12 @@ export function showContextMenu(e, way) {
                                disabled title="This end is tagged highway=turning_circle in OpenStreetMap">
                            ${U_TURN_ICON}
                            <div>Turning circle</div>
+                       </button>`
+    } else if (!deadEnd) {
+        uTurnButton = `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-u-turn"
+                               disabled title="The road continues here, so there is nothing to turn around at. Right-click nearer the end where the bus turns.">
+                           ${U_TURN_ICON}
+                           <div>Not a dead end</div>
                        </button>`
     } else if (unusable) {
         uTurnButton = `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-u-turn"
@@ -177,7 +187,7 @@ export function showContextMenu(e, way) {
         popup.close()
     }
 
-    if (!fromOsm && !unusable) {
+    if (!fromOsm && !unusable && deadEnd) {
         document.getElementById("ep-u-turn").onclick = () => {
             toggleUTurn(way, isStart)
             refreshUTurnMarkers()

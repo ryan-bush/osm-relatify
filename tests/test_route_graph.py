@@ -50,3 +50,22 @@ def test_turn_in_place_start_is_ignored_on_a_oneway():
 
     # reaching the entry end of a oneway to turn there would mean driving it backwards
     assert graph[GraphKey(STUB_ID, BOOL_START)].connected_to == (GraphKey(MAIN_ID, BOOL_END),)
+
+
+def test_turn_in_place_on_a_through_way_teleports_between_junctions():
+    """Why the UI only offers a U-turn at a dead end."""
+    junction_a = (51.0, 0.0)
+    junction_b = (51.0, 0.01)
+
+    before = _way(ElementId('V'), [(51.0, -0.01), junction_a], [ElementId('W')])
+    through = _way(ElementId('W'), [junction_a, junction_b], [ElementId('V'), ElementId('X')], turn_end=True)
+    after = _way(ElementId('X'), [junction_b, (51.0, 0.02)], [ElementId('W')])
+
+    graph = build_graph({w.id: w for w in (before, through, after)})
+
+    # the far end gains an edge to a way at the *near* junction, which is not a
+    # turn but a jump between two different places
+    assert graph[GraphKey(ElementId('W'), BOOL_END)].connected_to == (
+        GraphKey(ElementId('X'), BOOL_START),
+        GraphKey(ElementId('V'), BOOL_END),
+    )
