@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
@@ -38,6 +39,11 @@ MAX_LOOP_LENGTH = 1000
 MAX_AFTER_FINISH_LENGTH = 1000
 MAX_EXTRA_DISTANCE_TO_CONVERT = 1000
 MAX_PATH_LENGTH_FACTOR = 2.2
+
+# The search is exhaustive, so anything that widens the graph - a U-turn most of
+# all - can grow it beyond what is searchable. Past this budget, return the best
+# route found so far instead of letting the request time out with nothing.
+MAX_SEARCH_TIME = 2.0  # seconds, must stay below the request timeout in main.py
 
 
 class GraphKey(NamedTuple):
@@ -547,8 +553,21 @@ async def modified_dfs(
             ),
         )
 
+    deadline = time.monotonic() + MAX_SEARCH_TIME
+
     tasks: list[asyncio.Task] = []
     while stack or tasks:
+        if time.monotonic() >= deadline:
+            # in-flight workers are capped at async_max_iter, so they land promptly
+            if tasks:
+                done, _ = await asyncio.wait(tasks)
+                for task in done:
+                    _, best_path_slice = task.result()
+                    best_path = best_path.merge(best_path_slice, ways)
+
+            print(f'[⏱️] Route search hit its {MAX_SEARCH_TIME}s budget, returning the best route found so far')
+            break
+
         stack_slices_len_target = n_processes - len(tasks)
         stack_slice_size_target, remainder = divmod(len(stack), stack_slices_len_target)
         stack_slices: list[list[StackElement]] = []
