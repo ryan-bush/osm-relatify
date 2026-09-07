@@ -3,6 +3,11 @@ import { downloadTrigger } from "./downloadTriggers.js"
 import { canvasRenderer, map } from "./map.js"
 import { showContextMenu, startWay, stopWay } from "./waysEndpoint.js"
 import { requestCalcBusRoute } from "./waysRoute.js"
+import {
+    applyUTurnOverrides,
+    clearUTurnOverrides,
+    updateUTurnMarkers,
+} from "./waysUTurn.js"
 
 export let waysData = null
 export let waysRBush = null
@@ -33,14 +38,23 @@ export function processRelationWaysData(fetchData) {
             waysData = fetchData.ways
 
             for (const way of Object.values(waysData)) {
-                const memberCandidates = [memberMap.get(way.id), memberMap.get(way.id.split("_")[0])]
+                const memberCandidates = [
+                    memberMap.get(way.id),
+                    memberMap.get(way.id.split("_")[0]),
+                ]
 
-                way.member = memberCandidates.find((m) => m !== undefined) || false
+                way.member =
+                    memberCandidates.find((m) => m !== undefined) || false
             }
         } else {
             waysData = fetchData.ways
         }
-    } else waysData = null
+
+        applyUTurnOverrides(waysData)
+    } else {
+        waysData = null
+        clearUTurnOverrides()
+    }
 
     onWaysDataChanged()
 
@@ -81,6 +95,8 @@ function createWaysRBush() {
 
 function onWaysDataChanged() {
     waysRBush = createWaysRBush()
+
+    updateUTurnMarkers(waysData)
 
     updateWaysVisibility()
     updateBusStopsVisibility()

@@ -1,5 +1,12 @@
 import { map, openInOpenStreetMap } from "./map.js"
 import { requestCalcBusRoute } from "./waysRoute.js"
+import {
+    isUTurnAllowed,
+    isUTurnFromOsm,
+    nearestWayEnd,
+    refreshUTurnMarkers,
+    toggleUTurn,
+} from "./waysUTurn.js"
 
 let startMarker = null
 let stopMarker = null
@@ -89,12 +96,49 @@ function clearPopup() {
     }
 }
 
+const U_TURN_ICON = `
+    <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 20V9a5 5 0 0 1 10 0v11"/>
+        <polyline points="12,16 16,20 20,16"/>
+    </svg>`
+
 export function showContextMenu(e, way) {
     clearPopup()
+
+    // a U-turn belongs to one end of the way, so act on the end that was clicked
+    const isStart = nearestWayEnd(way, e.latlng)
+    // a turning circle in OSM already permits the turn; nothing for us to toggle
+    const fromOsm = isUTurnFromOsm(way, isStart)
+    const allowed = isUTurnAllowed(way, isStart)
+    // build_graph() ignores a U-turn at the start of a oneway, since reaching it
+    // would mean driving the way backwards; offering the toggle would be a no-op
+    const unusable = isStart && way.oneway
+
+    let uTurnButton
+    if (fromOsm) {
+        uTurnButton = `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-u-turn"
+                               disabled title="This end is tagged highway=turning_circle in OpenStreetMap">
+                           ${U_TURN_ICON}
+                           <div>Turning circle</div>
+                       </button>`
+    } else if (unusable) {
+        uTurnButton = `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-u-turn"
+                               disabled title="A oneway cannot be turned around at its entry end">
+                           ${U_TURN_ICON}
+                           <div>No U-turn</div>
+                       </button>`
+    } else {
+        uTurnButton = `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-u-turn">
+                           ${U_TURN_ICON}
+                           <div>${allowed ? "<b>Disallow</b> U-turn" : "Allow <b>U-turn</b>"}</div>
+                       </button>`
+    }
 
     popup = L.popup(e.latlng, {
         content: `
             <div class="btn-group text-center">
+                ${uTurnButton}
                 <button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-set-start">
                     <img class="mb-1" src="/static/img/start.webp" width="24" alt="Start icon">
                     <div>Set <b>START</b></div>
@@ -110,6 +154,7 @@ export function showContextMenu(e, way) {
             </div>`,
         closeButton: false,
         className: "popup-sm",
+        maxWidth: 400,
     }).openOn(map)
 
     const setStartButton = document.getElementById("ep-set-start")
@@ -130,5 +175,14 @@ export function showContextMenu(e, way) {
         const id = way.id.split("_")[0]
         openInOpenStreetMap(`way/${id}`)
         popup.close()
+    }
+
+    if (!fromOsm && !unusable) {
+        document.getElementById("ep-u-turn").onclick = () => {
+            toggleUTurn(way, isStart)
+            refreshUTurnMarkers()
+            requestCalcBusRoute()
+            popup.close()
+        }
     }
 }
