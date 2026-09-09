@@ -14,7 +14,7 @@ by Kamil Monicz, whose work the whole application is built on.
 Upstream development has stalled — the last commit there is from January 2026 —
 while a handful of things stayed on the roadmap that make everyday route editing
 noticeably easier. Rather than let those sit, this fork carries them: tag editing,
-custom changeset comments, U-turns at untagged dead ends, and creating relations
+custom changeset comments, U-turns at untagged turning points, and creating relations
 from scratch. See [what this fork adds](#what-this-fork-adds) below.
 
 The original remains the reference implementation, and the official instance at
@@ -105,21 +105,20 @@ are valid.
 The submit view has a comment field. Leave it blank and you get the generated comment
 as before, shown as the placeholder so you can see what will be used.
 
-### U-turns at untagged dead ends
+### U-turns without a turning circle
 
 The router will only turn a bus around where OSM has `highway=turning_circle`. Plenty
-of real routes turn at a road end carrying no such tag — the stub then has nowhere to
-continue to and drops out as an unused way.
+of real routes turn where there is no such tag — a road end, or a corner the bus swings
+round — and the way then has nowhere to continue to and drops out as unused.
 
 Right-click a member way near the end where the bus turns and choose **Allow U-turn**.
-A purple ring marks the node, and the route can now run in and back out. The setting
-lives in your browser only: nothing is uploaded, and it survives the incremental
-downloads that happen as you pan.
+A purple ring marks the node, and the route can now run in and back out over that way,
+which is listed twice in the relation as PTv2 requires. The setting lives in your
+browser only: nothing is uploaded, and it survives the incremental downloads that
+happen as you pan.
 
-The option is offered only at a genuine dead end, where no other way touches the node.
-Elsewhere it is disabled and reads *Not a dead end*, because away from a dead end the
-router models the turn as a jump between two different junctions — wrong, and enough
-extra branching to make the route search intractable.
+The only end that cannot be turned at is either end of a `oneway`, since coming back
+would mean driving it the wrong way.
 
 ### Creating new relations
 
@@ -172,7 +171,7 @@ are not covered by it.
 - ✅ Tag editing
 - ✅ Custom changeset comment
 - ✅ Creating new relations
-- ✅ U-turns at dead ends without `highway=turning_circle`
+- ✅ U-turns without `highway=turning_circle`
 
 ### Planned
 

@@ -1,7 +1,6 @@
 import { map, openInOpenStreetMap } from "./map.js"
 import { requestCalcBusRoute } from "./waysRoute.js"
 import {
-    isDeadEnd,
     isUTurnAllowed,
     isUTurnFromOsm,
     nearestWayEnd,
@@ -112,12 +111,9 @@ export function showContextMenu(e, way) {
     // a turning circle in OSM already permits the turn; nothing for us to toggle
     const fromOsm = isUTurnFromOsm(way, isStart)
     const allowed = isUTurnAllowed(way, isStart)
-    // build_graph() ignores a U-turn at the start of a oneway, since reaching it
-    // would mean driving the way backwards; offering the toggle would be a no-op
-    const unusable = isStart && way.oneway
-    // away from a dead end the router models the turn as a teleport between two
-    // junctions, which both misroutes and blows up the search
-    const deadEnd = isDeadEnd(way, isStart)
+    // turning around means leaving the way the direction it was entered from, so
+    // there is nothing to toggle on a road that can only be driven one way
+    const unusable = way.oneway
 
     let uTurnButton
     if (fromOsm) {
@@ -126,15 +122,9 @@ export function showContextMenu(e, way) {
                            ${U_TURN_ICON}
                            <div>Turning circle</div>
                        </button>`
-    } else if (!deadEnd) {
-        uTurnButton = `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-u-turn"
-                               disabled title="The road continues here, so there is nothing to turn around at. Right-click nearer the end where the bus turns.">
-                           ${U_TURN_ICON}
-                           <div>Not a dead end</div>
-                       </button>`
     } else if (unusable) {
         uTurnButton = `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="ep-u-turn"
-                               disabled title="A oneway cannot be turned around at its entry end">
+                               disabled title="A oneway cannot be driven back the way it was entered">
                            ${U_TURN_ICON}
                            <div>No U-turn</div>
                        </button>`
@@ -187,7 +177,7 @@ export function showContextMenu(e, way) {
         popup.close()
     }
 
-    if (!fromOsm && !unusable && deadEnd) {
+    if (!fromOsm && !unusable) {
         document.getElementById("ep-u-turn").onclick = () => {
             toggleUTurn(way, isStart)
             refreshUTurnMarkers()
