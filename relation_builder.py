@@ -153,10 +153,15 @@ def _unsplit_way_ids(way_ids: list[ElementId]) -> list[ElementId]:
             i += 1
             continue
 
-        # skip and blacklist: non-linear way
+        # skip and blacklist: not every segment of the way, in order. A route that
+        # turns around part way along a split way travels some segments twice and
+        # others not at all; collapsing that back to the whole way would claim a
+        # stretch the bus never drove, and lose one of the two passes.
+        step = 1 if way_id_parts.extra_num == 1 else -1
         if not all(
-            other_way_id_parts.id == way_id_parts.id  #
-            for other_way_id_parts in way_ids_parts[i + 1 : i_end + 1]
+            other_way_id_parts.id == way_id_parts.id
+            and other_way_id_parts.extra_num == way_id_parts.extra_num + step * offset
+            for offset, other_way_id_parts in enumerate(way_ids_parts[i : i_end + 1])
         ):
             simplify_blacklist.append(way_id_parts.id)
             i += 1

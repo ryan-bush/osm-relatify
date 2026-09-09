@@ -38,11 +38,12 @@ def test_dead_end_without_turn_in_place_is_a_sink():
     assert graph[GraphKey(STUB_ID, BOOL_END)].connected_to == ()
 
 
-def test_turn_in_place_end_connects_the_dead_end_back():
+def test_turn_in_place_end_drives_back_over_the_same_way():
     graph = _cul_de_sac(turn_end=True)
 
-    # the bus may turn around and come back out the way it came in
-    assert graph[GraphKey(STUB_ID, BOOL_END)].connected_to == (GraphKey(MAIN_ID, BOOL_END),)
+    # the bus turns around at the far end and comes back out the way it came in,
+    # so the stub is travelled a second time before the main road is reached again
+    assert graph[GraphKey(STUB_ID, BOOL_END)].connected_to == (GraphKey(STUB_ID, BOOL_END),)
 
 
 def test_turn_in_place_start_is_ignored_on_a_oneway():
@@ -52,8 +53,15 @@ def test_turn_in_place_start_is_ignored_on_a_oneway():
     assert graph[GraphKey(STUB_ID, BOOL_START)].connected_to == (GraphKey(MAIN_ID, BOOL_END),)
 
 
-def test_turn_in_place_on_a_through_way_teleports_between_junctions():
-    """Why the UI only offers a U-turn at a dead end."""
+def test_turn_in_place_end_is_ignored_on_a_oneway():
+    graph = _cul_de_sac(oneway=True, turn_end=True)
+
+    # turning around means coming back the other way, which a oneway does not allow
+    assert graph[GraphKey(STUB_ID, BOOL_END)].connected_to == ()
+
+
+def test_turn_in_place_on_a_through_way_keeps_the_other_turns():
+    """A bus may turn around mid-road - at a corner, say - and not only at a dead end."""
     junction_a = (51.0, 0.0)
     junction_b = (51.0, 0.01)
 
@@ -63,9 +71,9 @@ def test_turn_in_place_on_a_through_way_teleports_between_junctions():
 
     graph = build_graph({w.id: w for w in (before, through, after)})
 
-    # the far end gains an edge to a way at the *near* junction, which is not a
-    # turn but a jump between two different places
+    # carrying on past the corner stays available; turning is the extra option,
+    # and it goes back over W rather than jumping to a way at W's other end
     assert graph[GraphKey(ElementId('W'), BOOL_END)].connected_to == (
         GraphKey(ElementId('X'), BOOL_START),
-        GraphKey(ElementId('V'), BOOL_END),
+        GraphKey(ElementId('W'), BOOL_END),
     )

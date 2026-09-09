@@ -175,17 +175,20 @@ def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, G
                     connections.append(GraphKey(connected_way_id, BOOL_END))
             return connections
 
+        # A U-turn is turning around on the spot and driving back over the way
+        # just travelled, so the edge it adds is the way itself, re-entered from
+        # the end the turn happens at. Either way round, that means driving the
+        # way in both directions, which a oneway does not allow.
+
         # Build neighbors for START
         start_neighbors = find_connections_at(way.latLngs[0])
         if way.turn_in_place_start and not way.oneway:
-            # U-turn at START: also connect to ways at END
-            start_neighbors.extend(find_connections_at(way.latLngs[-1]))
+            start_neighbors.append(GraphKey(way_id, BOOL_START))
 
         # Build neighbors for END
         end_neighbors = find_connections_at(way.latLngs[-1])
-        if way.turn_in_place_end:
-            # U-turn at END: also connect to ways at START
-            end_neighbors.extend(find_connections_at(way.latLngs[0]))
+        if way.turn_in_place_end and not way.oneway:
+            end_neighbors.append(GraphKey(way_id, BOOL_END))
 
         convert_graph[GraphKey(way_id, BOOL_START)] = start_neighbors
         convert_graph[GraphKey(way_id, BOOL_END)] = end_neighbors
@@ -258,6 +261,12 @@ def angle_between_ways(
     return angle
 
 
+# A U-turn doubles back on itself, so there is no angle between two ways to
+# measure - angle_between_ways() would divide by zero. Charge it the most an
+# ordinary turn can cost, so a route only turns around where it has to.
+U_TURN_ANGLE_DIFFERENCE = 90
+
+
 def select_neighbors(
     way: FetchRelationElement,
     neighbors: Sequence[GraphKey],
@@ -265,28 +274,22 @@ def select_neighbors(
 ) -> Sequence[tuple[GraphKey, cython.double]]:
     if not neighbors:
         return ()
-    elif len(neighbors) == 1:
+    elif len(neighbors) == 1 and neighbors[0].way_id != way.id:
         return ((neighbors[0], 0),)
-
-    angles = (
-        (
-            angle_between_ways(way.latLngs, ways[neighbor.way_id].latLngs),
-            neighbor,
-        )
-        for neighbor in neighbors
-    )
 
     # the angle difference from the straight path
     # TODO: support 0-180 range by utilizing is_start
-    angle_differences = tuple(
-        (
-            neighbor,
-            90 - abs(90 - angle),
-        )
-        for angle, neighbor in angles
-    )
+    angle_differences: list[tuple[GraphKey, cython.double]] = []
 
-    return angle_differences
+    for neighbor in neighbors:
+        if neighbor.way_id == way.id:
+            angle_differences.append((neighbor, U_TURN_ANGLE_DIFFERENCE))
+            continue
+
+        angle = angle_between_ways(way.latLngs, ways[neighbor.way_id].latLngs)
+        angle_differences.append((neighbor, 90 - abs(90 - angle)))
+
+    return tuple(angle_differences)
 
 
 def get_bus_stops_at(
