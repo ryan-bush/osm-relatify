@@ -41,14 +41,19 @@ const yesNoOptions = `
     <option value="yes">Yes</option>
     <option value="no">No</option>`
 
-// Adds a new stop when `stop` is null, otherwise edits that pending stop.
-export function showNewStopForm(latlng, { stop = null, nearby = null, onSave, onDelete = null }) {
+// Adds a new stop when `stop` is null, starting from `tags` if given, otherwise edits
+// that pending stop. Tags the form has no field for, such as naptan:*, are kept.
+export function showNewStopForm(latlng, { stop = null, tags = null, nearby = null, onSave, onDelete = null }) {
     clearBusStopsPopup()
+
+    const initialTags = stop?.tags ?? tags ?? {}
+    const atcoCode = initialTags["naptan:AtcoCode"]
 
     const form = document.createElement("form")
     form.className = "new-stop-form"
     form.innerHTML = `
-        <div class="new-stop-title">${stop ? "New bus stop" : "Add a bus stop here"}</div>
+        <div class="new-stop-title">${stop ? "New bus stop" : atcoCode ? "Add this stop from NaPTAN" : "Add a bus stop here"}</div>
+        <div class="new-stop-naptan d-none"></div>
         <label>Name
             <input class="form-control form-control-sm" name="name" maxlength="255" required pattern=".*\\S.*">
         </label>
@@ -70,7 +75,18 @@ export function showNewStopForm(latlng, { stop = null, nearby = null, onSave, on
         </div>`
 
     // set through the DOM rather than the template, so typed text is never parsed as HTML
-    for (const key of FORM_KEYS) form.elements[key].value = stop?.tags[key] ?? ""
+    for (const key of FORM_KEYS) form.elements[key].value = initialTags[key] ?? ""
+
+    if (atcoCode) {
+        const details = [
+            `NaPTAN ${atcoCode}`,
+            initialTags["naptan:Indicator"],
+            initialTags["naptan:Bearing"] && `buses heading ${initialTags["naptan:Bearing"]}`,
+        ]
+        const notice = form.querySelector(".new-stop-naptan")
+        notice.textContent = `${details.filter(Boolean).join(" · ")}. NaPTAN positions can be tens of metres out, so drag the stop to where the pole is.`
+        notice.classList.remove("d-none")
+    }
 
     if (nearby) {
         const notice = form.querySelector(".new-stop-nearby")
@@ -85,14 +101,16 @@ export function showNewStopForm(latlng, { stop = null, nearby = null, onSave, on
     form.onsubmit = (e) => {
         e.preventDefault()
 
-        const tags = {}
+        const savedTags = Object.fromEntries(
+            Object.entries(initialTags).filter(([key]) => !FORM_KEYS.includes(key)),
+        )
         for (const key of FORM_KEYS) {
             const value = form.elements[key].value.trim()
-            if (value) tags[key] = value
+            if (value) savedTags[key] = value
         }
 
         popup.close()
-        onSave(tags)
+        onSave(savedTags)
     }
 
     if (stop) {

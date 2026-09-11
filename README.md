@@ -83,6 +83,8 @@ Everything below has a working default and can be set in `.env`:
 | `SENTRY_DSN` | Enables error reporting, off unless set. |
 | `OSM_URL` | The OSM instance to sign in to and upload to. Defaults to live OSM. |
 | `OSM_API_URL` | Its API host, if different. Only live OSM needs this, and it is set for you. |
+| `NAPTAN_ENABLED` | Set to `1` to [suggest stops from NaPTAN](#stops-from-naptan). Off by default. |
+| `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
 
 ### Testing uploads against the OSM dev server
 
@@ -172,6 +174,32 @@ Only platforms are created, not stop positions on the road, and there is no
 platforms, so it would disappear the next time the route loads. Overpass also lags
 OSM by a few minutes, so a new stop may not show when reloading straight after upload.
 
+### Stops from NaPTAN
+
+In Great Britain, stops listed in [NaPTAN](https://www.data.gov.uk/dataset/ff93ffc1-6656-47d8-9155-85ea0b8f2251/naptan)
+but missing from OSM can be shown near the route as grey markers with a dashed ring.
+Click one to add it: the form is filled in with the name, `local_ref` when the NaPTAN
+indicator is a stop letter or stand number, and the `naptan:AtcoCode`,
+`naptan:NaptanCode`, `naptan:CommonName`, `naptan:Indicator`, `naptan:Street` and
+`naptan:Bearing` tags. From there it is a new stop like any other, and the changeset
+gets `source=NaPTAN`.
+
+NaPTAN positions are often tens of metres out, so drag each stop to where the pole
+actually is. Stops are added one at a time, on purpose: adding them in bulk would be an
+import, which needs agreeing with the OSM community first.
+
+A NaPTAN stop counts as already mapped when an OSM stop has its `naptan:AtcoCode`, or
+has a similar name within 80 m. Each OSM stop accounts for one NaPTAN stop, so a
+missing stop is still shown when its namesake across the road is mapped. Where both
+have a `local_ref` it must agree, so a missing Stop M5 is not hidden by a mapped M3.
+An OSM code NaPTAN no longer lists is ignored, and an OSM stop matched by its code also
+covers a second NaPTAN record with the same letter, as NaPTAN occasionally has.
+Hail-and-ride, flexible and unmarked stops are left out, as they have no pole.
+
+This is off by default. Set `NAPTAN_ENABLED=1` and the server downloads the national
+dataset, about 100 MB, in the background on startup and again once a day, into `data/`.
+Suggestions appear once the first download has finished.
+
 ### Overpass resilience
 
 `OVERPASS_API_INTERPRETER` accepts several comma-separated endpoints. Each is retried,
@@ -207,6 +235,7 @@ are not covered by it.
 - ✅ Creating new relations
 - ✅ U-turns without `highway=turning_circle`
 - ✅ Creating new bus stops (platforms)
+- ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
 
 
 ### Planned

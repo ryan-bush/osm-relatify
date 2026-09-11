@@ -16,6 +16,10 @@ import { requestCalcBusRoute } from "./waysRoute.js"
 
 export let busStopData = null
 
+// stops in NaPTAN that OSM is missing; empty unless the server has NaPTAN enabled
+let naptanStops = []
+
+const naptanStopsLayer = L.layerGroup().addTo(map)
 const inactiveBusStopsLayer = L.layerGroup().addTo(map)
 const activeBusStopsLayer = L.layerGroup().addTo(map)
 
@@ -65,8 +69,12 @@ export function processBusStopData(fetchData) {
 
         // stops the user placed are not in OSM yet, so no download brings them back
         busStopData.push(...newStopCollections())
+
+        // worked out afresh for the whole downloaded area, so replaced rather than merged
+        naptanStops = fetchData.naptanStops ?? []
     } else {
         busStopData = null
+        naptanStops = []
         clearNewStops()
     }
 
@@ -87,8 +95,11 @@ function syncNewStops() {
 export function updateBusStopsVisibility() {
     activeBusStopsLayer.clearLayers()
     inactiveBusStopsLayer.clearLayers()
+    naptanStopsLayer.clearLayers()
 
     if (!(busStopData && waysRBush)) return
+
+    addNaptanStopsToLayer()
 
     for (const [i, busStopCollection] of busStopData.entries()) {
         const name = getBusCollectionName(busStopCollection)
@@ -126,17 +137,16 @@ function createBusStopIcon(iconUrl, size, className = "bus-stop-icon") {
     })
 }
 
-function addBusStopToLayer(i, stop, name, role) {
-    if (!stop.member) {
-        const nearby = waysRBush.search({
-            minX: stop.latLng[0],
-            minY: stop.latLng[1],
-            maxX: stop.latLng[0],
-            maxY: stop.latLng[1],
-        })
+const isNearRoute = (latLng) =>
+    waysRBush.search({
+        minX: latLng[0],
+        minY: latLng[1],
+        maxX: latLng[0],
+        maxY: latLng[1],
+    }).length > 0
 
-        if (nearby.length === 0) return
-    }
+function addBusStopToLayer(i, stop, name, role) {
+    if (!stop.member && !isNearRoute(stop.latLng)) return
 
     const addToLayer = stop.member ? activeBusStopsLayer : inactiveBusStopsLayer
 
@@ -200,6 +210,43 @@ function editNewStop(e, stop) {
             syncNewStops()
         },
     })
+}
+
+function addNaptanStopsToLayer() {
+    // a stop already added from a suggestion takes its place on the map
+    const added = new Set(
+        newStopCollections()
+            .map((entry) => entry.platform.tags["naptan:AtcoCode"])
+            .filter(Boolean),
+    )
+
+    for (const naptanStop of naptanStops) {
+        if (added.has(naptanStop.atcoCode) || !isNearRoute(naptanStop.latLng)) continue
+
+        const marker = L.marker(naptanStop.latLng, {
+            icon: createBusStopIcon("/static/img/bus_stop_off.webp", 20, "bus-stop-icon naptan-stop-icon"),
+        }).addTo(naptanStopsLayer)
+
+        const indicator = naptanStop.indicator ? ` <i>${escapeHtml(naptanStop.indicator)}</i>` : ""
+        marker.bindTooltip(`${escapeHtml(naptanStop.name)}${indicator}<br><small>In NaPTAN, missing from OSM</small>`, {
+            direction: "top",
+            offset: [0, -10],
+        })
+
+        const suggest = () => {
+            showNewStopForm(L.latLng(naptanStop.latLng), {
+                tags: naptanStop.tags,
+                nearby: findNearbyStop(naptanStop.latLng, null),
+                onSave: (tags) => {
+                    addNewStop([...naptanStop.latLng], tags)
+                    syncNewStops()
+                },
+            })
+        }
+
+        marker.on("click", suggest)
+        marker.on("contextmenu", suggest)
+    }
 }
 
 function addNewStopToLayer(stop) {
