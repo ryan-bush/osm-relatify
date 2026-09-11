@@ -43,6 +43,10 @@ _TAG_COLUMNS = (
     ('naptan:Bearing', 'Bearing'),
 )
 
+# bumped whenever what the database stores changes, so an older one is rebuilt on start
+# rather than serving stale tags until the next daily refresh
+DATA_VERSION = 2
+
 # NaPTAN positions are often tens of metres out
 MATCH_DISTANCE = 80  # meters
 # the cutoff bus_collection_builder.py groups similar stop names with
@@ -70,6 +74,13 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     for key, column in _TAG_COLUMNS:
         if value := row[column].strip():
             tags[key] = value
+
+    # https://wiki.openstreetmap.org/wiki/NaPTAN/Tag_mappings
+    if naptan_code := row['NaptanCode'].strip():
+        tags['ref'] = naptan_code
+
+    # taken from NaPTAN rather than surveyed; a mapper removes it after checking the stop
+    tags['naptan:verified'] = 'no'
 
     return NaptanStop(
         atcoCode=row['ATCOCode'].strip(),
@@ -99,6 +110,7 @@ def build_database(csv_path: Path, db_path: Path) -> int:
             )
 
         db.execute('CREATE INDEX stops_lat_lon ON stops (lat, lon)')
+        db.execute(f'PRAGMA user_version = {DATA_VERSION}')
         db.commit()
         (count,) = db.execute('SELECT COUNT(*) FROM stops').fetchone()
     finally:
@@ -198,9 +210,18 @@ class NaptanStore:
 
     def is_stale(self) -> bool:
         try:
-            return time.time() - self._db_path.stat().st_mtime > NAPTAN_MAX_AGE
+            if time.time() - self._db_path.stat().st_mtime > NAPTAN_MAX_AGE:
+                return True
         except FileNotFoundError:
             return True
+
+        db = sqlite3.connect(f'file:{self._db_path}?mode=ro', uri=True)
+        try:
+            (version,) = db.execute('PRAGMA user_version').fetchone()
+        finally:
+            db.close()
+
+        return version < DATA_VERSION
 
     async def keep_fresh(self) -> None:
         while True:

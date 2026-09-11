@@ -1,5 +1,6 @@
 import csv
 import os
+import sqlite3
 import time
 
 import pytest
@@ -10,7 +11,7 @@ from models.bounding_box import BoundingBox
 from models.element_id import ElementId
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, PublicTransport
 from models.naptan_stop import NaptanStop
-from naptan import NaptanStore, build_database, find_unmapped_stops, parse_row
+from naptan import DATA_VERSION, NaptanStore, build_database, find_unmapped_stops, parse_row
 
 COLUMNS = (
     'ATCOCode',
@@ -51,12 +52,14 @@ def test_marked_stop_becomes_platform_tags():
     assert stop.latLng == (57.141117, -2.117499)
     assert stop.tags == {
         'name': 'Union Grove',
+        'ref': '23234375',
         'naptan:AtcoCode': '639000011',
         'naptan:NaptanCode': '23234375',
         'naptan:CommonName': 'Union Grove',
         'naptan:Indicator': 'o/s 103',
         'naptan:Street': 'Union Grove',
         'naptan:Bearing': 'SW',
+        'naptan:verified': 'no',
     }
 
 
@@ -77,8 +80,10 @@ def test_empty_fields_are_left_out():
     tags = parse_row(_row(NaptanCode='', Street=' ', Bearing='')).tags
 
     assert 'naptan:NaptanCode' not in tags
+    assert 'ref' not in tags
     assert 'naptan:Street' not in tags
     assert 'naptan:Bearing' not in tags
+    assert tags['naptan:verified'] == 'no'
 
 
 @pytest.mark.parametrize(
@@ -154,6 +159,18 @@ def test_staleness_follows_the_database_age(tmp_path):
     two_days_ago = time.time() - 2 * 24 * 3600
     os.utime(tmp_path / 'naptan.sqlite', (two_days_ago, two_days_ago))
     assert store.is_stale()
+
+
+def test_a_database_from_an_older_version_is_rebuilt(tmp_path):
+    _write_csv(tmp_path / 'naptan.csv', [_row()])
+    build_database(tmp_path / 'naptan.csv', tmp_path / 'naptan.sqlite')
+
+    db = sqlite3.connect(tmp_path / 'naptan.sqlite')
+    db.execute(f'PRAGMA user_version = {DATA_VERSION - 1}')
+    db.commit()
+    db.close()
+
+    assert NaptanStore(tmp_path).is_stale()
 
 
 def _naptan(code, lat_lng, name='Union Grove', local_ref=None):
