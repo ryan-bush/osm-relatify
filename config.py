@@ -55,6 +55,37 @@ PROTECTED_TAG_KEYS = frozenset(
     }
 )
 
+_LIVE_OSM_URL = 'https://www.openstreetmap.org'
+_LIVE_OSM_API_URL = 'https://api.openstreetmap.org'
+
+
+def resolve_osm_urls(osm_url: str | None, osm_api_url: str | None) -> tuple[str, str]:
+    """
+    Work out the website and API hosts of the OSM instance to sign in to and upload to.
+
+    Live OSM serves its API from a separate host, but other instances (the dev server at
+    master.apis.dev.openstreetmap.org) serve both from one, so setting only the website
+    is enough there.
+    """
+    web = (osm_url or _LIVE_OSM_URL).rstrip('/')
+    if osm_api_url:
+        api = osm_api_url.rstrip('/')
+    elif web == _LIVE_OSM_URL:
+        api = _LIVE_OSM_API_URL
+    else:
+        api = web
+    return web, api
+
+
+# Map data always comes from Overpass, which only indexes live OSM. Pointing this at the
+# dev server is for testing uploads: creating relations works, but editing an existing
+# relation or way fails, as the ids Overpass returns do not exist there.
+OSM_URL, OSM_API_URL = resolve_osm_urls(os.getenv('OSM_URL'), os.getenv('OSM_API_URL'))
+OSM_IS_LIVE = OSM_URL == _LIVE_OSM_URL
+
+if not OSM_IS_LIVE:
+    print(f'[CONF] Signing in and uploading to {OSM_URL}, not live OpenStreetMap')
+
 OSM_CLIENT = os.getenv('OSM_CLIENT', None)
 OSM_SECRET = os.getenv('OSM_SECRET', None)
 OSM_SCOPES = 'read_prefs write_api'

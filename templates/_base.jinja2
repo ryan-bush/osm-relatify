@@ -1,6 +1,6 @@
 {% import '_message_modal.jinja2' as message_modal with context %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-osm-url="{{ osm_url }}" data-osm-live="{{ 'true' if osm_is_live else 'false' }}">
 
 <head>
   <meta charset="utf-8" />

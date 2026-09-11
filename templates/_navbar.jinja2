@@ -57,12 +57,18 @@
 
         <ul class="navbar-nav ms-auto">
             <li class="nav-item d-flex align-items-center">
+                {% if not osm_is_live %}
+                <span class="badge text-bg-warning me-2" title="Uploads go to {{ osm_url }}, not live OpenStreetMap">
+                    {{ osm_url | replace('https://', '') }}
+                </span>
+                {% endif %}
+
                 {% if user.img.href %}
                 <img class="me-1 rounded" src="{{ user.img.href }}" width="28" height="28" alt="Profile picture">
                 {% endif %}
 
                 <a class="me-2 link-dark link-offset-1 link-underline-opacity-0 link-underline-opacity-50-hover"
-                    href="https://www.openstreetmap.org/user/{{ user.display_name | urlencode }}" target="_blank">
+                    href="{{ osm_url }}/user/{{ user.display_name | urlencode }}" target="_blank">
                     {{ user.display_name }}
                 </a>
 

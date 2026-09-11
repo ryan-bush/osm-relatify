@@ -6,7 +6,7 @@ import xmltodict
 from asyncache import cached
 from cachetools import TTLCache
 
-from config import CHANGESET_ID_PLACEHOLDER, TAG_MAX_LENGTH
+from config import CHANGESET_ID_PLACEHOLDER, OSM_API_URL, TAG_MAX_LENGTH
 from utils import ensure_list, get_http_client
 
 
@@ -42,7 +42,7 @@ class UploadResult:
 class OpenStreetMap:
     def __init__(self, *, access_token: str | None = None):
         self._http = get_http_client(
-            'https://api.openstreetmap.org/api',
+            f'{OSM_API_URL}/api',
             headers={'Authorization': f'Bearer {access_token}'} if access_token else None,
         )
 
