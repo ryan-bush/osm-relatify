@@ -44,7 +44,7 @@ MAX_PATH_LENGTH_FACTOR = 2.2
 # The search is exhaustive, so anything that widens the graph - a U-turn most of
 # all - can grow it beyond what is searchable. Past this budget, return the best
 # route found so far instead of letting the request time out with nothing.
-MAX_SEARCH_TIME = 2.0  # seconds, must stay below the request timeout in main.py
+MAX_SEARCH_TIME = 5.0  # seconds, must stay below the request timeout in main.py
 
 
 class GraphKey(NamedTuple):
