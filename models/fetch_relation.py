@@ -134,6 +134,17 @@ class FetchRelationBusStopCollection:
     def best(self) -> FetchRelationBusStop:
         return self.platform or self.stop
 
+    @property
+    def atco_codes(self) -> set[str]:
+        """The NaPTAN codes the platform and stop position carry, if any."""
+        return {
+            code.strip()
+            for stop in (self.platform, self.stop)
+            if stop is not None
+            for code in stop.tags.get('naptan:AtcoCode', '').split(';')
+            if code.strip()
+        }
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class FetchRelation:

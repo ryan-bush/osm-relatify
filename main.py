@@ -349,6 +349,8 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                 route = replace(route, extraWaysToUpdate=tuple(ways_non_members.values()))
                 route = sort_and_upgrade_members(route, relation_members)
 
+                inactive_naptan_codes = await NAPTAN.find_inactive(route.busStops) if NAPTAN_ENABLED else frozenset()
+
                 final_route = check_for_issues(
                     route=route,
                     ways=ways_members,
@@ -356,6 +358,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                     end_way=model.stopWay,
                     bus_stop_collections=model.busStops,
                     relation_members=relation_members,
+                    inactive_naptan_codes=inactive_naptan_codes,
                 )
 
                 response = deflate_compress(orjson.dumps(final_route, option=orjson.OPT_STRICT_INTEGER))

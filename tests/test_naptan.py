@@ -144,6 +144,31 @@ def test_download_without_bus_stops_keeps_the_previous_database(tmp_path):
     assert not list(tmp_path.glob('*.tmp'))
 
 
+def test_inactive_bus_stops_are_recorded(tmp_path):
+    _write_csv(
+        tmp_path / 'naptan.csv',
+        [
+            _row(),
+            _row(ATCOCode='639000050', Status='inactive'),
+            _row(ATCOCode='639000060', Status='inactive', StopType='RSE'),
+        ],
+    )
+    build_database(tmp_path / 'naptan.csv', tmp_path / 'naptan.sqlite')
+
+    inactive = NaptanStore(tmp_path).inactive_codes(['639000011', '639000050', '639000060', 'unknown'])
+
+    assert inactive == {'639000050'}
+
+
+def test_a_database_without_inactive_stops_reports_none(tmp_path):
+    db = sqlite3.connect(tmp_path / 'naptan.sqlite')
+    db.execute('CREATE TABLE stops (atco TEXT PRIMARY KEY, lat REAL, lon REAL, tags TEXT)')
+    db.commit()
+    db.close()
+
+    assert NaptanStore(tmp_path).inactive_codes(['639000050']) == frozenset()
+
+
 def test_missing_database_serves_nothing(tmp_path):
     assert NaptanStore(tmp_path).stops_within([BoundingBox(57, -3, 58, -2)]) == []
 

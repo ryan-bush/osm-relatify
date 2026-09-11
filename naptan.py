@@ -45,7 +45,7 @@ _TAG_COLUMNS = (
 
 # bumped whenever what the database stores changes, so an older one is rebuilt on start
 # rather than serving stale tags until the next daily refresh
-DATA_VERSION = 2
+DATA_VERSION = 3
 
 # NaPTAN positions are often tens of metres out
 MATCH_DISTANCE = 80  # meters
@@ -101,13 +101,18 @@ def build_database(csv_path: Path, db_path: Path) -> int:
         db.execute(
             'CREATE TABLE stops (atco TEXT PRIMARY KEY, lat REAL NOT NULL, lon REAL NOT NULL, tags TEXT NOT NULL)'
         )
+        # bus stops NaPTAN has retired, to spot routes still calling at them
+        db.execute('CREATE TABLE inactive (atco TEXT PRIMARY KEY)')
 
         with csv_path.open(newline='', encoding='utf-8-sig') as f:
-            stops = filter(None, map(parse_row, csv.DictReader(f)))
-            db.executemany(
-                'INSERT OR REPLACE INTO stops VALUES (?, ?, ?, ?)',
-                ((s.atcoCode, s.latLng[0], s.latLng[1], orjson.dumps(s.tags)) for s in stops),
-            )
+            for row in csv.DictReader(f):
+                if stop := parse_row(row):
+                    db.execute(
+                        'INSERT OR REPLACE INTO stops VALUES (?, ?, ?, ?)',
+                        (stop.atcoCode, stop.latLng[0], stop.latLng[1], orjson.dumps(stop.tags)),
+                    )
+                elif row['StopType'] in _BUS_STOP_TYPES and row['Status'] == 'inactive':
+                    db.execute('INSERT OR IGNORE INTO inactive VALUES (?)', (row['ATCOCode'].strip(),))
 
         db.execute('CREATE INDEX stops_lat_lon ON stops (lat, lon)')
         db.execute(f'PRAGMA user_version = {DATA_VERSION}')
@@ -136,17 +141,9 @@ def find_unmapped_stops(
     coded: list[bool] = []
 
     for collection in bus_stop_collections:
-        codes = {
-            code.strip()
-            for stop in (collection.platform, collection.stop)
-            if stop is not None
-            for code in stop.tags.get('naptan:AtcoCode', '').split(';')
-            if code.strip()
-        }
-
         # a code NaPTAN no longer lists says nothing about which stop this is, so the
         # stop is matched as though it had no code
-        live_codes = codes & active_codes
+        live_codes = collection.atco_codes & active_codes
         mapped_codes |= live_codes
         coded.append(bool(live_codes))
 
@@ -301,6 +298,26 @@ class NaptanStore:
         bbs, _ = optimize_cells_and_get_bbs(cells, start_horizontal=True)
         naptan_stops = await asyncio.to_thread(self.stops_within, bbs)
         return find_unmapped_stops(naptan_stops, bus_stop_collections)
+
+    def inactive_codes(self, codes: Iterable[str]) -> frozenset[str]:
+        codes = tuple(set(codes))
+        if not codes or not self._db_path.exists():
+            return frozenset()
+
+        db = sqlite3.connect(f'file:{self._db_path}?mode=ro', uri=True)
+        try:
+            placeholders = ','.join('?' * len(codes))
+            rows = db.execute(f'SELECT atco FROM inactive WHERE atco IN ({placeholders})', codes)  # noqa: S608
+            return frozenset(atco for (atco,) in rows)
+        except sqlite3.OperationalError:
+            # built before inactive stops were recorded; replaced by the next refresh
+            return frozenset()
+        finally:
+            db.close()
+
+    async def find_inactive(self, bus_stop_collections: Sequence[FetchRelationBusStopCollection]) -> frozenset[str]:
+        codes = list(chain.from_iterable(collection.atco_codes for collection in bus_stop_collections))
+        return await asyncio.to_thread(self.inactive_codes, codes)
 
 
 NAPTAN = NaptanStore(NAPTAN_DATA_DIR)

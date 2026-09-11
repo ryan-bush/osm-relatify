@@ -202,6 +202,16 @@ This is off by default. Set `NAPTAN_ENABLED=1` and the server downloads the nati
 dataset, about 100 MB, in the background on startup and again once a day, into `data/`.
 Suggestions appear once the first download has finished.
 
+Two route warnings use NaPTAN as well. Both are low severity, so neither blocks
+uploading.
+
+- **Some stops are inactive in NaPTAN** lists stops on the route whose `naptan:AtcoCode`
+  NaPTAN has marked inactive, which usually means the stop was taken out of use. It
+  needs `NAPTAN_ENABLED`.
+- **Some stops serve the other direction** compares a stop's `naptan:Bearing` with the
+  way the route passes it, which catches the stop across the road being picked. It only
+  reads the tag, so it works without the download.
+
 ### Overpass resilience
 
 `OVERPASS_API_INTERPRETER` accepts several comma-separated endpoints. Each is retried,
