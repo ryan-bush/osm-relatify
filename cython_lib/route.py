@@ -8,6 +8,7 @@ from itertools import chain
 from typing import NamedTuple, Self
 
 import cython
+import networkx as nx
 
 from cython_lib.geoutils import haversine_distance
 from models.element_id import ElementId
@@ -210,6 +211,25 @@ def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, G
     return result
 
 
+def loop_components(graph: dict[GraphKey, GraphValue]) -> dict[GraphKey, int]:
+    """Number each way entry by the strongly connected component it belongs to.
+
+    Two entries share a component when each can be driven to from the other, so a way
+    in the same component as the one before it can bring the bus back again.
+    """
+    digraph = nx.DiGraph()
+    digraph.add_nodes_from(graph)
+    for key in graph:
+        exit_at_key = key._replace(is_start=not key.is_start)
+        digraph.add_edges_from((key, neighbor) for neighbor in graph[exit_at_key].connected_to)
+
+    return {
+        key: component_num
+        for component_num, component in enumerate(nx.strongly_connected_components(digraph))
+        for key in component
+    }
+
+
 def angle_between_ways(
     latlons1: Sequence[tuple[cython.double, cython.double]],
     latlons2: Sequence[tuple[cython.double, cython.double]],
@@ -323,6 +343,7 @@ def modified_dfs_worker(
     best_path: BestPathCollection,
     max_length: cython.double,
     max_iter: cython.int,
+    components: dict[GraphKey, int],
 ) -> tuple[list[StackElement], BestPathCollection]:
     message_ref = [f'Worker with {len(stack)} stack size']
     current_iter = 0
@@ -358,6 +379,22 @@ def modified_dfs_worker(
             current_way = ways[current_key.way_id]
             neighbors = graph[exit_at_key].connected_to
             valid_neighbors = select_neighbors(current_way, neighbors, ways)
+
+            # A long route runs out of search time long before the search is exhaustive,
+            # so whatever is tried first is what gets returned. The stack pops the last
+            # neighbor pushed, so order the likeliest continuation last: a member way not
+            # driven yet over one already driven, then a way that can lead back here - a
+            # detour off the main road to serve a stop - over one that leaves it behind
+            # for good. Taken the other way round, the bus skips the detour and the rest
+            # of the budget goes on refining the route beyond it.
+            current_component = components[current_key]
+            valid_neighbors = sorted(
+                valid_neighbors,
+                key=lambda n: (
+                    n[0].way_id not in s.complete_path,
+                    components[n[0]] == current_component,
+                ),
+            )
 
             intersection_id = graph[exit_at_key].intersection_id
 
@@ -490,6 +527,7 @@ async def modified_dfs(
     n_processes: cython.int,
 ) -> BestPath:
     max_length = MAX_PATH_LENGTH_FACTOR * sum(w.length for w in ways.values())
+    components = loop_components(graph)
 
     start_start_key = GraphKey(start_way, BOOL_START)
     start_end_key = GraphKey(start_way, BOOL_END)
@@ -532,6 +570,7 @@ async def modified_dfs(
         best_path,
         max_length=max_length,
         max_iter=sync_max_iter,
+        components=components,
     )
 
     async def worker(
@@ -553,6 +592,7 @@ async def modified_dfs(
                 best_path,
                 max_length=max_length,
                 max_iter=max_iter,
+                components=components,
             ),
         )
 
