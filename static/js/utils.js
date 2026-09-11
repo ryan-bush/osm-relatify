@@ -4,6 +4,12 @@
 export const osmUrl = document.documentElement.dataset.osmUrl
 export const osmIsLive = document.documentElement.dataset.osmLive === "true"
 
+export const escapeHtml = (text) => {
+    const div = document.createElement("div")
+    div.textContent = text
+    return div.innerHTML
+}
+
 export const haversine_distance = (latLng1, latLng2) => {
     const R = 6371000 // metres
 

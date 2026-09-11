@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sklearn.neighbors import BallTree
 from starlette import status
 
+from bus_stop_creation import NewBusStop, build_new_stop_nodes
 from config import CHANGESET_ID_PLACEHOLDER, CREATED_BY
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id, split_element_id
@@ -258,7 +259,8 @@ def _initialize_osm_change_structure() -> dict:
         'osmChange': {
             '@version': 0.6,
             '@generator': CREATED_BY,
-            'create': {'way': [], 'relation': []},
+            # in this order: an element must be created before anything refers to it
+            'create': {'node': [], 'way': [], 'relation': []},
             'modify': {'way': [], 'relation': []},
         }
     }
@@ -429,6 +431,7 @@ async def build_osm_change(
     osm: OpenStreetMap,
     tags_original: dict[str, str] | None = None,
     tags_edited: dict[str, str] | None = None,
+    new_stops: Sequence[NewBusStop] = (),
 ) -> str:
     split_ways_mutable: set[int] = set()
     native_id_element_ids_map: dict[int, dict[int, ElementId]] = defaultdict(dict)
@@ -465,6 +468,13 @@ async def build_osm_change(
         relation_task = asyncio.create_task(osm.get_relation(relation_id, json=False))
 
     result = _initialize_osm_change_structure()
+
+    # route is a protected tag, so the edited copy cannot disagree with the loaded one
+    route_type = (tags_edited or route.tags).get('route')
+
+    for node in build_new_stop_nodes(new_stops, route_type, route.members):
+        _set_changeset_placeholder(node, include_changeset_id)
+        result['osmChange']['create']['node'].append(node)
 
     if split_ways:
         parents_task = asyncio.create_task(overpass.query_parents(split_ways))

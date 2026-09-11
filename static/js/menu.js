@@ -1,4 +1,5 @@
 import { busStopData, processBusStopData } from "./busStopsLayer.js"
+import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
 import {
     downloadHistoryData,
     processRelationDownloadTriggers,
@@ -212,7 +213,10 @@ createRelationForm.addEventListener("submit", (e) => {
                 "info",
                 "🆕 New route started",
                 "Click the ways the route follows, then right-click one to set <b>START</b> and another to set <b>END</b>. " +
-                    "Fill in <b>name</b>, <b>ref</b>, <b>from</b> and <b>to</b> in the tag table before uploading.",
+                    "Fill in <b>name</b>, <b>ref</b>, <b>from</b> and <b>to</b> in the tag table before uploading." +
+                    (newRouteType === "bus"
+                        ? "<br><br>A stop missing from the map? Right-click where it is to add it."
+                        : ""),
             )
         })
         .catch((error) => {
@@ -391,6 +395,14 @@ editReloadBtn.onclick = async () => {
 // mirrors make_comment() in main.py purely to show what will be used when the field is
 // left blank; the server generates the comment it actually uploads
 const makeDefaultComment = () => {
+    const stopCount = newStopCount()
+    const added = stopCount
+        ? `; added ${stopCount} bus stop${stopCount !== 1 ? "s" : ""}`
+        : ""
+    return makeRouteComment() + added
+}
+
+const makeRouteComment = () => {
     const name = (relationTags.name ?? "").trim()
     let ref = (relationTags.ref ?? "").trim()
 
@@ -427,15 +439,21 @@ export const processRouteStops = (data) => {
     for (const collection of data.busStops) {
         const isPlatform = collection.platform != null
         const isStop = collection.stop != null
+        // not in OSM until upload, so there is nothing to link to yet
+        const isNew = isNewStop(collection.platform)
 
         routeSummary.appendChild(
             createElementFromHTML(`
         <div class="route-summary-item">
             <img class="stop-icon" src="/static/img/bus_stop.webp" alt="Bus stop icon" height="28">
-            <div class="stop-name">${styleStopName(getBusCollectionName(collection))}</div>
+            <div class="stop-name">${styleStopName(getBusCollectionName(collection))}${
+                isNew ? ' <span class="badge text-bg-warning stop-new-badge">new</span>' : ""
+            }</div>
             <div class="stop-info">
                 ${
-                    isPlatform
+                    isNew
+                        ? `<span class="stop-info-platform" title="This stop is created when you upload">P</span>`
+                        : isPlatform
                         ? `<a class="stop-info-platform link-underline link-underline-opacity-0 link-underline-opacity-100-hover"
                     title="This stop has a platform"
                     href="https://www.openstreetmap.org/${collection.platform.type}/${collection.platform.id}"
@@ -498,6 +516,7 @@ submitUploadBtn.onclick = async () => {
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
             comment: submitComment.value,
+            newStops: newStopsPayload(),
         }),
     })
         .then(async (resp) => {
@@ -565,6 +584,7 @@ submitDownloadBtn.onclick = async () => {
             route: routeData,
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
+            newStops: newStopsPayload(),
         }),
     })
         .then(async (resp) => {

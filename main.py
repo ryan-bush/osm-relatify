@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sentry_sdk import start_transaction
 from starlette.websockets import WebSocketState
 
+from bus_stop_creation import NewBusStop
 from compression import deflate_compress, deflate_decompress
 from config import (
     CALC_ROUTE_MAX_PROCESSES,
@@ -362,11 +363,21 @@ class PostDownloadOsmChangeModel(BaseModel):
     tagsOriginal: dict[str, str] | None = None
     # overrides the generated changeset comment when the user provides one
     comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
+    # bus stops placed on the map, created by this changeset
+    newStops: list[NewBusStop] = Field(default_factory=list)
 
     def make_comment(self) -> str:
         if self.comment is not None and (comment := self.comment.strip()):
             return comment
 
+        comment = self._make_route_comment()
+
+        if stop_count := len(self.newStops):
+            comment += f'; added {stop_count} bus stop{"s" if stop_count != 1 else ""}'
+
+        return comment
+
+    def _make_route_comment(self) -> str:
         tags_name = self.tags.get('name', '')
         tags_ref = self.tags.get('ref', '')
 
@@ -412,6 +423,7 @@ async def post_download_osm_change(model: PostDownloadOsmChangeModel, _=Depends(
             osm=_OSM,
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
+            new_stops=model.newStops,
         )
 
     return Response(content=osm_change, media_type='text/xml; charset=utf-8')
@@ -436,6 +448,7 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
             osm=_OSM,
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
+            new_stops=model.newStops,
         )
 
     async with OpenStreetMap(access_token=access_token) as osm:

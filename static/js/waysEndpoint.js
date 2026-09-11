@@ -157,9 +157,12 @@ export function showContextMenu(e, way) {
         maxWidth: 400,
     }).openOn(map)
 
-    const setStartButton = document.getElementById("ep-set-start")
-    const setStopButton = document.getElementById("ep-set-stop")
-    const openOsmButton = document.getElementById("ep-open-osm")
+    // scoped to this popup: a menu closed a moment ago is still fading out with the
+    // same ids, and a document-wide lookup would wire up its buttons instead
+    const content = popup.getElement()
+    const setStartButton = content.querySelector("#ep-set-start")
+    const setStopButton = content.querySelector("#ep-set-stop")
+    const openOsmButton = content.querySelector("#ep-open-osm")
 
     setStartButton.onclick = () => {
         setStartMarker(way)
@@ -178,7 +181,7 @@ export function showContextMenu(e, way) {
     }
 
     if (!fromOsm && !unusable) {
-        document.getElementById("ep-u-turn").onclick = () => {
+        content.querySelector("#ep-u-turn").onclick = () => {
             toggleUTurn(way, isStart)
             refreshUTurnMarkers()
             requestCalcBusRoute()
