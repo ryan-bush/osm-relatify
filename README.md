@@ -179,9 +179,11 @@ OSM by a few minutes, so a new stop may not show when reloading straight after u
 In Great Britain, stops listed in [NaPTAN](https://www.data.gov.uk/dataset/ff93ffc1-6656-47d8-9155-85ea0b8f2251/naptan)
 but missing from OSM can be shown near the route as grey markers with a dashed ring.
 Click one to add it: the form is filled in with the name, `local_ref` when the NaPTAN
-indicator is a stop letter or stand number, and the `naptan:AtcoCode`,
-`naptan:NaptanCode`, `naptan:CommonName`, `naptan:Indicator`, `naptan:Street` and
-`naptan:Bearing` tags. From there it is a new stop like any other, and the changeset
+indicator is a stop letter or stand number, `ref` from the NaPTAN code as
+[the tag mappings](https://wiki.openstreetmap.org/wiki/NaPTAN/Tag_mappings) describe, the
+`naptan:AtcoCode`, `naptan:NaptanCode`, `naptan:CommonName`, `naptan:Indicator`,
+`naptan:Street` and `naptan:Bearing` tags, and `naptan:verified=no` to mark it as taken
+from NaPTAN rather than surveyed. From there it is a new stop like any other, and the changeset
 gets `source=NaPTAN`.
 
 NaPTAN positions are often tens of metres out, so drag each stop to where the pole
