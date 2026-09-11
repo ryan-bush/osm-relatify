@@ -49,6 +49,7 @@ from models.fetch_relation import (
 )
 from models.final_route import FinalRoute, WarningSeverity
 from naptan import NAPTAN
+from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
 from relation_builder import build_osm_change, get_relation_members, sort_and_upgrade_members
@@ -249,10 +250,13 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         bus_stop_collections = assign_none_members(bus_stop_collections, relation)
 
     naptan_stops = []
+    naptan_tags = []
     # get_route_type() reads trolleybus routes as bus
     if NAPTAN_ENABLED and route_type == 'bus':
-        with print_run_time('Finding stops missing from OSM'):
-            naptan_stops = await NAPTAN.find_unmapped(download_hist, bus_stop_collections)
+        with print_run_time('Matching stops with NaPTAN'):
+            matches = await NAPTAN.match(download_hist, bus_stop_collections)
+        naptan_stops = matches.unmapped
+        naptan_tags = matches.tag_suggestions
 
     return FetchRelation(
         fetchMerge=len(download_hist.history) > 1 or model.reload,
@@ -266,6 +270,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         ways=ways,
         busStops=bus_stop_collections,
         naptanStops=naptan_stops,
+        naptanTags=naptan_tags,
     )
 
 
@@ -383,6 +388,8 @@ class PostDownloadOsmChangeModel(BaseModel):
     comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
     # bus stops placed on the map, created by this changeset
     newStops: list[NewBusStop] = Field(default_factory=list)
+    # NaPTAN tags to add to stops already in OSM
+    naptanTagAdditions: list[StopTagAddition] = Field(default_factory=list)
 
     def make_comment(self) -> str:
         if self.comment is not None and (comment := self.comment.strip()):
@@ -393,6 +400,9 @@ class PostDownloadOsmChangeModel(BaseModel):
         if stop_count := len(self.newStops):
             comment += f'; added {stop_count} bus stop{"s" if stop_count != 1 else ""}'
 
+        if tagged_count := len(self.naptanTagAdditions):
+            comment += f'; added NaPTAN tags to {tagged_count} bus stop{"s" if tagged_count != 1 else ""}'
+
         return comment
 
     def make_changeset_tags(self) -> dict[str, str]:
@@ -402,8 +412,8 @@ class PostDownloadOsmChangeModel(BaseModel):
             'host': WEBSITE,
         }
 
-        # credits NaPTAN, as its licence requires, when a stop was made from it
-        if any('naptan:AtcoCode' in stop.tags for stop in self.newStops):
+        # credits NaPTAN, as its licence requires, when a stop was made or tagged from it
+        if self.naptanTagAdditions or any('naptan:AtcoCode' in stop.tags for stop in self.newStops):
             tags['source'] = 'NaPTAN'
 
         return tags
@@ -455,6 +465,7 @@ async def post_download_osm_change(model: PostDownloadOsmChangeModel, _=Depends(
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
             new_stops=model.newStops,
+            tag_additions=model.naptanTagAdditions,
         )
 
     return Response(content=osm_change, media_type='text/xml; charset=utf-8')
@@ -480,6 +491,7 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
             new_stops=model.newStops,
+            tag_additions=model.naptanTagAdditions,
         )
 
     async with OpenStreetMap(access_token=access_token) as osm:

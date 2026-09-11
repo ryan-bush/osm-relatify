@@ -8,7 +8,7 @@ from cython_lib.geoutils import haversine_distance
 from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
-from models.naptan_stop import NaptanStop
+from models.naptan_stop import NaptanStop, NaptanTagSuggestion
 from utils import normalize_name
 
 
@@ -161,6 +161,8 @@ class FetchRelation:
     busStops: list[FetchRelationBusStopCollection]
     # stops in NaPTAN that are missing from OSM, offered for adding
     naptanStops: list[NaptanStop] = field(default_factory=list)
+    # stops in OSM that are missing tags NaPTAN has for them, offered for filling in
+    naptanTags: list[NaptanTagSuggestion] = field(default_factory=list)
 
 
 def find_start_stop_ways(

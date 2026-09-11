@@ -79,6 +79,22 @@
   border-radius: 50%;
 }
 
+/* a stop in OSM that NaPTAN tags will be added to on upload */
+.bus-stop-tags-added {
+  filter: drop-shadow(0 0 2px #2f7bd8) drop-shadow(0 0 2px #2f7bd8);
+}
+
+.naptan-tags-table td {
+  font-size: .8em;
+  padding: .1rem .3rem;
+  word-break: break-word;
+}
+
+.naptan-tags-table td.key {
+  font-family: monospace;
+  white-space: nowrap;
+}
+
 /* a stop that exists only in the browser until upload */
 .bus-stop-new {
   filter: drop-shadow(0 0 2px #e0a800) drop-shadow(0 0 2px #e0a800);

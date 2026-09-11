@@ -203,6 +203,16 @@ background on startup and again once a day, into `data/`. Suggestions appear onc
 first download has finished. NaPTAN only covers Great Britain, so elsewhere set
 `NAPTAN_ENABLED=0` to skip the download.
 
+A stop already in OSM that NaPTAN has more tags for says so in its tooltip. Right-click
+it and choose **Add NaPTAN tags** to see them and add them; the stop glows blue until
+upload, and the same button takes them back out. Only `ref`, `local_ref` and the
+`naptan:*` tags above are offered, never `name` or `naptan:verified`, and only ones the
+stop lacks. On upload each stop is fetched again, tags it has gained since are skipped,
+and a tag that has been given a different value stops the upload as a conflict. Tags
+come only from a match that is certain: the stop's own `naptan:AtcoCode`, or a similar
+name with nothing else competing for the pairing or with the same `local_ref`. Adding
+tags counts as a change, so it can be uploaded even when the route itself is unchanged.
+
 Two route warnings use NaPTAN as well. Both are low severity, so neither blocks
 uploading.
 
