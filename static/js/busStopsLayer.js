@@ -1,4 +1,4 @@
-import { clearBusStopsPopup, showContextMenu, showNewStopForm } from "./busStopsContext.js"
+import { clearBusStopsPopup, showContextMenu, showNaptanTagsForm, showNewStopForm } from "./busStopsContext.js"
 import {
     addNewStop,
     clearNewStops,
@@ -9,6 +9,7 @@ import {
     updateNewStop,
 } from "./busStopsNew.js"
 import { map } from "./map.js"
+import { addTagAddition, clearTagAdditions, getTagAddition, removeTagAddition } from "./naptanTagAdditions.js"
 import { relationTags } from "./tagEditor.js"
 import { escapeHtml, getBusCollectionName, haversine_distance } from "./utils.js"
 import { waysRBush } from "./waysLayer.js"
@@ -18,6 +19,11 @@ export let busStopData = null
 
 // stops in NaPTAN that OSM is missing; empty unless the server has NaPTAN enabled
 let naptanStops = []
+
+// tags NaPTAN has for stops already in OSM, keyed like the stops' type and id
+let naptanTagSuggestions = new Map()
+
+const stopKey = (stop) => `${stop.type},${stop.id}`
 
 const naptanStopsLayer = L.layerGroup().addTo(map)
 const inactiveBusStopsLayer = L.layerGroup().addTo(map)
@@ -72,10 +78,13 @@ export function processBusStopData(fetchData) {
 
         // worked out afresh for the whole downloaded area, so replaced rather than merged
         naptanStops = fetchData.naptanStops ?? []
+        naptanTagSuggestions = new Map((fetchData.naptanTags ?? []).map((suggestion) => [stopKey(suggestion), suggestion]))
     } else {
         busStopData = null
         naptanStops = []
+        naptanTagSuggestions = new Map()
         clearNewStops()
+        clearTagAdditions()
     }
 
     onBusStopDataChanged()
@@ -150,18 +159,59 @@ function addBusStopToLayer(i, stop, name, role) {
 
     const addToLayer = stop.member ? activeBusStopsLayer : inactiveBusStopsLayer
 
+    const suggestion = naptanTagSuggestions.get(stopKey(stop))
+    const addition = getTagAddition(stop)
+
     const marker = L.marker(stop.latLng, {
-        icon: createBusStopIcon(`/static/img/bus_stop_${stop.member ? "on" : "off"}.webp`, stop.member ? 24 : 20),
+        icon: createBusStopIcon(
+            `/static/img/bus_stop_${stop.member ? "on" : "off"}.webp`,
+            stop.member ? 24 : 20,
+            addition ? "bus-stop-icon bus-stop-tags-added" : "bus-stop-icon",
+        ),
         opacity: stop.member ? 1 : 0.8,
     }).addTo(addToLayer)
 
-    marker.bindTooltip(name, {
+    const naptanNote = addition
+        ? "<br><small>NaPTAN tags will be added</small>"
+        : suggestion
+          ? "<br><small>Missing tags NaPTAN has</small>"
+          : ""
+
+    marker.bindTooltip(name + naptanNote, {
         direction: "top",
         offset: [0, -10],
     })
 
     marker.on("click", () => setMemberState(i, !stop.member))
-    marker.on("contextmenu", (e) => showContextMenu(e, stop))
+    marker.on("contextmenu", (e) => showContextMenu(e, stop, naptanTagsAction(e, stop, suggestion, addition)))
+}
+
+function onTagAdditionsChanged() {
+    clearBusStopsPopup()
+    updateBusStopsVisibility()
+    // a tag-only change still has something to upload when the route itself is unchanged
+    requestCalcBusRoute()
+}
+
+function naptanTagsAction(e, stop, suggestion, addition) {
+    if (!suggestion && !addition) return null
+
+    return {
+        label: addition ? "NaPTAN <b>tags</b> added" : "Add NaPTAN <b>tags</b>",
+        onClick: () =>
+            showNaptanTagsForm(e.latlng, {
+                tags: addition?.tags ?? suggestion.tags,
+                added: Boolean(addition),
+                onAdd: () => {
+                    addTagAddition(stop, suggestion.tags)
+                    onTagAdditionsChanged()
+                },
+                onRemove: () => {
+                    removeTagAddition(stop)
+                    onTagAdditionsChanged()
+                },
+            }),
+    }
 }
 
 // new stops are bus platforms; tram stops are tagged differently and sit on the track

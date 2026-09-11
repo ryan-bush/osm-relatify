@@ -17,6 +17,7 @@ from models.element_id import ElementId, element_id, split_element_id
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute
 from models.relation_member import RelationMember
+from naptan_tags import StopTagAddition, build_tag_addition_elements
 from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
 from tag_editing import apply_tag_changes, normalize_tags
@@ -261,7 +262,7 @@ def _initialize_osm_change_structure() -> dict:
             '@generator': CREATED_BY,
             # in this order: an element must be created before anything refers to it
             'create': {'node': [], 'way': [], 'relation': []},
-            'modify': {'way': [], 'relation': []},
+            'modify': {'node': [], 'way': [], 'relation': []},
         }
     }
 
@@ -432,6 +433,7 @@ async def build_osm_change(
     tags_original: dict[str, str] | None = None,
     tags_edited: dict[str, str] | None = None,
     new_stops: Sequence[NewBusStop] = (),
+    tag_additions: Sequence[StopTagAddition] = (),
 ) -> str:
     split_ways_mutable: set[int] = set()
     native_id_element_ids_map: dict[int, dict[int, ElementId]] = defaultdict(dict)
@@ -475,6 +477,17 @@ async def build_osm_change(
     for node in build_new_stop_nodes(new_stops, route_type, route.members):
         _set_changeset_placeholder(node, include_changeset_id)
         result['osmChange']['create']['node'].append(node)
+
+    # a split way is already rewritten below, and cannot be modified twice
+    if any(addition.type == 'way' and addition.id in split_ways for addition in tag_additions):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'NaPTAN tags cannot be added to a way the route splits')
+
+    for element_type, element in await build_tag_addition_elements(tag_additions, osm):
+        element.pop('@timestamp', None)
+        element.pop('@user', None)
+        element.pop('@uid', None)
+        _set_changeset_placeholder(element, include_changeset_id)
+        result['osmChange']['modify'][element_type].append(element)
 
     if split_ways:
         parents_task = asyncio.create_task(overpass.query_parents(split_ways))

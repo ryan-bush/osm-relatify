@@ -5,7 +5,9 @@ import os
 import re
 import sqlite3
 import time
+from collections import Counter
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from itertools import chain
 from math import radians
 from pathlib import Path
@@ -19,7 +21,8 @@ from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.bounding_box import BoundingBox
 from models.download_history import DownloadHistory
 from models.fetch_relation import FetchRelationBusStopCollection
-from models.naptan_stop import NaptanStop
+from models.naptan_stop import NaptanStop, NaptanTagSuggestion
+from naptan_tags import missing_tags
 from overpass import optimize_cells_and_get_bbs
 from utils import HTTP, normalize_name
 
@@ -130,26 +133,63 @@ def build_database(csv_path: Path, db_path: Path) -> int:
     return count
 
 
+@dataclass(frozen=True, slots=True)
+class StopMatches:
+    # NaPTAN stops that no OSM stop represents
+    unmapped: list[NaptanStop]
+    # OSM stops matched to a NaPTAN stop but missing some of its tags
+    tag_suggestions: list[NaptanTagSuggestion]
+
+
+def _suggest_tags(collection: FetchRelationBusStopCollection, naptan_stop: NaptanStop) -> NaptanTagSuggestion | None:
+    platform = collection.platform
+
+    # NaPTAN's tags belong on the platform; a lone stop position is left alone
+    if platform is None:
+        return None
+
+    # a stop carrying some other code is not NaPTAN's to fill in from this match
+    if collection.atco_codes - {naptan_stop.atcoCode}:
+        return None
+
+    tags = missing_tags(platform.tags, naptan_stop.tags)
+    if not tags:
+        return None
+
+    return NaptanTagSuggestion(type=platform.type, id=platform.id, atcoCode=naptan_stop.atcoCode, tags=tags)
+
+
 def find_unmapped_stops(
     naptan_stops: Sequence[NaptanStop],
     bus_stop_collections: Sequence[FetchRelationBusStopCollection],
 ) -> list[NaptanStop]:
     """The NaPTAN stops that no OSM stop already represents."""
-    active_codes = {stop.atcoCode for stop in naptan_stops}
+    return match_stops(naptan_stops, bus_stop_collections).unmapped
+
+
+def match_stops(
+    naptan_stops: Sequence[NaptanStop],
+    bus_stop_collections: Sequence[FetchRelationBusStopCollection],
+) -> StopMatches:
+    naptan_by_code = {stop.atcoCode: stop for stop in naptan_stops}
     mapped_codes: set[str] = set()
     # whether each OSM stop already stands for a NaPTAN stop through its code
     coded: list[bool] = []
+    tag_suggestions: list[NaptanTagSuggestion] = []
 
     for collection in bus_stop_collections:
         # a code NaPTAN no longer lists says nothing about which stop this is, so the
         # stop is matched as though it had no code
-        live_codes = collection.atco_codes & active_codes
+        live_codes = collection.atco_codes & naptan_by_code.keys()
         mapped_codes |= live_codes
         coded.append(bool(live_codes))
 
+        if len(live_codes) == 1 and (suggestion := _suggest_tags(collection, naptan_by_code[next(iter(live_codes))])):
+            tag_suggestions.append(suggestion)
+
     candidates = [stop for stop in naptan_stops if stop.atcoCode not in mapped_codes]
     if not candidates or not bus_stop_collections:
-        return candidates
+        return StopMatches(candidates, tag_suggestions)
 
     tree = BallTree([radians_tuple(c.best.latLng) for c in bus_stop_collections], metric='haversine')
     nearby = tree.query_radius(
@@ -190,6 +230,8 @@ def find_unmapped_stops(
     # one of them, closest first, so a missing stop is not hidden by its mapped twin.
     matched_candidates: set[int] = set()
     matched_collections: set[int] = set()
+    pairs_per_candidate = Counter(i for _, i, _ in pairs)
+    pairs_per_collection = Counter(j for _, _, j in pairs)
 
     for _, i, j in sorted(pairs):
         if i in matched_candidates or j in matched_collections:
@@ -197,7 +239,23 @@ def find_unmapped_stops(
         matched_candidates.add(i)
         matched_collections.add(j)
 
-    return [stop for i, stop in enumerate(candidates) if i not in matched_candidates]
+        if coded[j]:
+            continue
+
+        stop = candidates[i]
+        collection = bus_stop_collections[j]
+        stop_ref = stop.tags.get('local_ref', '').upper()
+        osm_ref = collection.best.tags.get('local_ref', '').strip().upper()
+
+        # NaPTAN positions are too rough to tell same-named twins apart by distance, so
+        # codes are only copied from a match the stop letters confirm, or that no other
+        # pairing competes with
+        certain = (stop_ref and stop_ref == osm_ref) or (pairs_per_candidate[i] == 1 and pairs_per_collection[j] == 1)
+
+        if certain and (suggestion := _suggest_tags(collection, stop)):
+            tag_suggestions.append(suggestion)
+
+    return StopMatches([stop for i, stop in enumerate(candidates) if i not in matched_candidates], tag_suggestions)
 
 
 class NaptanStore:
@@ -286,18 +344,18 @@ class NaptanStore:
 
         return list(result.values())
 
-    async def find_unmapped(
+    async def match(
         self,
         download_hist: DownloadHistory,
         bus_stop_collections: Sequence[FetchRelationBusStopCollection],
-    ) -> list[NaptanStop]:
+    ) -> StopMatches:
         cells = tuple(set(chain.from_iterable(download_hist.history)))
         if not cells:
-            return []
+            return StopMatches([], [])
 
         bbs, _ = optimize_cells_and_get_bbs(cells, start_horizontal=True)
         naptan_stops = await asyncio.to_thread(self.stops_within, bbs)
-        return find_unmapped_stops(naptan_stops, bus_stop_collections)
+        return match_stops(naptan_stops, bus_stop_collections)
 
     def inactive_codes(self, codes: Iterable[str]) -> frozenset[str]:
         codes = tuple(set(codes))

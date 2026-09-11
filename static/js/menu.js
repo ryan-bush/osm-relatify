@@ -1,5 +1,6 @@
 import { busStopData, processBusStopData } from "./busStopsLayer.js"
 import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
+import { tagAdditionCount, tagAdditionsPayload } from "./naptanTagAdditions.js"
 import {
     downloadHistoryData,
     processRelationDownloadTriggers,
@@ -253,6 +254,9 @@ export const processRouteWarnings = (data) => {
     let highestSeverityLevel = 0
 
     for (const warning of data.warnings) {
+        // the relation is untouched, but the changeset still has stop tags to add
+        if (warning.severity === 10 && tagAdditionCount() > 0) continue
+
         const severityLevel = warning.severity
         const severityText = {
             0: "LOW",
@@ -397,11 +401,14 @@ editReloadBtn.onclick = async () => {
 // mirrors make_comment() in main.py purely to show what will be used when the field is
 // left blank; the server generates the comment it actually uploads
 const makeDefaultComment = () => {
+    const plural = (count) => (count !== 1 ? "s" : "")
     const stopCount = newStopCount()
-    const added = stopCount
-        ? `; added ${stopCount} bus stop${stopCount !== 1 ? "s" : ""}`
+    const taggedCount = tagAdditionCount()
+    const added = stopCount ? `; added ${stopCount} bus stop${plural(stopCount)}` : ""
+    const tagged = taggedCount
+        ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
         : ""
-    return makeRouteComment() + added
+    return makeRouteComment() + added + tagged
 }
 
 const makeRouteComment = () => {
@@ -519,6 +526,7 @@ submitUploadBtn.onclick = async () => {
             tagsOriginal: relationTagsOriginal,
             comment: submitComment.value,
             newStops: newStopsPayload(),
+            naptanTagAdditions: tagAdditionsPayload(),
         }),
     })
         .then(async (resp) => {
@@ -587,6 +595,7 @@ submitDownloadBtn.onclick = async () => {
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
             newStops: newStopsPayload(),
+            naptanTagAdditions: tagAdditionsPayload(),
         }),
     })
         .then(async (resp) => {

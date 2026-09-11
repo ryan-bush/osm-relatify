@@ -10,3 +10,14 @@ class NaptanStop:
     indicator: str
     latLng: tuple[float, float]
     tags: dict[str, str]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class NaptanTagSuggestion:
+    """Tags from NaPTAN that an OSM stop matched to it is missing."""
+
+    # the OSM platform the tags would go on
+    type: str
+    id: str
+    atcoCode: str
+    tags: dict[str, str]
