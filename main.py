@@ -24,6 +24,7 @@ from config import (
     CALC_ROUTE_MAX_PROCESSES,
     CALC_ROUTE_N_PROCESSES,
     CREATED_BY,
+    NAPTAN_ENABLED,
     OSM_CLIENT,
     OSM_IS_LIVE,
     OSM_SCOPES,
@@ -47,6 +48,7 @@ from models.fetch_relation import (
     find_start_stop_ways,
 )
 from models.final_route import FinalRoute, WarningSeverity
+from naptan import NAPTAN
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
 from relation_builder import build_osm_change, get_relation_members, sort_and_upgrade_members
@@ -66,7 +68,13 @@ _OVERPASS = Overpass()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     async with _OSM:
-        yield
+        # in the background, so starting up does not wait on the download
+        naptan_task = asyncio.create_task(NAPTAN.keep_fresh()) if NAPTAN_ENABLED else None
+        try:
+            yield
+        finally:
+            if naptan_task is not None:
+                naptan_task.cancel()
 
 
 app = FastAPI(
@@ -240,6 +248,12 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
     with print_run_time('Assigning members for stops'):
         bus_stop_collections = assign_none_members(bus_stop_collections, relation)
 
+    naptan_stops = []
+    # get_route_type() reads trolleybus routes as bus
+    if NAPTAN_ENABLED and route_type == 'bus':
+        with print_run_time('Finding stops missing from OSM'):
+            naptan_stops = await NAPTAN.find_unmapped(download_hist, bus_stop_collections)
+
     return FetchRelation(
         fetchMerge=len(download_hist.history) > 1 or model.reload,
         nameOrRef=relation_tags.get('name', relation_tags.get('ref', '')).strip(),
@@ -251,6 +265,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         stopWay=stop_way,
         ways=ways,
         busStops=bus_stop_collections,
+        naptanStops=naptan_stops,
     )
 
 
@@ -377,6 +392,19 @@ class PostDownloadOsmChangeModel(BaseModel):
 
         return comment
 
+    def make_changeset_tags(self) -> dict[str, str]:
+        tags = {
+            'comment': self.make_comment(),
+            'created_by': CREATED_BY,
+            'host': WEBSITE,
+        }
+
+        # credits NaPTAN, as its licence requires, when a stop was made from it
+        if any('naptan:AtcoCode' in stop.tags for stop in self.newStops):
+            tags['source'] = 'NaPTAN'
+
+        return tags
+
     def _make_route_comment(self) -> str:
         tags_name = self.tags.get('name', '')
         tags_ref = self.tags.get('ref', '')
@@ -456,12 +484,7 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
         user_edits = osm_user['changesets']['count']
         upload_result = await osm.upload_osm_change(
             osm_change,
-            {
-                'changesets_count': user_edits + 1,
-                'comment': model.make_comment(),
-                'created_by': CREATED_BY,
-                'host': WEBSITE,
-            },
+            {'changesets_count': user_edits + 1, **model.make_changeset_tags()},
         )
 
     if upload_result.ok:
