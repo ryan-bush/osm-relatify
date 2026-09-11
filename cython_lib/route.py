@@ -648,6 +648,90 @@ async def modified_dfs(
     return best_path.valid if best_path.valid.path else best_path.invalid
 
 
+def _bus_stop_visits(
+    path: Sequence[GraphKey],
+    id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]],
+) -> tuple[dict[ElementId, int], dict[ElementId, int]]:
+    """The stops a path serves, and those it only passes on the wrong side, counted as the search counts them."""
+    visited: dict[ElementId, int] = {}
+    almost_visited: dict[ElementId, int] = {}
+
+    for index, key in enumerate(path, 1):
+        visited_bus_stops, almost_visited_bus_stops = get_bus_stops_at(key, id_sorted_bus_map)
+        for b in visited_bus_stops:
+            visited.setdefault(b.bus_stop_collection.best.id, index)
+        for b in almost_visited_bus_stops:
+            almost_visited.setdefault(b.bus_stop_collection.best.id, index)
+
+    almost_visited = {k: v for k, v in almost_visited.items() if k not in visited}
+    return visited, almost_visited
+
+
+def drop_redundant_loops(
+    best_path: BestPath,
+    graph: dict[GraphKey, GraphValue],
+    ways: dict[ElementId, FetchRelationElement],
+    id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]],
+) -> BestPath:
+    """Cut out any loop the route drives for nothing.
+
+    A search stopped by its time budget can return a route that leaves a point and comes
+    back to it without driving a way or serving a stop that it does not also get to
+    elsewhere - a lap of a roundabout to reach a turning loop it went straight past the
+    first time. The search already ranks the route without that loop as better, it just
+    ran out of time before finding it; cutting the loop out gets there regardless.
+    """
+
+    def exit_point(key: GraphKey) -> tuple[float, float]:
+        lat_lngs = ways[key.way_id].latLngs
+        return lat_lngs[-1] if key.is_start else lat_lngs[0]
+
+    path = best_path.path
+    way_ids = {key.way_id for key in path}
+    visited, almost_visited = _bus_stop_visits(path, id_sorted_bus_map)
+
+    dropped = True
+    while dropped:
+        dropped = False
+        # the index of the way that last brought the route to each point
+        last_arrival: dict[tuple[float, float], int] = {}
+
+        for index, key in enumerate(path[:-1]):
+            point = exit_point(key)
+            loop_start = last_arrival.get(point)
+            last_arrival[point] = index
+            if loop_start is None:
+                continue
+
+            # without the loop, the way after it has to follow straight on from the way before it
+            before, after = path[loop_start], path[index + 1]
+            if after not in graph[before._replace(is_start=not before.is_start)].connected_to:
+                continue
+
+            candidate = path[: loop_start + 1] + path[index + 1 :]
+            if {k.way_id for k in candidate} != way_ids:
+                continue
+
+            candidate_visited, candidate_almost_visited = _bus_stop_visits(candidate, id_sorted_bus_map)
+            if candidate_visited.keys() != visited.keys() or candidate_almost_visited.keys() != almost_visited.keys():
+                continue
+
+            path, visited, almost_visited = candidate, candidate_visited, candidate_almost_visited
+            dropped = True
+            break
+
+    if path is best_path.path:
+        return best_path
+
+    return best_path._replace(
+        path=path,
+        visited_bus_stops=visited | almost_visited,
+        bus_stops_count=len(visited),
+        almost_bus_stops_count=len(almost_visited),
+        length=sum(ways[key.way_id].length for key in path),
+    )
+
+
 def finalize_route(
     best_path: BestPath,
     ways: dict[ElementId, FetchRelationElement],
@@ -725,5 +809,8 @@ async def calc_bus_route(
             executor,
             n_processes,
         )
+
+    with print_run_time('Dropping redundant loops'):
+        best_path = drop_redundant_loops(best_path, graph, ways_members, id_sorted_bus_map)
 
     return finalize_route(best_path, ways_members, bus_stop_collections, tags)

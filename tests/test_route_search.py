@@ -227,3 +227,64 @@ def test_detour_off_the_main_road_is_tried_before_carrying_on(monkeypatch):
     assert ElementId('a38_back') in way_ids
     # passed once on the way round, then driven again to reach the on-slip
     assert way_ids.count(ElementId('i12')) == 2
+
+
+def _junction_loops():
+    """A way in and a way out of one junction, with two loops that start and end there."""
+    coords = {
+        'n0': (50.9990, 0.0000),
+        'n1': (51.0000, 0.0000),  # the junction
+        'n2': (51.0000, 0.0010),
+        'n3': (51.0010, 0.0010),
+        'n4': (51.0000, -0.0010),
+        'n5': (50.9995, -0.0010),
+        'n6': (50.9993, -0.0003),
+    }
+    way_nodes = {
+        'in': ['n0', 'n1'],
+        'a': ['n1', 'n2'],
+        'b': ['n2', 'n3'],
+        'c': ['n3', 'n1'],
+        'd': ['n1', 'n5'],
+        'e': ['n5', 'n6', 'n1'],
+        'out': ['n1', 'n4'],
+    }
+    return _oneway_network(way_nodes, coords)
+
+
+def _drop_loops(ways, way_ids):
+    path = tuple(route_module.GraphKey(ElementId(way_id), route_module.BOOL_START) for way_id in way_ids)
+    best_path = route_module.BestPath.zero()._replace(path=path)
+
+    result = route_module.drop_redundant_loops(best_path, build_graph(ways), ways, {})
+
+    _assert_continuous(result.path, ways)
+    return [str(key.way_id) for key in result.path]
+
+
+def test_a_lap_driven_again_for_nothing_is_dropped():
+    """Blackbrook Park Avenue on the Falcon: a search out of time went past the turning loop
+    at its end, lapped the roundabout and drove the avenue again to reach it."""
+    ways = _junction_loops()
+
+    assert _drop_loops(ways, ['in', 'a', 'b', 'c', 'a', 'b', 'c', 'out']) == ['in', 'a', 'b', 'c', 'out']
+
+
+def test_a_lap_apart_from_its_repeat_is_dropped():
+    ways = _junction_loops()
+
+    assert _drop_loops(ways, ['in', 'a', 'b', 'c', 'd', 'e', 'a', 'b', 'c', 'out']) == [
+        'in',
+        'd',
+        'e',
+        'a',
+        'b',
+        'c',
+        'out',
+    ]
+
+
+def test_a_loop_that_is_the_only_pass_over_its_ways_stays():
+    ways = _junction_loops()
+
+    assert _drop_loops(ways, ['in', 'a', 'b', 'c', 'd', 'e', 'out']) == ['in', 'a', 'b', 'c', 'd', 'e', 'out']
