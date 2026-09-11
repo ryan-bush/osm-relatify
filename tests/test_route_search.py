@@ -284,6 +284,31 @@ def test_a_lap_apart_from_its_repeat_is_dropped():
     ]
 
 
+def _insert_detours(ways, way_ids):
+    path = tuple(route_module.GraphKey(ElementId(way_id), route_module.BOOL_START) for way_id in way_ids)
+    best_path = route_module.BestPath.zero()._replace(path=path)
+
+    result = route_module.insert_skipped_detours(best_path, build_graph(ways), ways, {})
+
+    _assert_continuous(result.path, ways)
+    return [str(key.way_id) for key in result.path]
+
+
+def test_skipped_loops_are_driven_on_a_detour_back_to_the_junction():
+    """The Falcon kept either the loop round Bristol Airport's bus bays or the turning loop
+    at the end of Blackbrook Park Avenue, depending on the order the search tried things."""
+    ways = _junction_loops()
+
+    assert _insert_detours(ways, ['in', 'out']) == ['in', 'd', 'e', 'a', 'b', 'c', 'out']
+
+
+def test_a_member_way_the_route_cannot_reach_is_left_out():
+    ways = _junction_loops()
+    ways |= _oneway_network({'far': ['x1', 'x2']}, {'x1': (52.0, 1.0), 'x2': (52.0, 1.001)})
+
+    assert _insert_detours(ways, ['in', 'a', 'b', 'c', 'd', 'e', 'out']) == ['in', 'a', 'b', 'c', 'd', 'e', 'out']
+
+
 def test_a_loop_that_is_the_only_pass_over_its_ways_stays():
     ways = _junction_loops()
 

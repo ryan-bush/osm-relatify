@@ -1,10 +1,12 @@
 import asyncio
 import time
+from collections import defaultdict
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from functools import partial
-from itertools import chain
+from heapq import heappop, heappush
+from itertools import chain, count
 from typing import NamedTuple, Self
 
 import cython
@@ -723,13 +725,147 @@ def drop_redundant_loops(
     if path is best_path.path:
         return best_path
 
+    return _with_path(best_path, path, ways, id_sorted_bus_map)
+
+
+def _with_path(
+    best_path: BestPath,
+    path: tuple[GraphKey, ...],
+    ways: dict[ElementId, FetchRelationElement],
+    id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]],
+) -> BestPath:
+    """best_path driven along another path, with what it serves and covers counted afresh."""
+    visited, almost_visited = _bus_stop_visits(path, id_sorted_bus_map)
+    complete_path = {key.way_id for key in path}
+
     return best_path._replace(
         path=path,
         visited_bus_stops=visited | almost_visited,
         bus_stops_count=len(visited),
         almost_bus_stops_count=len(almost_visited),
         length=sum(ways[key.way_id].length for key in path),
+        complete_path=complete_path,
+        complete_length=sum(ways[way_id].length for way_id in complete_path),
     )
+
+
+# The furthest a skipped member way is driven to from the route, and the furthest back.
+MAX_DETOUR_LENGTH = 5000  # meters
+
+
+def _shortest_drives(
+    start: GraphKey,
+    edges,
+    ways: dict[ElementId, FetchRelationElement],
+) -> tuple[dict[GraphKey, float], dict[GraphKey, GraphKey]]:
+    """Distances from start over way entries, each charged the length of its way, and the step back towards start."""
+    distances: dict[GraphKey, float] = {start: 0.0}
+    steps_back: dict[GraphKey, GraphKey] = {}
+    tie_breaker = count()
+    heap = [(0.0, next(tie_breaker), start)]
+
+    while heap:
+        distance, _, key = heappop(heap)
+        if distance > distances[key]:
+            continue
+
+        for neighbor in edges(key):
+            neighbor_distance = distance + ways[neighbor.way_id].length
+            if neighbor_distance > MAX_DETOUR_LENGTH:
+                continue
+            if neighbor in distances and distances[neighbor] <= neighbor_distance:
+                continue
+            distances[neighbor] = neighbor_distance
+            steps_back[neighbor] = key
+            heappush(heap, (neighbor_distance, next(tie_breaker), neighbor))
+
+    return distances, steps_back
+
+
+def insert_skipped_detours(
+    best_path: BestPath,
+    graph: dict[GraphKey, GraphValue],
+    ways: dict[ElementId, FetchRelationElement],
+    id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]],
+) -> BestPath:
+    """Drive the member ways the route skipped, each on a detour back to where it left.
+
+    A search stopped by its time budget returns the best route it found, and which
+    detours made it in comes down to the order it happened to try things in - on the
+    Falcon, the loop round Bristol Airport's bus bays or the turning loop at the end of
+    Blackbrook Park Avenue, but never both. select_best() ranks a route that drives more
+    of the member ways as better, and a detour only adds to a route, so each way still
+    missing is put back on the shortest drive that leaves the route and returns to the
+    same point. Laps this adds are for drop_redundant_loops() to cut out.
+    """
+
+    def exit_at(key: GraphKey) -> GraphKey:
+        return key._replace(is_start=not key.is_start)
+
+    def successors(key: GraphKey) -> tuple[GraphKey, ...]:
+        return graph[exit_at(key)].connected_to
+
+    predecessors: dict[GraphKey, list[GraphKey]] = defaultdict(list)
+    for key in graph:
+        for neighbor in successors(key):
+            predecessors[neighbor].append(key)
+
+    def preceding(key: GraphKey) -> list[GraphKey]:
+        return predecessors.get(key, [])
+
+    path = best_path.path
+    unreachable: set[ElementId] = set()
+
+    while True:
+        driven = {key.way_id for key in path}
+        missing = sorted((way_id for way_id in ways if way_id not in driven and way_id not in unreachable), key=str)
+        if not missing:
+            break
+
+        way_id = missing[0]
+        best: tuple[float, int, list[GraphKey]] | None = None
+
+        for entry in (GraphKey(way_id, BOOL_START), GraphKey(way_id, BOOL_END)):
+            to_entry, towards_entry = _shortest_drives(entry, preceding, ways)
+            from_entry, back_to_entry = _shortest_drives(entry, successors, ways)
+            entry_length = ways[way_id].length
+
+            for index in range(len(path) - 1):
+                # leaving after path[index] and rejoining before path[index + 1] meets the route at one point
+                leaves = [key for key in successors(path[index]) if key in to_entry]
+                rejoins = [key for key in preceding(path[index + 1]) if key in from_entry]
+                if not leaves or not rejoins:
+                    continue
+
+                leave = min(leaves, key=to_entry.__getitem__)
+                rejoin = min(rejoins, key=from_entry.__getitem__)
+                length = to_entry[leave] + entry_length + from_entry[rejoin]
+                if best is not None and best[0] <= length:
+                    continue
+
+                detour = [leave]
+                while detour[-1] != entry:
+                    detour.append(towards_entry[detour[-1]])
+                tail = []
+                key = rejoin
+                while key != entry:
+                    tail.append(key)
+                    key = back_to_entry[key]
+                detour.extend(reversed(tail))
+
+                best = (length, index, detour)
+
+        if best is None:
+            unreachable.add(way_id)
+            continue
+
+        _, index, detour = best
+        path = (*path[: index + 1], *detour, *path[index + 1 :])
+
+    if path is best_path.path:
+        return best_path
+
+    return _with_path(best_path, path, ways, id_sorted_bus_map)
 
 
 def finalize_route(
@@ -809,6 +945,9 @@ async def calc_bus_route(
             executor,
             n_processes,
         )
+
+    with print_run_time('Inserting skipped detours'):
+        best_path = insert_skipped_detours(best_path, graph, ways_members, id_sorted_bus_map)
 
     with print_run_time('Dropping redundant loops'):
         best_path = drop_redundant_loops(best_path, graph, ways_members, id_sorted_bus_map)
