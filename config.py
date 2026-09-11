@@ -113,10 +113,10 @@ print(f'[CONF] {DOWNLOAD_RELATION_GRID_CELL_EXPAND * 111_111 = :.0f} meters')
 
 BUS_COLLECTION_SEARCH_AREA = 50  # meters
 
-# Suggests bus stops that are in NaPTAN but missing from OSM. NaPTAN covers Great Britain
-# only, and the national dataset (about 100 MB) is downloaded on the first start, so it
-# is off unless asked for.
-NAPTAN_ENABLED = os.getenv('NAPTAN_ENABLED', '0').strip().lower() in ('1', 'true', 'yes')
+# Suggests bus stops that are in NaPTAN but missing from OSM, and checks route stops
+# against it. NaPTAN covers Great Britain only, and the national dataset (about 100 MB)
+# is downloaded in the background on start; set this to 0 where that is not wanted.
+NAPTAN_ENABLED = os.getenv('NAPTAN_ENABLED', '1').strip().lower() in ('1', 'true', 'yes')
 NAPTAN_DATA_DIR = Path(os.getenv('NAPTAN_DATA_DIR', 'data'))
 NAPTAN_MAX_AGE = 24 * 3600  # seconds
 

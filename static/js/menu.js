@@ -287,7 +287,9 @@ export const processRouteWarnings = (data) => {
             editWarnings.appendChild(child)
         } else if (
             warning.message === "Some stops are far away" ||
-            warning.message === "Some stops are not reached"
+            warning.message === "Some stops are not reached" ||
+            warning.message === "Some stops are inactive in NaPTAN" ||
+            warning.message === "Some stops serve the other direction"
         ) {
             const child = createElementFromHTML(`
             <div class="warning warning-${severityText}">

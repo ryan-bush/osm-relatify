@@ -83,7 +83,7 @@ Everything below has a working default and can be set in `.env`:
 | `SENTRY_DSN` | Enables error reporting, off unless set. |
 | `OSM_URL` | The OSM instance to sign in to and upload to. Defaults to live OSM. |
 | `OSM_API_URL` | Its API host, if different. Only live OSM needs this, and it is set for you. |
-| `NAPTAN_ENABLED` | Set to `1` to [suggest stops from NaPTAN](#stops-from-naptan). Off by default. |
+| `NAPTAN_ENABLED` | [Suggests and checks stops using NaPTAN](#stops-from-naptan). On by default; set to `0` to turn off. |
 | `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
 
 ### Testing uploads against the OSM dev server
@@ -198,9 +198,20 @@ An OSM code NaPTAN no longer lists is ignored, and an OSM stop matched by its co
 covers a second NaPTAN record with the same letter, as NaPTAN occasionally has.
 Hail-and-ride, flexible and unmarked stops are left out, as they have no pole.
 
-This is off by default. Set `NAPTAN_ENABLED=1` and the server downloads the national
-dataset, about 100 MB, in the background on startup and again once a day, into `data/`.
-Suggestions appear once the first download has finished.
+This is on by default: the server downloads the national dataset, about 100 MB, in the
+background on startup and again once a day, into `data/`. Suggestions appear once the
+first download has finished. NaPTAN only covers Great Britain, so elsewhere set
+`NAPTAN_ENABLED=0` to skip the download.
+
+Two route warnings use NaPTAN as well. Both are low severity, so neither blocks
+uploading.
+
+- **Some stops are inactive in NaPTAN** lists stops on the route whose `naptan:AtcoCode`
+  NaPTAN has marked inactive, which usually means the stop was taken out of use. It
+  is skipped when `NAPTAN_ENABLED=0`.
+- **Some stops serve the other direction** compares a stop's `naptan:Bearing` with the
+  way the route passes it, which catches the stop across the road being picked. It only
+  reads the tag, so it works without the download.
 
 ### Overpass resilience
 
