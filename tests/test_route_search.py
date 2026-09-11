@@ -1,4 +1,5 @@
 import asyncio
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 
@@ -126,3 +127,103 @@ def test_search_gives_up_on_budget_instead_of_running_to_exhaustion(cul_de_sac_c
     assert 'budget' in capsys.readouterr().out
     # nothing was explored, so there is no route - but the driver returned
     assert not best_path.path
+
+
+def _oneway_network(way_nodes, coords, roundabouts=()):
+    """Oneway member ways from lists of named nodes, connected wherever they share a node."""
+    node_ways = defaultdict(list)
+    for way_id, nodes in way_nodes.items():
+        for node in nodes:
+            node_ways[node].append(way_id)
+
+    ways = {}
+    for way_id, nodes in way_nodes.items():
+        # definition order, so which neighbor the search meets first is fixed
+        connected = dict.fromkeys(other for node in nodes for other in node_ways[node] if other != way_id)
+        ways[ElementId(way_id)] = FetchRelationElement(
+            id=ElementId(way_id),
+            member=True,
+            oneway=True,
+            roundabout=way_id in roundabouts,
+            nodes=list(range(len(nodes))),
+            latLngs=[coords[node] for node in nodes],
+            connectedTo=[ElementId(other) for other in connected],
+            turn_in_place_start=False,
+            turn_in_place_end=False,
+        )
+    return ways
+
+
+DIAMONDS = 16
+
+
+def test_detour_off_the_main_road_is_tried_before_carrying_on(monkeypatch):
+    """M5 J24 on the Falcon: off the motorway, round the interchange, along to the next
+    roundabout to serve a stop and back, round the interchange again and back on.
+
+    A long route runs out of search time, and then only what was tried first comes back.
+    The run of forks after the junction stands in for the rest of the way to Plymouth,
+    with more alternatives than the search gets through before it would backtrack.
+    """
+    coords = {
+        'm0': (51.1150, -2.9750),
+        'm1': (51.1050, -2.9850),  # off-slip leaves the motorway
+        'm2': (51.0970, -2.9930),  # on-slip joins it
+        'R1': (51.1015, -2.9880),  # off-slip meets the interchange
+        'R2': (51.0990, -2.9905),  # on-slip leaves the interchange
+        'R3': (51.0988, -2.9930),
+        'R4': (51.0995, -2.9950),
+        'R5': (51.1012, -2.9962),  # A38 out
+        'R6': (51.1020, -2.9955),  # A38 back
+        'R7': (51.1026, -2.9915),
+        'a1': (51.1030, -2.9990),
+        'W1': (51.1047, -3.0015),
+        'W2': (51.1045, -3.0028),
+        'W3': (51.1063, -3.0030),
+        'W4': (51.1055, -3.0012),
+        'a2': (51.1035, -2.9975),
+    }
+    way_nodes = {
+        'mot_in': ['m0', 'm1'],
+        'off_slip': ['m1', 'R1'],
+        'i12': ['R1', 'R2'],
+        'i23': ['R2', 'R3'],
+        'i34': ['R3', 'R4'],
+        'i45': ['R4', 'R5'],
+        'a38_out': ['R5', 'a1', 'W1'],
+        'w12': ['W1', 'W2'],
+        'w23': ['W2', 'W3'],
+        'w34': ['W3', 'W4'],
+        'a38_back': ['W4', 'a2', 'R6'],
+        'i67': ['R6', 'R7'],
+        'i71': ['R7', 'R1'],
+        # after the roundabout carries on, so an unordered search leaves by it first
+        'on_slip': ['R2', 'm2'],
+    }
+
+    previous = 'm2'
+    for i in range(DIAMONDS):
+        lat, lon = coords[previous]
+        coords[f'd{i}l'] = (lat - 0.0005, lon - 0.0015)
+        coords[f'd{i}r'] = (lat - 0.0015, lon - 0.0005)
+        coords[f'd{i}'] = (lat - 0.002, lon - 0.002)
+        way_nodes[f'fork{i}l'] = [previous, f'd{i}l', f'd{i}']
+        way_nodes[f'fork{i}r'] = [previous, f'd{i}r', f'd{i}']
+        previous = f'd{i}'
+    coords['end'] = (coords[previous][0] - 0.002, coords[previous][1] - 0.002)
+    way_nodes['mot_end'] = [previous, 'end']
+
+    ways = _oneway_network(way_nodes, coords, roundabouts={'i12', 'i23', 'i34', 'i45', 'i67', 'i71'})
+
+    # only the head start the search always gets, as when a long route hits the budget
+    monkeypatch.setattr(route_module, 'MAX_SEARCH_TIME', 0)
+
+    path = _search_between(ways, ElementId('mot_in'), ElementId('mot_end')).path
+    way_ids = [key.way_id for key in path]
+
+    _assert_continuous(path, ways)
+    assert way_ids[-1] == ElementId('mot_end')
+    assert ElementId('a38_out') in way_ids
+    assert ElementId('a38_back') in way_ids
+    # passed once on the way round, then driven again to reach the on-slip
+    assert way_ids.count(ElementId('i12')) == 2
