@@ -18,8 +18,7 @@ custom changeset comments, U-turns at untagged turning points, and creating rela
 from scratch. See [what this fork adds](#what-this-fork-adds) below.
 
 The original remains the reference implementation, and the official instance at
-[relatify.monicz.dev](https://relatify.monicz.dev) is the one to use if you do not
-need anything here. If you find this tool useful, please
+[relatify.monicz.dev](https://relatify.monicz.dev) but has issued with Overpass. If you find this tool useful, please
 [support the original author](https://liberapay.com/Zaczero/).
 
 ### Is there a hosted instance?
@@ -168,15 +167,16 @@ are not covered by it.
 - ✅ `public_transport=platform`
 - ✅ `public_transport=stop_position`
 - ✅ `public_transport=stop_area`
+- ✅ Left-hand traffic
 - ✅ Tag editing
 - ✅ Custom changeset comment
 - ✅ Creating new relations
 - ✅ U-turns without `highway=turning_circle`
 
+
 ### Planned
 
 - ⏳ Creating new bus stops
-- ⏳ Left-hand traffic
 - ⏳ Relation `type=restriction`
 - ⏳ `direction=*`
 - ⏳ `oneway=-1`
