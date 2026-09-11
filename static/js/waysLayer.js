@@ -213,6 +213,8 @@ const addWay = (way) => {
     }
 
     const onContextMenuHandler = (e) => {
+        // otherwise the event carries on to the map, which offers to add a bus stop
+        L.DomEvent.stopPropagation(e)
         showContextMenu(e, way)
     }
 

@@ -27,7 +27,7 @@ def normalize_tags(tags: dict[str, str]) -> dict[str, str]:
     return result
 
 
-def _validate_tag(key: str, value: str) -> None:
+def validate_tag(key: str, value: str) -> None:
     # the limit is in characters, not bytes
     if len(key) > TAG_MAX_LENGTH or len(value) > TAG_MAX_LENGTH:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f'Tag {key!r} exceeds {TAG_MAX_LENGTH} characters')
@@ -58,7 +58,7 @@ def apply_tag_changes(relation_data: dict, original: dict[str, str], edited: dic
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f'These tags cannot be edited here: {", ".join(protected)}')
 
     for key in changed_keys:
-        _validate_tag(key, edited[key])
+        validate_tag(key, edited[key])
 
     current = {tag['@k']: tag['@v'] for tag in ensure_list(relation_data.get('tag') or [])}
 

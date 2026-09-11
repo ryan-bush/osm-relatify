@@ -151,6 +151,27 @@ and its new id is shown as a link when it succeeds.
 > start with a short, simple route and check the changeset afterwards; the success
 > message links a revert tool if you need it.
 
+### Adding bus stops
+
+A stop the route serves that is missing from OSM can be added without leaving the
+editor. On a bus or trolleybus route, right-click where the stop is and fill in its
+`name`, and optionally `local_ref`, `shelter` and `bench`. Put it beside the road on
+the side the bus stops on, as that is how the route calculation decides which
+direction serves it.
+
+New stops have a yellow glow. Drag one to move it, or click it to edit or delete it.
+If another stop is within 50 m, the form says so, since the two would most likely be
+the same stop.
+
+The upload creates each one as a node tagged `highway=bus_stop`,
+`public_transport=platform` and `bus=yes` (or `trolleybus=yes`), in the same changeset
+as the route, and adds it to the relation.
+
+Only platforms are created, not stop positions on the road, and there is no
+`stop_area` relation. A stop must have a name: the map data leaves out unnamed
+platforms, so it would disappear the next time the route loads. Overpass also lags
+OSM by a few minutes, so a new stop may not show when reloading straight after upload.
+
 ### Overpass resilience
 
 `OVERPASS_API_INTERPRETER` accepts several comma-separated endpoints. Each is retried,
@@ -185,11 +206,12 @@ are not covered by it.
 - ✅ Custom changeset comment
 - ✅ Creating new relations
 - ✅ U-turns without `highway=turning_circle`
+- ✅ Creating new bus stops (platforms)
 
 
 ### Planned
 
-- ⏳ Creating new bus stops
+- ⏳ Stop positions and `stop_area` for new stops
 - ⏳ Relation `type=restriction`
 - ⏳ `direction=*`
 - ⏳ `oneway=-1`

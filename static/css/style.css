@@ -38,6 +38,40 @@
   border-left: 1px solid #ddd;
 }
 
+.popup-form .leaflet-popup-content {
+  margin: .6rem .7rem;
+}
+
+.new-stop-form label {
+  display: block;
+  font-size: .85em;
+  margin-bottom: .45rem;
+}
+
+.new-stop-title {
+  font-weight: bold;
+  margin-bottom: .4rem;
+}
+
+.new-stop-nearby {
+  font-size: .8em;
+  color: #664d03;
+  background: #fff3cd;
+  border-radius: 4px;
+  padding: .3rem .45rem;
+  margin-bottom: .5rem;
+}
+
+/* a stop that exists only in the browser until upload */
+.bus-stop-new {
+  filter: drop-shadow(0 0 2px #e0a800) drop-shadow(0 0 2px #e0a800);
+}
+
+.stop-new-badge {
+  font-size: .65em;
+  vertical-align: middle;
+}
+
 #menu {
   z-index: 1000;
   position: absolute;
