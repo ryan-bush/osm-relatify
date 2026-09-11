@@ -1,3 +1,9 @@
+// the OSM instance the server signs in to and uploads to; see OSM_URL in config.py.
+// Map data always comes from Overpass, which only indexes live OSM, so links to
+// downloaded elements stay on openstreetmap.org rather than using this.
+export const osmUrl = document.documentElement.dataset.osmUrl
+export const osmIsLive = document.documentElement.dataset.osmLive === "true"
+
 export const haversine_distance = (latLng1, latLng2) => {
     const R = 6371000 // metres
 

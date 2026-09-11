@@ -81,6 +81,18 @@ Everything below has a working default and can be set in `.env`:
 | `OVERPASS_API_ATTEMPTS` | Attempts per endpoint before moving to the next one. |
 | `WEBSITE` | The URL recorded in changesets and the user agent. |
 | `SENTRY_DSN` | Enables error reporting, off unless set. |
+| `OSM_URL` | The OSM instance to sign in to and upload to. Defaults to live OSM. |
+| `OSM_API_URL` | Its API host, if different. Only live OSM needs this, and it is set for you. |
+
+### Testing uploads against the OSM dev server
+
+Set `OSM_URL=https://master.apis.dev.openstreetmap.org` and register a separate OAuth
+application on that server — it has its own accounts, so sign up there first. A badge
+next to your name shows which server you are uploading to.
+
+Map data still comes from Overpass, which only indexes live OSM. Creating a new
+relation works, but editing an existing relation, or anything that splits a way, fails:
+the ids Overpass returns do not exist on the dev server.
 
 ## What this fork adds
 
@@ -134,9 +146,10 @@ fit the whole route on screen.
 Nothing is written to OSM until you upload. The relation is created by that upload,
 and its new id is shown as a link when it succeeds.
 
-> **New in this fork and lightly tested.** The API host is hardcoded to live OSM,
-> so there is no dev-server option — start with a short, simple route, and check the
-> changeset afterwards. The success message links a revert tool if you need it.
+> **New in this fork and lightly tested.** Try it against the
+> [OSM dev server](#testing-uploads-against-the-osm-dev-server) first. On live OSM,
+> start with a short, simple route and check the changeset afterwards; the success
+> message links a revert tool if you need it.
 
 ### Overpass resilience
 

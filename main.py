@@ -24,8 +24,10 @@ from config import (
     CALC_ROUTE_N_PROCESSES,
     CREATED_BY,
     OSM_CLIENT,
+    OSM_IS_LIVE,
     OSM_SCOPES,
     OSM_SECRET,
+    OSM_URL,
     TAG_MAX_LENGTH,
     TEST_ENV,
     WEBSITE,
@@ -53,6 +55,7 @@ from utils import HTTP, print_run_time
 
 _SESSION_MAX_AGE = 31536000  # 1 year
 _TEMPLATES = Jinja2Templates(directory='templates', auto_reload=TEST_ENV)
+_TEMPLATES.env.globals.update(osm_url=OSM_URL, osm_is_live=OSM_IS_LIVE)
 
 _PROCESS_EXECUTOR = ProcessPoolExecutor(CALC_ROUTE_MAX_PROCESSES)
 _OSM = OpenStreetMap()
@@ -88,7 +91,7 @@ async def index(request: Request, user=Depends(fetch_user_details)):
 @app.post('/login')
 async def login(request: Request):
     state = os.urandom(32).hex()
-    authorization_url = 'https://www.openstreetmap.org/oauth2/authorize?' + urlencode({
+    authorization_url = f'{OSM_URL}/oauth2/authorize?' + urlencode({
         'client_id': OSM_CLIENT,
         'redirect_uri': str(request.url_for('callback')),
         'response_type': 'code',
@@ -106,7 +109,7 @@ async def callback(request: Request, code: Annotated[str, Query()], state: Annot
     if cookie_state != state:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid OAuth state')
     r = await HTTP.post(
-        'https://www.openstreetmap.org/oauth2/token',
+        f'{OSM_URL}/oauth2/token',
         data={
             'client_id': OSM_CLIENT,
             'client_secret': OSM_SECRET,

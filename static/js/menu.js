@@ -16,6 +16,8 @@ import {
     createElementFromHTML,
     deflateCompress,
     getBusCollectionName,
+    osmIsLive,
+    osmUrl,
 } from "./utils.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
 import {
@@ -78,7 +80,7 @@ const showRelationIdentity = () => {
 
     for (const element of relationUrlElements) {
         element.href = known
-            ? `https://www.openstreetmap.org/relation/${relationId}`
+            ? `${osmUrl}/relation/${relationId}`
             : "#"
         element.classList.toggle("d-none", !known)
     }
@@ -525,13 +527,18 @@ submitUploadBtn.onclick = async () => {
             // OSM assigns the real id on upload; without this the new relation would
             // be created and then be unreachable from here
             const created = data.relation_id
-                ? `<br><br>Created relation <a href="https://www.openstreetmap.org/relation/${data.relation_id}" target="_blank">#${data.relation_id}</a>.`
+                ? `<br><br>Created relation <a href="${osmUrl}/relation/${data.relation_id}" target="_blank">#${data.relation_id}</a>.`
+                : ""
+
+            // the revert tool only knows about live OSM
+            const revert = osmIsLive
+                ? `<br><br><i>Something broke? Use <a href="https://revert.monicz.dev/?changesets=${data.changeset_id}" target="_blank">this tool</a> to revert it.</i>`
                 : ""
 
             showMessage(
                 "success",
                 "✅ Upload successful",
-                `The changeset <a href="https://www.openstreetmap.org/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}<br><br><i>Something broke? Use <a href="https://revert.monicz.dev/?changesets=${data.changeset_id}" target="_blank">this tool</a> to revert it.</i>`,
+                `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}${revert}`,
             )
             unload()
         })
