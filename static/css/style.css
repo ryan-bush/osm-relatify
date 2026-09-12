@@ -207,6 +207,22 @@
   opacity: 1;
 }
 
+/* The full tag list puts an editable key and value on every row, which the width that
+   suits the rest of the menu leaves no room for. Never wider than the window, so it
+   stays usable on a phone. */
+#menu.menu-wide {
+  /* width, not max-width: the menu sizes to its content, so a cap alone would leave the
+     value boxes as cramped as before */
+  width: min(680px, calc(100vw - 20px));
+  max-width: none;
+}
+
+#menu.menu-wide .table-tags .key {
+  /* the keys are the short half; the value is what needs the room */
+  width: 1%;
+  white-space: nowrap;
+}
+
 #menu .title {
   margin-bottom: 0;
   background: #eee;

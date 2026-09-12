@@ -131,6 +131,9 @@ load the relation at all — `type`, `route`, `public_transport:version` and the
 Changing `roundtrip` re-runs the route calculation, since it changes which stop roles
 are valid.
 
+**Show all tags** widens the menu while it is open, so the value boxes have room for
+what is in them rather than cutting it off mid-word.
+
 ### Custom changeset comments
 
 The submit view has a comment field. Leave it blank and you get the generated comment
