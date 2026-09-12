@@ -1,4 +1,10 @@
-import { clearBusStopsPopup, showContextMenu, showNaptanTagsForm, showNewStopForm } from "./busStopsContext.js"
+import {
+    clearBusStopsPopup,
+    showAllTagsForm,
+    showContextMenu,
+    showNaptanTagsForm,
+    showNewStopForm,
+} from "./busStopsContext.js"
 import {
     addNewStop,
     clearNewStops,
@@ -183,7 +189,27 @@ function addBusStopToLayer(i, stop, name, role) {
     })
 
     marker.on("click", () => setMemberState(i, !stop.member))
-    marker.on("contextmenu", (e) => showContextMenu(e, stop, naptanTagsAction(e, stop, suggestion, addition)))
+    marker.on("contextmenu", (e) =>
+        showContextMenu(e, stop, naptanTagsAction(e, stop, suggestion, addition), () =>
+            showAllTagsForm(e.latlng, tagSections(busStopData[i])),
+        ),
+    )
+}
+
+// the platform and the stop position are separate elements, each with its own tags
+function tagSections(collection) {
+    const sections = []
+
+    for (const [label, stop] of [
+        ["Platform", collection.platform],
+        ["Stop position", collection.stop],
+    ]) {
+        if (!stop) continue
+        // a way the route splits carries a suffixed id, which OSM knows nothing about
+        sections.push({ label: `${label} · ${stop.type}/${stop.id.split("_")[0]}`, tags: stop.tags })
+    }
+
+    return sections
 }
 
 function onTagAdditionsChanged() {
