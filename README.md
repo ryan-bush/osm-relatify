@@ -112,6 +112,11 @@ the ids Overpass returns do not exist on the dev server.
 
 ### Editing relation tags
 
+A changeset only carries the relation when the relation itself changed. Adding NaPTAN
+tags to a stop, or putting a stop position on the road, leaves the route alone, so it no
+longer gains a version that says nothing.
+
+
 The edit view shows the relation's tags in a table you can change in place, add to,
 and delete from. Previously the only way to fix a `name` or add an `operator` was to
 leave for another editor.
