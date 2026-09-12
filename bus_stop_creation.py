@@ -12,9 +12,14 @@ from utils import ensure_list
 
 
 class NewStopPosition(BaseModel):
-    """The point on the road where the bus halts, created as a node of the way itself."""
+    """
+    The point on the road where the bus halts, created as a node of the way itself.
 
-    # the placeholder the route refers to the stop position by, as for the platform
+    Belongs to a platform, which may be one being created by this changeset or one that
+    has been in OSM all along, so it is sent on its own rather than under a new stop.
+    """
+
+    # the placeholder the route refers to the stop position by, as for a new platform
     id: int = Field(lt=0)
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
@@ -24,6 +29,8 @@ class NewStopPosition(BaseModel):
     wayId: int = Field(gt=0)
     afterNode: int
     beforeNode: int
+    # the name of the stop it serves, which it carries too; empty for an unnamed one
+    name: str = ''
 
 
 class NewBusStop(BaseModel):
@@ -35,8 +42,6 @@ class NewBusStop(BaseModel):
     lon: float = Field(ge=-180, le=180)
     # only what the user entered; the tags that make the node a stop are added on top
     tags: dict[str, str]
-    # absent when the road is too far away, or the user did not want one
-    stopPosition: NewStopPosition | None = None
 
 
 def make_new_stop_tags(route_type: str | None, tags: dict[str, str]) -> dict[str, str]:
@@ -59,11 +64,16 @@ def make_new_stop_tags(route_type: str | None, tags: dict[str, str]) -> dict[str
     return tags
 
 
-def make_stop_position_tags(route_type: str | None, platform_tags: dict[str, str]) -> dict[str, str]:
+def make_stop_position_tags(route_type: str | None, name: str) -> dict[str, str]:
     """The stop position carries the stop's name, and nothing else the platform owns."""
+    if route_type not in {'bus', 'trolleybus'}:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, 'Stop positions can only be added to bus and trolleybus routes'
+        )
+
     tags = {'public_transport': 'stop_position', route_type: 'yes'}
 
-    if name := platform_tags.get('name'):
+    if name := name.strip():
         tags['name'] = name
 
     for key, value in tags.items():
@@ -74,11 +84,12 @@ def make_stop_position_tags(route_type: str | None, platform_tags: dict[str, str
 
 def build_new_stop_nodes(
     new_stops: Sequence[NewBusStop],
+    new_stop_positions: Sequence[NewStopPosition],
     route_type: str | None,
     members: Sequence[RelationMember],
 ) -> list[dict]:
     ids = [stop.id for stop in new_stops]
-    ids += [stop.stopPosition.id for stop in new_stops if stop.stopPosition is not None]
+    ids += [position.id for position in new_stop_positions]
     if len(ids) != len(set(ids)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'New bus stops must have distinct ids')
 
@@ -93,16 +104,12 @@ def build_new_stop_nodes(
             f'The route refers to new bus stops that were not sent: {", ".join(missing)}',
         )
 
-    nodes = []
+    nodes = [_node(stop.id, stop.lat, stop.lon, make_new_stop_tags(route_type, stop.tags)) for stop in new_stops]
 
-    for stop in new_stops:
-        nodes.append(_node(stop.id, stop.lat, stop.lon, make_new_stop_tags(route_type, stop.tags)))
-
-        if stop.stopPosition is not None:
-            position = stop.stopPosition
-            nodes.append(
-                _node(position.id, position.lat, position.lon, make_stop_position_tags(route_type, stop.tags))
-            )
+    nodes += [
+        _node(position.id, position.lat, position.lon, make_stop_position_tags(route_type, position.name))
+        for position in new_stop_positions
+    ]
 
     return nodes
 
@@ -149,17 +156,14 @@ def insert_into_way_nodes(refs: list[int], insertions: Sequence[tuple[int, int, 
 
 
 async def build_stop_position_way_elements(
-    new_stops: Sequence[NewBusStop],
+    new_stop_positions: Sequence[NewStopPosition],
     split_ways: frozenset[int],
     osm,
 ) -> list[dict]:
     """The road ways to modify, each with its new stop position nodes inserted."""
     by_way: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
 
-    for stop in new_stops:
-        if (position := stop.stopPosition) is None:
-            continue
-
+    for position in new_stop_positions:
         # the split rewrite below builds its own node lists, which this would be lost in
         if position.wayId in split_ways:
             raise HTTPException(

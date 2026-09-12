@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sklearn.neighbors import BallTree
 from starlette import status
 
-from bus_stop_creation import NewBusStop, build_new_stop_nodes, build_stop_position_way_elements
+from bus_stop_creation import NewBusStop, NewStopPosition, build_new_stop_nodes, build_stop_position_way_elements
 from config import CHANGESET_ID_PLACEHOLDER, CREATED_BY
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id, split_element_id
@@ -433,6 +433,7 @@ async def build_osm_change(
     tags_original: dict[str, str] | None = None,
     tags_edited: dict[str, str] | None = None,
     new_stops: Sequence[NewBusStop] = (),
+    new_stop_positions: Sequence[NewStopPosition] = (),
     tag_additions: Sequence[StopTagAddition] = (),
 ) -> str:
     split_ways_mutable: set[int] = set()
@@ -474,7 +475,7 @@ async def build_osm_change(
     # route is a protected tag, so the edited copy cannot disagree with the loaded one
     route_type = (tags_edited or route.tags).get('route')
 
-    for node in build_new_stop_nodes(new_stops, route_type, route.members):
+    for node in build_new_stop_nodes(new_stops, new_stop_positions, route_type, route.members):
         _set_changeset_placeholder(node, include_changeset_id)
         result['osmChange']['create']['node'].append(node)
 
@@ -482,7 +483,7 @@ async def build_osm_change(
     if any(addition.type == 'way' and addition.id in split_ways for addition in tag_additions):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'NaPTAN tags cannot be added to a way the route splits')
 
-    for way_data in await build_stop_position_way_elements(new_stops, split_ways, osm):
+    for way_data in await build_stop_position_way_elements(new_stop_positions, split_ways, osm):
         _set_changeset_placeholder(way_data, include_changeset_id)
         result['osmChange']['modify']['way'].append(way_data)
 

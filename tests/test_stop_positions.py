@@ -41,18 +41,14 @@ class FakeOsm:
         ]
 
 
-def _position(id=-2, way_id=201, after=11, before=12, **kwargs):
-    return NewStopPosition(id=id, lat=51.5001, lon=-0.1201, wayId=way_id, afterNode=after, beforeNode=before, **kwargs)
-
-
-def _stop(id=-1, tags=None, position=_position):
-    return NewBusStop(
-        id=id,
-        lat=51.5,
-        lon=-0.12,
-        tags=tags if tags is not None else {'name': 'High Street'},
-        stopPosition=position() if callable(position) else position,
+def _position(id=-2, way_id=201, after=11, before=12, name='High Street', **kwargs):
+    return NewStopPosition(
+        id=id, lat=51.5001, lon=-0.1201, wayId=way_id, afterNode=after, beforeNode=before, name=name, **kwargs
     )
+
+
+def _stop(id=-1, tags=None):
+    return NewBusStop(id=id, lat=51.5, lon=-0.12, tags=tags if tags is not None else {'name': 'High Street'})
 
 
 def _route(members, tags=BUS_TAGS):
@@ -67,7 +63,7 @@ def _route(members, tags=BUS_TAGS):
     )
 
 
-def _change(members, new_stops, osm, tags=BUS_TAGS) -> dict:
+def _change(members, new_stops, osm, positions=(), tags=BUS_TAGS) -> dict:
     xml = asyncio.run(
         build_osm_change(
             None,
@@ -77,6 +73,7 @@ def _change(members, new_stops, osm, tags=BUS_TAGS) -> dict:
             osm=osm,
             tags_edited=tags,
             new_stops=new_stops,
+            new_stop_positions=positions,
         )
     )
     return xmltodict.parse(xml, force_list=('node', 'way', 'member', 'tag', 'nd'))['osmChange']
@@ -126,45 +123,55 @@ class TestInsertIntoWayNodes:
 
 class TestStopPositionTags:
     def test_carries_the_name_and_the_route_type(self):
-        tags = make_stop_position_tags('bus', {'name': 'High Street', 'local_ref': 'B'})
+        tags = make_stop_position_tags('bus', 'High Street')
         assert tags == {'public_transport': 'stop_position', 'bus': 'yes', 'name': 'High Street'}
 
-    def test_leaves_out_the_platform_only_tags(self):
-        tags = make_stop_position_tags('bus', {'name': 'High Street', 'naptan:AtcoCode': '3900VA1', 'shelter': 'yes'})
-        assert 'naptan:AtcoCode' not in tags
-        assert 'shelter' not in tags
+    def test_an_unnamed_stop_gets_no_name(self):
+        assert make_stop_position_tags('bus', '  ') == {'public_transport': 'stop_position', 'bus': 'yes'}
 
     def test_trolleybus_route(self):
-        assert make_stop_position_tags('trolleybus', {'name': 'X'})['trolleybus'] == 'yes'
+        assert make_stop_position_tags('trolleybus', 'X')['trolleybus'] == 'yes'
+
+    def test_other_route_types_are_refused(self):
+        # tram stops are tagged differently and belong on the track
+        with pytest.raises(HTTPException) as e:
+            make_stop_position_tags('tram', 'X')
+
+        assert e.value.status_code == 400
 
 
 class TestBuildNewStopNodes:
     def test_creates_the_platform_and_the_stop_position(self):
-        nodes = build_new_stop_nodes([_stop()], 'bus', [PLATFORM, STOP, WAY])
+        nodes = build_new_stop_nodes([_stop()], [_position()], 'bus', [PLATFORM, STOP, WAY])
         assert [node['@id'] for node in nodes] == [-1, -2]
         assert _tags(nodes[0])['public_transport'] == 'platform'
         assert _tags(nodes[1])['public_transport'] == 'stop_position'
 
     def test_creates_only_the_platform_without_a_stop_position(self):
-        nodes = build_new_stop_nodes([_stop(position=None)], 'bus', [PLATFORM, WAY])
+        nodes = build_new_stop_nodes([_stop()], [], 'bus', [PLATFORM, WAY])
         assert [node['@id'] for node in nodes] == [-1]
+
+    def test_a_stop_position_for_a_stop_already_in_osm_needs_no_new_stop(self):
+        nodes = build_new_stop_nodes([], [_position()], 'bus', [STOP, WAY])
+        assert [node['@id'] for node in nodes] == [-2]
+        assert _tags(nodes[0]) == {'public_transport': 'stop_position', 'bus': 'yes', 'name': 'High Street'}
 
     def test_a_stop_position_id_clashing_with_a_platform_is_rejected(self):
         with pytest.raises(HTTPException) as e:
-            build_new_stop_nodes([_stop(id=-1, position=lambda: _position(id=-1))], 'bus', [PLATFORM, WAY])
+            build_new_stop_nodes([_stop(id=-1)], [_position(id=-1)], 'bus', [PLATFORM, WAY])
 
         assert e.value.status_code == 400
         assert 'distinct ids' in e.value.detail
 
     def test_the_route_may_refer_to_the_stop_position(self):
         # it is sent, so it is not reported as a member nothing creates
-        build_new_stop_nodes([_stop()], 'bus', [PLATFORM, STOP, WAY])
+        build_new_stop_nodes([_stop()], [_position()], 'bus', [PLATFORM, STOP, WAY])
 
 
 class TestBuildOsmChange:
     def test_modifies_the_way_and_creates_both_nodes(self):
         osm = FakeOsm({201: [10, 11, 12, 13]})
-        change = _change([PLATFORM, STOP, WAY], [_stop()], osm)
+        change = _change([PLATFORM, STOP, WAY], [_stop()], osm, [_position()])
 
         created = [node['@id'] for node in change['create']['node']]
         assert created == ['-1', '-2']
@@ -174,7 +181,7 @@ class TestBuildOsmChange:
 
     def test_strips_the_metadata_from_the_fetched_way(self):
         osm = FakeOsm({201: [10, 11, 12]})
-        way = _change([PLATFORM, STOP, WAY], [_stop()], osm)['modify']['way'][0]
+        way = _change([PLATFORM, STOP, WAY], [_stop()], osm, [_position()])['modify']['way'][0]
 
         assert '@timestamp' not in way
         assert '@user' not in way
@@ -184,14 +191,22 @@ class TestBuildOsmChange:
 
     def test_the_stop_position_is_a_relation_member(self):
         osm = FakeOsm({201: [10, 11, 12]})
-        relation = _change([PLATFORM, STOP, WAY], [_stop()], osm)['create']['relation']
+        relation = _change([PLATFORM, STOP, WAY], [_stop()], osm, [_position()])['create']['relation']
 
         refs = [(m['@type'], m['@ref'], m['@role']) for m in relation['member']]
         assert ('node', '-2', 'stop') in refs
 
+    def test_a_stop_already_in_osm_can_gain_one_on_its_own(self):
+        # no new platform: the stop has been in OSM all along, it just had no stop position
+        osm = FakeOsm({201: [10, 11, 12]})
+        change = _change([STOP, WAY], [], osm, [_position()])
+
+        assert [node['@id'] for node in change['create']['node']] == ['-2']
+        assert [nd['@ref'] for nd in change['modify']['way'][0]['nd']] == ['10', '11', '-2', '12']
+
     def test_no_way_is_fetched_without_a_stop_position(self):
         osm = FakeOsm({})
-        change = _change([PLATFORM, WAY], [_stop(position=None)], osm)
+        change = _change([PLATFORM, WAY], [_stop()], osm)
 
         assert osm.requested is None
         # nothing was modified at all, so the whole block is empty
@@ -199,14 +214,24 @@ class TestBuildOsmChange:
 
     def test_two_stops_on_the_same_way_share_one_modify(self):
         osm = FakeOsm({201: [10, 11, 12, 13]})
-        stops = [
-            _stop(id=-1, position=lambda: _position(id=-2, after=10, before=11)),
-            _stop(id=-3, tags={'name': 'Low Street'}, position=lambda: _position(id=-4, after=12, before=13)),
-        ]
-        members = [PLATFORM, STOP, RelationMember(id='-3', type='node', role='platform'),
-                   RelationMember(id='-4', type='node', role='stop'), WAY]
-        change = _change(members, stops, osm)
+        positions = [_position(id=-2, after=10, before=11), _position(id=-4, after=12, before=13)]
+        members = [STOP, RelationMember(id='-4', type='node', role='stop'), WAY]
+        change = _change(members, [], osm, positions)
 
         ways = change['modify']['way']
         assert len(ways) == 1
         assert [nd['@ref'] for nd in ways[0]['nd']] == ['10', '-2', '11', '12', '-4', '13']
+
+    def test_a_way_the_route_splits_is_refused(self):
+        osm = FakeOsm({201: [10, 11, 12]})
+        # the route uses the way in two pieces, so the upload rewrites its nodes itself
+        halves = [
+            RelationMember(id='201_1_2', type='way', role=''),
+            RelationMember(id='201_2_2', type='way', role=''),
+        ]
+
+        with pytest.raises(HTTPException) as e:
+            _change([STOP, *halves], [], osm, [_position()])
+
+        assert e.value.status_code == 400
+        assert 'splits' in e.value.detail
