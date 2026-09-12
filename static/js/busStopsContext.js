@@ -359,6 +359,9 @@ export function showAllTagsForm(latlng, sections) {
     content.innerHTML = `<div class="new-stop-title">Tags</div>`
     content.append(renderTagSections(sections))
 
+    // the list is there to be read and scrolled, and a click reaching the map closes it
+    L.DomEvent.disableClickPropagation(content)
+
     popup = L.popup(latlng, {
         content: content,
         closeButton: false,
