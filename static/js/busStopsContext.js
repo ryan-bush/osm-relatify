@@ -195,10 +195,11 @@ function platformUploadTags(tags, routeType) {
     return result
 }
 
-function stopPositionUploadTags(tags, routeType) {
+function stopPositionUploadTags(tags, routeType, direction) {
     const result = { public_transport: "stop_position" }
     if (routeType) result[routeType] = "yes"
     if (tags.name) result.name = tags.name
+    if (direction) result.direction = direction
     return result
 }
 
@@ -313,7 +314,7 @@ export function showNewStopForm(
         if (stopPositionCheck.checked) {
             sections.push({
                 label: "Stop position · new node on the road",
-                tags: stopPositionUploadTags(collected, routeType),
+                tags: stopPositionUploadTags(collected, routeType, stopPosition?.direction),
             })
         }
 

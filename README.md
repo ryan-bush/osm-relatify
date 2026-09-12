@@ -218,6 +218,14 @@ stop is projected onto the nearest member way and the node goes into that way be
 the two nodes it falls between, shown as a ringed dot joined to the platform by a
 dashed line, and joins the relation with role `stop`.
 
+The node also gets [`direction`](https://wiki.openstreetmap.org/wiki/Tag:public_transport%3Dstop_position),
+taken from the way the route runs over that road: `forward` or `backward` relative to the
+way's own direction, or `both` where the route covers it in each direction. This is what
+tells the two sides of a road apart when both their stop positions sit on the one way,
+which is the case the wiki asks for it in. It is left off when the route has not been
+calculated yet, and it follows the route: redraw the route the other way round and the
+tag turns with it.
+
 The node is created and the road way modified by the same changeset as everything else.
 On upload the way is fetched again and the node is inserted between the two neighbours
 the editor saw; if they are no longer next to each other, someone has edited the road

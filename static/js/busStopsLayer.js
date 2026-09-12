@@ -42,17 +42,19 @@ import {
 } from "./stopAreas.js"
 import {
     getStopPositionNode,
+    getStopPositionPlacement,
     hasStopPosition,
     planStopPosition,
     removeStopPosition,
     renameStopPosition,
     setStopPosition,
+    setStopPositionDirection,
 } from "./stopPositions.js"
 import { effectiveName } from "./stopNames.js"
 import { relationTags } from "./tagEditor.js"
 import { escapeHtml, getBusCollectionName, haversine_distance } from "./utils.js"
 import { waysData, waysRBush } from "./waysLayer.js"
-import { requestCalcBusRoute } from "./waysRoute.js"
+import { requestCalcBusRoute, routeData } from "./waysRoute.js"
 
 export let busStopData = null
 
@@ -307,15 +309,17 @@ function stopPositionAction(e, collection) {
     const placement = added ? null : planStopPosition(platform.latLng, waysData)
     if (!added && !placement) return null
 
+    const direction = placement && travelDirectionOn(placement.segmentId)
+
     return {
         label: added ? "Stop <b>position</b> ✓" : "Stop <b>position</b>",
         onClick: () =>
             showStopPositionForm(e.latlng, {
                 added: added,
                 distance: placement?.distance,
-                tags: stopPositionTagsFor(platform),
+                tags: stopPositionTagsFor(platform, direction),
                 onAdd: () => {
-                    setStopPosition(platform, placement, nameOf(platform))
+                    setStopPosition(platform, placement, nameOf(platform), direction)
                     onStopPositionsChanged()
                 },
                 onRemove: () => {
@@ -335,12 +339,29 @@ function nameOf(stop) {
     return effectiveName(stop, naptanName, naptanName && getDecision(stop, "name", naptanName))
 }
 
+// Which way along the road the buses calling here travel, as the wiki wants it on a stop
+// position: relative to the way's own direction, not the compass. Taken from how the
+// route actually runs over that way, so the two sides of a road are told apart even when
+// both their stop positions sit on the one way.
+function travelDirectionOn(segmentId) {
+    const uses = routeData?.ways?.filter((routeWay) => routeWay.way.id === segmentId)
+    if (!uses?.length) return null
+
+    const reversed = new Set(uses.map((routeWay) => Boolean(routeWay.reversed_latLngs)))
+
+    // the route runs over this way both ways round, so the node serves both
+    if (reversed.size > 1) return "both"
+
+    return reversed.has(true) ? "backward" : "forward"
+}
+
 // mirrors make_stop_position_tags() in bus_stop_creation.py
-function stopPositionTagsFor(platform) {
+function stopPositionTagsFor(platform, direction) {
     const tags = { public_transport: "stop_position" }
     if (relationTags?.route) tags[relationTags.route] = "yes"
     const name = nameOf(platform)
     if (name) tags.name = name
+    if (direction) tags.direction = direction
     return tags
 }
 
@@ -367,6 +388,20 @@ function refreshDerivedNames() {
     }
 
     return changed
+}
+
+// The route decides which way the buses at a stop position travel, so every calculation
+// can change it. Nothing is recalculated from here, which would loop.
+export function refreshStopPositionDirections() {
+    if (!busStopData) return
+
+    for (const entry of busStopData) {
+        const platform = entry.platform
+        if (!platform) continue
+
+        const placement = getStopPositionPlacement(platform)
+        if (placement) setStopPositionDirection(platform, travelDirectionOn(placement.segmentId))
+    }
 }
 
 function onStopPositionsChanged() {
@@ -424,6 +459,8 @@ function naptanTagsAction(e, stop, suggestion, addition) {
 // Where the stop position goes, or null when the user did not ask for one or no route
 // road is close enough to carry it.
 const stopPositionFor = (latLng, wanted) => (wanted ? planStopPosition(latLng, waysData) : null)
+
+const directionFor = (placement) => (placement ? travelDirectionOn(placement.segmentId) : null)
 
 // Where NaPTAN and the stop hold different values for a tag, the mapper decides which
 // one is right. Until every one is decided the route cannot be uploaded.
@@ -582,28 +619,40 @@ map.on("contextmenu", (e) => {
 
     const latLng = [e.latlng.lat, e.latlng.lng]
 
+    const placement = planStopPosition(latLng, waysData)
+
     showNewStopForm(e.latlng, {
         nearby: findNearbyStop(latLng, null),
         routeType: relationTags?.route,
-        stopPosition: { available: Boolean(planStopPosition(latLng, waysData)), checked: true },
+        stopPosition: {
+            available: Boolean(placement),
+            checked: true,
+            direction: placement && travelDirectionOn(placement.segmentId),
+        },
         onSave: (tags, wantStopPosition) => {
-            addNewStop(latLng, tags, stopPositionFor(latLng, wantStopPosition))
+            const chosen = stopPositionFor(latLng, wantStopPosition)
+            addNewStop(latLng, tags, chosen, directionFor(chosen))
             syncNewStops()
         },
     })
 })
 
 function editNewStop(e, stop) {
+    const editPlacement = planStopPosition(stop.latLng, waysData)
+
     showNewStopForm(e.latlng, {
         stop: stop,
         nearby: findNearbyStop(stop.latLng, stop),
         routeType: relationTags?.route,
         stopPosition: {
-            available: Boolean(planStopPosition(stop.latLng, waysData)),
-            checked: Boolean(stop.stopPosition),
+            available: Boolean(editPlacement),
+            // asked of the store: a new stop does not carry its stop position itself
+            checked: hasStopPosition(stop),
+            direction: editPlacement && travelDirectionOn(editPlacement.segmentId),
         },
         onSave: (tags, wantStopPosition) => {
-            updateNewStop(stop, tags, stopPositionFor(stop.latLng, wantStopPosition))
+            const chosen = stopPositionFor(stop.latLng, wantStopPosition)
+            updateNewStop(stop, tags, chosen, directionFor(chosen))
             syncNewStops()
         },
         onDelete: () => {
@@ -635,17 +684,21 @@ function addNaptanStopsToLayer() {
         })
 
         const suggest = () => {
+            const naptanPlacement = planStopPosition(naptanStop.latLng, waysData)
+
             showNewStopForm(L.latLng(naptanStop.latLng), {
                 tags: naptanStop.tags,
                 nearby: findNearbyStop(naptanStop.latLng, null),
                 routeType: relationTags?.route,
                 stopPosition: {
-                    available: Boolean(planStopPosition(naptanStop.latLng, waysData)),
+                    available: Boolean(naptanPlacement),
                     checked: true,
+                    direction: naptanPlacement && travelDirectionOn(naptanPlacement.segmentId),
                 },
                 onSave: (tags, wantStopPosition) => {
                     const latLng = [...naptanStop.latLng]
-                    addNewStop(latLng, tags, stopPositionFor(latLng, wantStopPosition))
+                    const chosen = stopPositionFor(latLng, wantStopPosition)
+                    addNewStop(latLng, tags, chosen, directionFor(chosen))
                     syncNewStops()
                 },
             })
@@ -672,7 +725,8 @@ function addNewStopToLayer(stop) {
         const { lat, lng } = marker.getLatLng()
         const latLng = [lat, lng]
         // a stop that had a stop position keeps one, worked out afresh for where it now is
-        moveNewStop(stop, latLng, stop.stopPosition ? stopPositionFor(latLng, true) : null)
+        const moved = hasStopPosition(stop) ? stopPositionFor(latLng, true) : null
+        moveNewStop(stop, latLng, moved, directionFor(moved))
         syncNewStops()
     })
 

@@ -1,6 +1,7 @@
 from collections import defaultdict
 from collections.abc import Sequence
 from itertools import pairwise
+from typing import Literal
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
@@ -31,6 +32,9 @@ class NewStopPosition(BaseModel):
     beforeNode: int
     # the name of the stop it serves, which it carries too; empty for an unnamed one
     name: str = ''
+    # which way along the road the buses calling here travel, as the wiki gives it for a
+    # stop position: relative to the way's own direction. Absent when it is not known.
+    direction: Literal['forward', 'backward', 'both'] | None = None
 
 
 class NewBusStop(BaseModel):
@@ -64,7 +68,7 @@ def make_new_stop_tags(route_type: str | None, tags: dict[str, str]) -> dict[str
     return tags
 
 
-def make_stop_position_tags(route_type: str | None, name: str) -> dict[str, str]:
+def make_stop_position_tags(route_type: str | None, name: str, direction: str | None = None) -> dict[str, str]:
     """The stop position carries the stop's name, and nothing else the platform owns."""
     if route_type not in {'bus', 'trolleybus'}:
         raise HTTPException(
@@ -75,6 +79,11 @@ def make_stop_position_tags(route_type: str | None, name: str) -> dict[str, str]
 
     if name := name.strip():
         tags['name'] = name
+
+    # tells the two sides of a road apart where both their stop positions sit on the one
+    # way, which is the case the wiki asks for it in
+    if direction is not None:
+        tags['direction'] = direction
 
     for key, value in tags.items():
         validate_tag(key, value)
@@ -107,7 +116,12 @@ def build_new_stop_nodes(
     nodes = [_node(stop.id, stop.lat, stop.lon, make_new_stop_tags(route_type, stop.tags)) for stop in new_stops]
 
     nodes += [
-        _node(position.id, position.lat, position.lon, make_stop_position_tags(route_type, position.name))
+        _node(
+            position.id,
+            position.lat,
+            position.lon,
+            make_stop_position_tags(route_type, position.name, position.direction),
+        )
         for position in new_stop_positions
     ]
 

@@ -1,5 +1,5 @@
 import { clearAntPath, processRouteAntPath } from "./antPathLayer.js"
-import { busStopData } from "./busStopsLayer.js"
+import { busStopData, refreshStopPositionDirections } from "./busStopsLayer.js"
 import { processRouteStops, processRouteWarnings, relationId } from "./menu.js"
 import { relationTags } from "./tagEditor.js"
 import { deflateCompress, deflateDecompress } from "./utils.js"
@@ -97,6 +97,8 @@ const onmessage = async (e) => {
     processRouteAntPath(data)
     processRouteWarnings(data)
     processRouteStops(data)
+    // the route just changed, and it is what says which way a stop position faces
+    refreshStopPositionDirections()
 
     awaitingResponse = false
     await onopen()

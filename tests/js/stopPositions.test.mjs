@@ -7,12 +7,14 @@ import { beforeEach, test } from "node:test"
 import {
     clearStopPositions,
     getStopPositionNode,
+    getStopPositionPlacement,
     hasStopPosition,
     insertStopPositionsIntoWays,
     planStopPosition,
     removeStopPosition,
     renameStopPosition,
     setStopPosition,
+    setStopPositionDirection,
     stopPositionCount,
     stopPositionsPayload,
 } from "../../static/js/stopPositions.js"
@@ -255,4 +257,38 @@ test("renaming to the name it already has changes nothing", () => {
 
 test("renaming a stop with no stop position is harmless", () => {
     assert.equal(renameStopPosition(platform(), "The Orchards"), false)
+})
+
+test("the direction the buses travel is sent with the node", () => {
+    setStopPosition(platform(), placementFor(), "The Station", "forward")
+
+    assert.equal(stopPositionsPayload()[0].direction, "forward")
+})
+
+test("no direction is sent when the route does not say", () => {
+    setStopPosition(platform(), placementFor(), "The Station")
+
+    assert.equal(stopPositionsPayload()[0].direction, null)
+})
+
+test("redrawing the route the other way turns the node round", () => {
+    const osmStop = platform()
+    setStopPosition(osmStop, placementFor(), "The Station", "forward")
+
+    assert.equal(setStopPositionDirection(osmStop, "backward"), true)
+    assert.equal(stopPositionsPayload()[0].direction, "backward")
+})
+
+test("setting the direction it already has changes nothing", () => {
+    const osmStop = platform()
+    setStopPosition(osmStop, placementFor(), "The Station", "forward")
+
+    assert.equal(setStopPositionDirection(osmStop, "forward"), false)
+})
+
+test("the placement is kept, so the direction can be worked out again later", () => {
+    const osmStop = platform()
+    setStopPosition(osmStop, placementFor(), "The Station")
+
+    assert.equal(getStopPositionPlacement(osmStop).segmentId, "201")
 })
