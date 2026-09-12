@@ -3,6 +3,7 @@ import asyncio
 import pytest
 import xmltodict
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from bus_stop_creation import (
     NewBusStop,
@@ -45,6 +46,7 @@ def _position(id=-2, way_id=201, after=11, before=12, name='High Street', **kwar
     return NewStopPosition(
         id=id, lat=51.5001, lon=-0.1201, wayId=way_id, afterNode=after, beforeNode=before, name=name, **kwargs
     )
+
 
 
 def _stop(id=-1, tags=None):
@@ -235,3 +237,24 @@ class TestBuildOsmChange:
 
         assert e.value.status_code == 400
         assert 'splits' in e.value.detail
+
+
+class TestStopPositionDirection:
+    def test_the_direction_reaches_the_node(self):
+        tags = make_stop_position_tags('bus', 'High Street', 'forward')
+        assert tags['direction'] == 'forward'
+
+    def test_no_direction_when_the_route_does_not_say(self):
+        assert 'direction' not in make_stop_position_tags('bus', 'High Street')
+
+    def test_a_way_used_both_ways_round(self):
+        assert make_stop_position_tags('bus', 'High Street', 'both')['direction'] == 'both'
+
+    def test_it_is_written_on_the_created_node(self):
+        nodes = build_new_stop_nodes([], [_position(direction='backward')], 'bus', [STOP, WAY])
+        assert _tags(nodes[0])['direction'] == 'backward'
+
+    @pytest.mark.parametrize('direction', ['sideways', 'N', 'forwards', ''])
+    def test_anything_but_the_three_the_wiki_gives_is_refused(self, direction):
+        with pytest.raises(ValidationError):
+            _position(direction=direction)

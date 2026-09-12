@@ -25,9 +25,10 @@ const applyTags = (stop, tags) => {
 }
 
 // the stop position, when there is one, carries the platform's name along with it
-const applyPlacement = (stop, placement) => setStopPosition(stop, placement, stop.tags.name ?? "")
+const applyPlacement = (stop, placement, direction) =>
+    setStopPosition(stop, placement, stop.tags.name ?? "", direction)
 
-export function addNewStop(latLng, tags, placement = null) {
+export function addNewStop(latLng, tags, placement = null, direction = null) {
     // shaped like a downloaded platform, which is what the route calculation expects;
     // the tags that make it a stop are added by the server on upload
     const stop = {
@@ -43,19 +44,19 @@ export function addNewStop(latLng, tags, placement = null) {
     }
 
     applyTags(stop, tags)
-    applyPlacement(stop, placement)
+    applyPlacement(stop, placement, direction)
     newStops.set(stop.id, stop)
     return stop
 }
 
-export const updateNewStop = (stop, tags, placement = null) => {
+export const updateNewStop = (stop, tags, placement = null, direction = null) => {
     applyTags(stop, tags)
-    applyPlacement(stop, placement)
+    applyPlacement(stop, placement, direction)
 }
 
-export const moveNewStop = (stop, latLng, placement = null) => {
+export const moveNewStop = (stop, latLng, placement = null, direction = null) => {
     stop.latLng = latLng
-    applyPlacement(stop, placement)
+    applyPlacement(stop, placement, direction)
 }
 
 export function removeNewStop(stop) {

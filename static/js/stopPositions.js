@@ -149,7 +149,7 @@ export const platformKey = (platform) => `${platform.type},${platform.id}`
 // Puts a stop position on the road for `platform`, or takes it away again when
 // `placement` is null. The node keeps its id while only being moved, so anything already
 // referring to it still does.
-export function setStopPosition(platform, placement, name = "") {
+export function setStopPosition(platform, placement, name = "", direction = null) {
     const key = platformKey(platform)
 
     if (!placement) {
@@ -172,11 +172,14 @@ export function setStopPosition(platform, placement, name = "") {
     // the platform decides whether the route calls here; the two never disagree
     node.member = platform.member !== false
 
-    pending.set(key, { node: node, placement: placement, name: name })
+    pending.set(key, { node: node, placement: placement, name: name, direction: direction })
     return node
 }
 
 export const getStopPositionNode = (platform) => pending.get(platformKey(platform))?.node ?? null
+
+// the spot it was put at, so anything re-derived later works from the same place
+export const getStopPositionPlacement = (platform) => pending.get(platformKey(platform))?.placement ?? null
 
 // The stop the node serves may be renamed after the node was placed, by a NaPTAN
 // disagreement the mapper settled later; the node carries the name it will end up with.
@@ -187,6 +190,16 @@ export function renameStopPosition(platform, name) {
     entry.name = name
     entry.node.name = name
     entry.node.groupName = name.toLowerCase()
+    return true
+}
+
+// The route can be redrawn to run the other way along this road after the node was
+// placed, which changes the direction the node describes.
+export function setStopPositionDirection(platform, direction) {
+    const entry = pending.get(platformKey(platform))
+    if (!entry || entry.direction === direction) return false
+
+    entry.direction = direction
     return true
 }
 
@@ -210,7 +223,7 @@ export const stopPositionCount = () => uploadable().length
 export const stopPositionPlacements = () => Array.from(pending.values(), (entry) => entry.placement)
 
 export const stopPositionsPayload = () =>
-    uploadable().map(({ node, placement, name }) => ({
+    uploadable().map(({ node, placement, name, direction }) => ({
         id: Number.parseInt(node.id, 10),
         lat: node.latLng[0],
         lon: node.latLng[1],
@@ -218,4 +231,5 @@ export const stopPositionsPayload = () =>
         afterNode: placement.afterNode,
         beforeNode: placement.beforeNode,
         name: name,
+        direction: direction,
     }))
