@@ -86,6 +86,18 @@ Everything below has a working default and can be set in `.env`:
 | `NAPTAN_ENABLED` | [Suggests and checks stops using NaPTAN](#stops-from-naptan). On by default; set to `0` to turn off. |
 | `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
 
+### Running the tests
+
+```sh
+.venv/bin/python -m pytest
+```
+
+The browser-side geometry has its own tests, which need only node:
+
+```sh
+node --test "tests/js/*.mjs"
+```
+
 ### Testing uploads against the OSM dev server
 
 Set `OSM_URL=https://master.apis.dev.openstreetmap.org` and register a separate OAuth
@@ -169,10 +181,31 @@ The upload creates each one as a node tagged `highway=bus_stop`,
 `public_transport=platform` and `bus=yes` (or `trolleybus=yes`), in the same changeset
 as the route, and adds it to the relation.
 
-Only platforms are created, not stop positions on the road, and there is no
-`stop_area` relation. A stop must have a name: the map data leaves out unnamed
-platforms, so it would disappear the next time the route loads. Overpass also lags
-OSM by a few minutes, so a new stop may not show when reloading straight after upload.
+A stop must have a name: the map data leaves out unnamed platforms, so it would
+disappear the next time the route loads. Overpass also lags OSM by a few minutes, so a
+new stop may not show when reloading straight after upload. There is still no
+`stop_area` relation.
+
+#### Stop positions on the road
+
+PTv2 puts the platform beside the road and a `public_transport=stop_position` node on
+the road itself, where the bus actually halts. **Also mark where the bus halts** in the
+form adds one: the stop is projected onto the nearest member way, and the node goes
+into that way between the two nodes it falls between. It is shown as a ringed dot
+joined to the platform by a dashed line, and joins the relation with role `stop`.
+
+The node is created and the road way modified by the same changeset as everything else.
+On upload the way is fetched again and the node is inserted between the two neighbours
+the editor saw; if they are no longer next to each other, someone has edited the road
+since, and the upload stops as a conflict rather than putting the node in the wrong
+place. Dragging the stop moves its stop position with it, and unticking the box removes
+it again.
+
+The box is unavailable when no member way is within 30 m, or before the route has any
+ways, since there is then nothing to put the node on. Ways the route splits are skipped
+too: their node lists are rebuilt on upload, and a node inserted here would be lost in
+that. New nodes are also kept at least half a metre from the way's existing nodes, so a
+stop level with one never lands on top of it.
 
 ### Stops from NaPTAN
 
@@ -259,11 +292,12 @@ are not covered by it.
 - ✅ U-turns without `highway=turning_circle`
 - ✅ Creating new bus stops (platforms)
 - ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
+- ✅ Stop positions on the road for new stops
 
 
 ### Planned
 
-- ⏳ Stop positions and `stop_area` for new stops
+- ⏳ `stop_area` for new stops
 - ⏳ Relation `type=restriction`
 - ⏳ `direction=*`
 - ⏳ `oneway=-1`
