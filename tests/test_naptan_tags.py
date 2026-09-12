@@ -12,7 +12,13 @@ from models.final_route import FinalRoute
 from models.naptan_stop import NaptanStop
 from models.relation_member import RelationMember
 from naptan import match_stops
-from naptan_tags import StopTagAddition, add_missing_tags, build_tag_addition_elements, missing_tags
+from naptan_tags import (
+    StopTagAddition,
+    apply_stop_tags,
+    build_tag_addition_elements,
+    differing_tags,
+    missing_tags,
+)
 from relation_builder import build_osm_change
 
 NAPTAN_TAGS = {
@@ -174,7 +180,7 @@ def _tags_of(element):
 def test_missing_tags_are_added_and_existing_ones_kept():
     element = _element({'highway': 'bus_stop', 'name': 'Union Grove'})
 
-    assert add_missing_tags(element, 'node/42', {'naptan:AtcoCode': 'A', 'naptan:Bearing': 'SW'})
+    assert apply_stop_tags(element, 'node/42', {'naptan:AtcoCode': 'A', 'naptan:Bearing': 'SW'}, {})
     assert _tags_of(element) == {
         'highway': 'bus_stop',
         'name': 'Union Grove',
@@ -186,14 +192,14 @@ def test_missing_tags_are_added_and_existing_ones_kept():
 def test_tags_someone_already_added_are_skipped():
     element = _element({'naptan:AtcoCode': 'A'})
 
-    assert not add_missing_tags(element, 'node/42', {'naptan:AtcoCode': 'A'})
+    assert not apply_stop_tags(element, 'node/42', {'naptan:AtcoCode': 'A'}, {})
 
 
 def test_a_tag_given_another_value_since_loading_is_a_conflict():
     element = _element({'naptan:Bearing': 'NE'})
 
     with pytest.raises(HTTPException) as e:
-        add_missing_tags(element, 'node/42', {'naptan:Bearing': 'SW', 'naptan:AtcoCode': 'A'})
+        apply_stop_tags(element, 'node/42', {'naptan:Bearing': 'SW', 'naptan:AtcoCode': 'A'}, {})
 
     assert e.value.status_code == 409
     assert 'naptan:Bearing' in e.value.detail
@@ -332,3 +338,125 @@ def test_comment_and_source_mention_tagged_stops():
 
     assert tags['comment'] == 'Updated route: Bus 12, #7; added NaPTAN tags to 2 bus stops'
     assert tags['source'] == 'NaPTAN'
+
+
+class TestDifferingTags:
+    def test_reports_a_value_naptan_disagrees_with(self):
+        osm = {'name': 'High Street', 'naptan:Bearing': 'NE'}
+        naptan = {'name': 'High Street (Market Square)', 'naptan:Bearing': 'NE'}
+
+        assert differing_tags(osm, naptan) == {'name': 'High Street (Market Square)'}
+
+    def test_a_tag_the_stop_lacks_is_a_fill_not_a_disagreement(self):
+        assert differing_tags({}, {'naptan:Bearing': 'NE'}) == {}
+
+    def test_a_tag_naptan_lacks_is_not_a_disagreement(self):
+        assert differing_tags({'naptan:Bearing': 'NE'}, {}) == {}
+
+    def test_matching_values_are_not_reported(self):
+        assert differing_tags({'ref': 'brimjdg'}, {'ref': 'brimjdg'}) == {}
+
+    def test_whitespace_alone_is_not_a_disagreement(self):
+        assert differing_tags({'ref': ' brimjdg '}, {'ref': 'brimjdg'}) == {}
+
+    def test_keys_outside_the_reviewable_set_are_ignored(self):
+        # the mapper's own survey, which NaPTAN has no say over
+        assert differing_tags({'shelter': 'yes'}, {'shelter': 'no'}) == {}
+
+    def test_reports_several_at_once(self):
+        osm = {'name': 'High St', 'local_ref': 'A', 'naptan:Street': 'High Street'}
+        naptan = {'name': 'High Street', 'local_ref': 'B', 'naptan:Street': 'High Street'}
+
+        assert differing_tags(osm, naptan) == {'name': 'High Street', 'local_ref': 'B'}
+
+
+class TestWritableKeys:
+    def _addition(self, tags, expected=None):
+        return StopTagAddition(type='node', id=42, tags=tags, expected=expected or {})
+
+    def test_a_fillable_key_can_always_be_written(self):
+        assert self._addition({'naptan:Bearing': 'NE'}).writable_keys() == {'naptan:Bearing'}
+
+    def test_name_cannot_be_filled_in(self):
+        # an empty name stays the mapper's to decide
+        assert self._addition({'name': 'High Street'}).writable_keys() == set()
+
+    def test_name_can_be_written_as_an_accepted_replacement(self):
+        addition = self._addition({'name': 'High Street'}, {'name': 'High St'})
+        assert addition.writable_keys() == {'name'}
+
+
+class TestApplyStopTags:
+    def _element(self, tags):
+        return {'tag': [{'@k': k, '@v': v} for k, v in tags.items()]}
+
+    def test_replaces_a_value_the_mapper_accepted(self):
+        element = self._element({'name': 'High St'})
+
+        assert apply_stop_tags(element, 'node/42', {'name': 'High Street'}, {'name': 'High St'})
+        assert {t['@k']: t['@v'] for t in element['tag']} == {'name': 'High Street'}
+
+    def test_a_value_changed_since_is_a_conflict(self):
+        # someone renamed the stop while the mapper was deciding
+        element = self._element({'name': 'Market Square'})
+
+        with pytest.raises(HTTPException) as e:
+            apply_stop_tags(element, 'node/42', {'name': 'High Street'}, {'name': 'High St'})
+
+        assert e.value.status_code == 409
+        assert 'name' in e.value.detail
+
+    def test_a_value_already_changed_to_what_we_want_is_not_a_conflict(self):
+        element = self._element({'name': 'High Street'})
+
+        assert not apply_stop_tags(element, 'node/42', {'name': 'High Street'}, {'name': 'High St'})
+
+    def test_a_fill_and_a_replacement_together(self):
+        element = self._element({'name': 'High St'})
+        written = apply_stop_tags(
+            element,
+            'node/42',
+            {'name': 'High Street', 'naptan:Bearing': 'NE'},
+            {'name': 'High St'},
+        )
+
+        assert written
+        assert {t['@k']: t['@v'] for t in element['tag']} == {'name': 'High Street', 'naptan:Bearing': 'NE'}
+
+    def test_the_stop_keeps_the_tags_nobody_touched(self):
+        element = self._element({'name': 'High St', 'shelter': 'yes'})
+        apply_stop_tags(element, 'node/42', {'name': 'High Street'}, {'name': 'High St'})
+
+        assert {t['@k']: t['@v'] for t in element['tag']}['shelter'] == 'yes'
+
+
+def test_an_accepted_replacement_reaches_the_element():
+    osm = FakeOpenStreetMap(nodes=[_element({'name': 'High St'}, '1')])
+    addition = StopTagAddition(type='node', id=1, tags={'name': 'High Street'}, expected={'name': 'High St'})
+
+    [(element_type, element)] = _build_elements([addition], osm)
+
+    assert element_type == 'node'
+    assert _tags_of(element)['name'] == 'High Street'
+
+
+def test_a_name_sent_without_a_value_to_replace_is_refused():
+    # name is never filled in, only ever swapped for one the mapper decided against
+    osm = FakeOpenStreetMap(nodes=[_element({}, '1')])
+    addition = StopTagAddition(type='node', id=1, tags={'name': 'High Street'})
+
+    with pytest.raises(HTTPException) as e:
+        _build_elements([addition], osm)
+
+    assert e.value.status_code == 400
+    assert 'name' in e.value.detail
+
+
+def test_a_replacement_the_stop_has_since_changed_is_a_conflict():
+    osm = FakeOpenStreetMap(nodes=[_element({'name': 'Market Square'}, '1')])
+    addition = StopTagAddition(type='node', id=1, tags={'name': 'High Street'}, expected={'name': 'High St'})
+
+    with pytest.raises(HTTPException) as e:
+        _build_elements([addition], osm)
+
+    assert e.value.status_code == 409

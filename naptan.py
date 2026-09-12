@@ -22,7 +22,7 @@ from models.bounding_box import BoundingBox
 from models.download_history import DownloadHistory
 from models.fetch_relation import FetchRelationBusStopCollection
 from models.naptan_stop import NaptanStop, NaptanTagSuggestion
-from naptan_tags import missing_tags
+from naptan_tags import differing_tags, missing_tags
 from overpass import optimize_cells_and_get_bbs
 from utils import HTTP, normalize_name
 
@@ -153,10 +153,17 @@ def _suggest_tags(collection: FetchRelationBusStopCollection, naptan_stop: Napta
         return None
 
     tags = missing_tags(platform.tags, naptan_stop.tags)
-    if not tags:
+    differing = differing_tags(platform.tags, naptan_stop.tags)
+    if not tags and not differing:
         return None
 
-    return NaptanTagSuggestion(type=platform.type, id=platform.id, atcoCode=naptan_stop.atcoCode, tags=tags)
+    return NaptanTagSuggestion(
+        type=platform.type,
+        id=platform.id,
+        atcoCode=naptan_stop.atcoCode,
+        tags=tags,
+        differing=differing,
+    )
 
 
 def find_unmapped_stops(

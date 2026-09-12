@@ -280,6 +280,29 @@ uploading.
   way the route passes it, which catches the stop across the road being picked. It only
   reads the tag, so it works without the download.
 
+### When NaPTAN and OSM disagree
+
+Filling in tags only ever adds what a stop lacks. Where the stop and NaPTAN hold
+*different* values for the same tag — a stop NaPTAN has renamed, a changed indicator or
+bearing — that is a judgement call, so the editor puts it in front of you instead.
+
+Such a stop glows red and its right-click menu has **NaPTAN differs**, listing each tag
+with both values side by side. Pick the one that is right: taking NaPTAN's value writes
+it on upload, replacing what is there; keeping the stop's value changes nothing in OSM
+and simply records that you looked.
+
+**Until every disagreement on a stop the route calls at has been decided, the route
+cannot be uploaded** — the submit button stays hidden behind a warning, the same as any
+other high-severity problem. Stops the route does not call at are left out of this, as
+you are not editing them.
+
+`name` is included here even though it is never filled in automatically, since a
+renamed stop is the disagreement most worth seeing. On upload each replaced tag is
+checked against the value you were shown; if someone has changed it since, the upload
+stops as a conflict rather than overwriting their work. A decision is remembered against
+the value NaPTAN gave at the time, so if the NaPTAN record itself changes you are asked
+again.
+
 ### Overpass resilience
 
 `OVERPASS_API_INTERPRETER` accepts several comma-separated endpoints. Each is retried,
@@ -317,6 +340,7 @@ are not covered by it.
 - ✅ Creating new bus stops (platforms)
 - ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
 - ✅ Stop positions on the road, for new and existing stops
+- ✅ Reviewing tags NaPTAN and OSM disagree on
 
 
 ### Planned

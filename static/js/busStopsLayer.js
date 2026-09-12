@@ -2,6 +2,7 @@ import {
     clearBusStopsPopup,
     showAllTagsForm,
     showContextMenu,
+    showNaptanDifferencesForm,
     showNaptanTagsForm,
     showNewStopForm,
     showStopPositionForm,
@@ -16,7 +17,16 @@ import {
     updateNewStop,
 } from "./busStopsNew.js"
 import { map } from "./map.js"
-import { addTagAddition, clearTagAdditions, getTagAddition, removeTagAddition } from "./naptanTagAdditions.js"
+import {
+    addTagAddition,
+    clearTagAdditions,
+    getDecision,
+    getTagAddition,
+    hasUndecided,
+    removeTagAddition,
+    setDecision,
+    undecidedKeys,
+} from "./naptanTagAdditions.js"
 import {
     getStopPositionNode,
     hasStopPosition,
@@ -210,21 +220,29 @@ function addBusStopToLayer(i, stop, name, role) {
 
     const suggestion = naptanTagSuggestions.get(stopKey(stop))
     const addition = getTagAddition(stop)
+    // only a stop the route calls at has to be decided before uploading
+    const undecided = stop.member && hasUndecided(stop, suggestion?.differing)
 
     const marker = L.marker(stop.latLng, {
         icon: createBusStopIcon(
             `/static/img/bus_stop_${stop.member ? "on" : "off"}.webp`,
             stop.member ? 24 : 20,
-            addition ? "bus-stop-icon bus-stop-tags-added" : "bus-stop-icon",
+            undecided
+                ? "bus-stop-icon bus-stop-naptan-undecided"
+                : addition
+                  ? "bus-stop-icon bus-stop-tags-added"
+                  : "bus-stop-icon",
         ),
         opacity: stop.member ? 1 : 0.8,
     }).addTo(addToLayer)
 
-    const naptanNote = addition
-        ? "<br><small>NaPTAN tags will be added</small>"
-        : suggestion
-          ? "<br><small>Missing tags NaPTAN has</small>"
-          : ""
+    const naptanNote = undecided
+        ? "<br><small>NaPTAN disagrees — needs a decision</small>"
+        : addition
+          ? "<br><small>NaPTAN tags will be added</small>"
+          : suggestion?.tags && Object.keys(suggestion.tags).length
+            ? "<br><small>Missing tags NaPTAN has</small>"
+            : ""
 
     marker.bindTooltip(name + naptanNote, {
         direction: "top",
@@ -239,6 +257,7 @@ function addBusStopToLayer(i, stop, name, role) {
             naptanTagsAction(e, stop, suggestion, addition),
             () => showAllTagsForm(e.latlng, tagSections(busStopData[i])),
             stopPositionAction(e, busStopData[i]),
+            naptanDifferencesAction(e, stop, suggestion),
         ),
     )
 
@@ -322,7 +341,8 @@ function onTagAdditionsChanged() {
 }
 
 function naptanTagsAction(e, stop, suggestion, addition) {
-    if (!suggestion && !addition) return null
+    const fillable = suggestion?.tags && Object.keys(suggestion.tags).length
+    if (!fillable && !addition) return null
 
     return {
         label: addition ? "NaPTAN <b>tags</b> added" : "Add NaPTAN <b>tags</b>",
@@ -345,6 +365,48 @@ function naptanTagsAction(e, stop, suggestion, addition) {
 // Where the stop position goes, or null when the user did not ask for one or no route
 // road is close enough to carry it.
 const stopPositionFor = (latLng, wanted) => (wanted ? planStopPosition(latLng, waysData) : null)
+
+// Where NaPTAN and the stop hold different values for a tag, the mapper decides which
+// one is right. Until every one is decided the route cannot be uploaded.
+function naptanDifferencesAction(e, stop, suggestion) {
+    const differing = suggestion?.differing
+    if (!differing || !Object.keys(differing).length) return null
+
+    const outstanding = undecidedKeys(stop, differing).length
+
+    return {
+        label: outstanding ? `NaPTAN <b>differs</b> (${outstanding})` : "NaPTAN <b>differs</b>",
+        undecided: outstanding > 0,
+        onClick: () =>
+            showNaptanDifferencesForm(e.latlng, {
+                rows: Object.entries(differing).map(([tagKey, naptanValue]) => ({
+                    tagKey: tagKey,
+                    osmValue: stop.tags?.[tagKey] ?? "",
+                    naptanValue: naptanValue,
+                    decision: getDecision(stop, tagKey, naptanValue) ?? null,
+                })),
+                onDecide: (tagKey, naptanValue, decision) => {
+                    setDecision(stop, tagKey, naptanValue, decision)
+                    onTagAdditionsChanged()
+                },
+            }),
+    }
+}
+
+// The stops the route calls at that are still waiting on a NaPTAN decision.
+export function undecidedDisagreementStops() {
+    const result = []
+
+    for (const entry of busStopData ?? []) {
+        const platform = entry.platform
+        if (!platform || isNewStop(platform) || !platform.member) continue
+
+        const suggestion = naptanTagSuggestions.get(stopKey(platform))
+        if (hasUndecided(platform, suggestion?.differing)) result.push(platform)
+    }
+
+    return result
+}
 
 // new stops are bus platforms; tram stops are tagged differently and sit on the track
 const canAddStops = () => busStopData !== null && ["bus", "trolleybus"].includes(relationTags?.route)

@@ -16,6 +16,16 @@ const TAGS_ICON = `
         <circle cx="8" cy="8" r="1.5"/>
     </svg>`
 
+const DIFFERS_ICON = `
+    <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v18"/>
+        <path d="M3 8h6"/>
+        <path d="M15 8h6"/>
+        <path d="M3 16h6"/>
+        <path d="M15 16h6"/>
+    </svg>`
+
 const ROAD_ICON = `
     <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -36,16 +46,32 @@ const LIST_ICON = `
         <circle cx="4.5" cy="18" r="1"/>
     </svg>`
 
-// `naptanTags` and `stopPosition`, when given, are each { label, onClick }: one for
-// filling in NaPTAN tags, one for putting a stop position on the road.
+// `naptanTags`, `stopPosition` and `naptanDifferences`, when given, are each
+// { label, onClick }: filling in NaPTAN tags, putting a stop position on the road, and
+// deciding between NaPTAN and the stop where they disagree. The last also carries
+// `undecided`, which marks the button as still needing an answer.
 // `onViewTags`, when given, opens the stop's full tag list.
-export function showContextMenu(e, stop, naptanTags = null, onViewTags = null, stopPosition = null) {
+export function showContextMenu(
+    e,
+    stop,
+    naptanTags = null,
+    onViewTags = null,
+    stopPosition = null,
+    naptanDifferences = null,
+) {
     clearBusStopsPopup()
 
     const naptanTagsButton = naptanTags
         ? `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-naptan-tags">
                ${TAGS_ICON}
                <div>${naptanTags.label}</div>
+           </button>`
+        : ""
+
+    const differencesButton = naptanDifferences
+        ? `<button class="btn btn-sm ${naptanDifferences.undecided ? "btn-warning" : "btn-light"} d-flex flex-column align-items-center" id="bs-naptan-differs">
+               ${DIFFERS_ICON}
+               <div>${naptanDifferences.label}</div>
            </button>`
         : ""
 
@@ -66,6 +92,7 @@ export function showContextMenu(e, stop, naptanTags = null, onViewTags = null, s
     popup = L.popup(e.latlng, {
         content: `
             <div class="btn-group text-center">
+                ${differencesButton}
                 ${naptanTagsButton}
                 ${stopPositionButton}
                 ${viewTagsButton}
@@ -76,13 +103,17 @@ export function showContextMenu(e, stop, naptanTags = null, onViewTags = null, s
             </div>`,
         closeButton: false,
         className: "popup-sm",
-        maxWidth: 400,
+        // wide enough for every button a stop can offer at once
+        maxWidth: 560,
     }).openOn(map)
 
     // scoped to this popup, as one closed a moment ago may still be fading out
     const openOsmButton = popup.getElement().querySelector("#bs-open-osm")
 
     if (naptanTags) popup.getElement().querySelector("#bs-naptan-tags").onclick = naptanTags.onClick
+
+    if (naptanDifferences)
+        popup.getElement().querySelector("#bs-naptan-differs").onclick = naptanDifferences.onClick
 
     if (stopPosition) popup.getElement().querySelector("#bs-stop-position").onclick = stopPosition.onClick
 
@@ -389,5 +420,68 @@ export function showStopPositionForm(latlng, { tags, added, distance, onAdd, onR
         className: "popup-form",
         minWidth: 260,
         maxWidth: 320,
+    }).openOn(map)
+}
+
+// Where NaPTAN and the stop hold different values for the same tag, side by side, with
+// the choice between them. Both sides are shown in full: NaPTAN is often right about a
+// renamed stop and often wrong about one someone has surveyed, so neither is a default.
+export function showNaptanDifferencesForm(latlng, { rows, onDecide }) {
+    clearBusStopsPopup()
+
+    const content = document.createElement("div")
+    content.className = "new-stop-form"
+    content.innerHTML = `
+        <div class="new-stop-title">NaPTAN disagrees</div>
+        <div class="new-stop-naptan"></div>`
+
+    content.querySelector(".new-stop-naptan").textContent =
+        "Pick the value that is right for each tag. The route cannot be uploaded until every one " +
+        "is decided; keeping the stop's value changes nothing in OSM."
+
+    for (const { tagKey, osmValue, naptanValue, decision } of rows) {
+        const row = document.createElement("div")
+        row.className = "naptan-diff"
+
+        const key = document.createElement("div")
+        key.className = "naptan-diff-key"
+        // set through the DOM, so nothing from OSM or NaPTAN is parsed as HTML
+        key.textContent = tagKey
+        row.append(key)
+
+        for (const [side, value, label] of [
+            ["osm", osmValue, "In OSM"],
+            ["naptan", naptanValue, "In NaPTAN"],
+        ]) {
+            const button = document.createElement("button")
+            button.type = "button"
+            button.className = `btn btn-sm naptan-diff-choice ${
+                decision === side ? "btn-primary" : "btn-outline-secondary"
+            }`
+            button.setAttribute("aria-pressed", decision === side ? "true" : "false")
+
+            const heading = document.createElement("div")
+            heading.className = "naptan-diff-side"
+            heading.textContent = label
+            button.append(heading)
+
+            const shown = document.createElement("div")
+            shown.className = "naptan-diff-value"
+            shown.textContent = value
+            button.append(shown)
+
+            button.onclick = () => onDecide(tagKey, naptanValue, side)
+            row.append(button)
+        }
+
+        content.append(row)
+    }
+
+    popup = L.popup(latlng, {
+        content: content,
+        closeButton: false,
+        className: "popup-form popup-tags",
+        minWidth: 280,
+        maxWidth: 340,
     }).openOn(map)
 }

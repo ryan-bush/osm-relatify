@@ -141,6 +141,41 @@
   margin-bottom: .5rem;
 }
 
+/* a stop whose NaPTAN disagreement is still waiting on a decision */
+.bus-stop-naptan-undecided {
+  filter: drop-shadow(0 0 3px #dc3545) drop-shadow(0 0 3px #dc3545);
+}
+
+.naptan-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .3rem;
+  margin-bottom: .6rem;
+}
+
+.naptan-diff-key {
+  grid-column: 1 / -1;
+  font-family: monospace;
+  font-size: .8em;
+  word-break: break-word;
+}
+
+.naptan-diff-choice {
+  text-align: left;
+  line-height: 1.2;
+  padding: .25rem .4rem;
+}
+
+.naptan-diff-side {
+  font-size: .7em;
+  opacity: .75;
+}
+
+.naptan-diff-value {
+  font-size: .8em;
+  word-break: break-word;
+}
+
 /* a stop that exists only in the browser until upload */
 .bus-stop-new {
   filter: drop-shadow(0 0 2px #e0a800) drop-shadow(0 0 2px #e0a800);

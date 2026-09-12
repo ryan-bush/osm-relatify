@@ -22,46 +22,101 @@ FILLABLE_KEYS = (
 )
 
 
+# Keys worth putting in front of a mapper when OSM and NaPTAN hold different values.
+# name is here but not in FILLABLE_KEYS: a stop NaPTAN has renamed is exactly the
+# disagreement worth seeing, while an empty name is still the mapper's to fill in.
+REVIEWABLE_KEYS = ('name', *FILLABLE_KEYS)
+
+
 def missing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
     """NaPTAN's value for each fillable key the OSM stop lacks; values it has are kept."""
     return {key: naptan_tags[key] for key in FILLABLE_KEYS if key in naptan_tags and not osm_tags.get(key, '').strip()}
 
 
+def differing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
+    """NaPTAN's value for each reviewable key where the OSM stop holds a different one."""
+    result = {}
+
+    for key in REVIEWABLE_KEYS:
+        naptan_value = naptan_tags.get(key, '').strip()
+        osm_value = osm_tags.get(key, '').strip()
+
+        # only a real disagreement: a tag the stop lacks is a fill, not a conflict
+        if naptan_value and osm_value and naptan_value != osm_value:
+            result[key] = naptan_value
+
+    return result
+
+
 class StopTagAddition(BaseModel):
-    """NaPTAN tags to add to a stop already in OSM, uploaded with the route."""
+    """NaPTAN tags to write to a stop already in OSM, uploaded with the route."""
 
     # platforms are nodes or ways; relations are left out so this cannot reach the route
     type: Literal['node', 'way']
     id: int = Field(gt=0)
     tags: dict[str, str]
+    # What the stop was believed to hold for each key being overwritten, so a value that
+    # has changed since is a conflict rather than being quietly replaced. A key missing
+    # from here is one the stop is believed not to have at all.
+    expected: dict[str, str] = Field(default_factory=dict)
+
+    def writable_keys(self) -> set[str]:
+        """
+        The keys this may write.
+
+        Fillable keys can always be written. The rest of the reviewable keys, `name`
+        among them, only as a replacement the mapper accepted for a value that is
+        actually there.
+        """
+        return {
+            key
+            for key in self.tags
+            if key in FILLABLE_KEYS or (key in REVIEWABLE_KEYS and self.expected.get(key, '').strip())
+        }
 
 
-def add_missing_tags(element: dict, element_name: str, tags: dict[str, str]) -> bool:
+def apply_stop_tags(element: dict, element_name: str, tags: dict[str, str], expected: dict[str, str]) -> bool:
     """
-    Add the tags an element fetched from OSM still lacks.
+    Write NaPTAN's tags to an element fetched from OSM.
 
-    A key that has since been given a different value is a conflict, rather than being
-    overwritten. Returns True if any tag was added.
+    Each key must still hold what the mapper was shown — nothing for one being filled in,
+    the old value for one whose replacement they accepted. Anything else means someone
+    edited the stop in the meantime, which is a conflict rather than a silent overwrite.
+    Returns True if anything was written.
     """
     tags = normalize_tags(tags)
     current = {tag['@k']: tag['@v'] for tag in ensure_list(element.get('tag') or [])}
 
-    changed = sorted(key for key, value in tags.items() if key in current and current[key] != value)
-    if changed:
+    writes: dict[str, str] = {}
+    conflicts: list[str] = []
+
+    for key, value in tags.items():
+        current_value = current.get(key, '')
+
+        # already says what we would write, so there is nothing to do and nothing wrong
+        if current_value == value:
+            continue
+
+        if current_value != expected.get(key, ''):
+            conflicts.append(key)
+            continue
+
+        writes[key] = value
+
+    if conflicts:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f'Conflict: {", ".join(changed)} on {element_name} was changed. '
+            f'Conflict: {", ".join(sorted(conflicts))} on {element_name} was changed. '
             'Go back and click the relation reload button.',
         )
 
-    added = {key: value for key, value in tags.items() if key not in current}
-    if not added:
+    if not writes:
         return False
 
-    for key, value in added.items():
+    for key, value in writes.items():
         validate_tag(key, value)
 
-    element['tag'] = [{'@k': k, '@v': v} for k, v in {**current, **added}.items()]
+    element['tag'] = [{'@k': k, '@v': v} for k, v in {**current, **writes}.items()]
     return True
 
 
@@ -78,7 +133,7 @@ async def build_tag_addition_elements(additions: Sequence[StopTagAddition], osm)
         if addition.id in by_type[addition.type]:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f'NaPTAN tags for {name} were sent twice')
 
-        if disallowed := sorted(addition.tags.keys() - set(FILLABLE_KEYS)):
+        if disallowed := sorted(addition.tags.keys() - addition.writable_keys()):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 f'These tags cannot be added to {name}: {", ".join(disallowed)}',
@@ -96,7 +151,7 @@ async def build_tag_addition_elements(additions: Sequence[StopTagAddition], osm)
         for element in await get_elements(tuple(map(str, type_additions)), json=False):
             addition = type_additions[int(element['@id'])]
 
-            if add_missing_tags(element, f'{element_type}/{addition.id}', addition.tags):
+            if apply_stop_tags(element, f'{element_type}/{addition.id}', addition.tags, addition.expected):
                 result.append((element_type, element))
 
     return result
