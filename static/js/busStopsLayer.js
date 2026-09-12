@@ -5,6 +5,7 @@ import {
     showNaptanDifferencesForm,
     showNaptanTagsForm,
     showNewStopForm,
+    showStopAreaForm,
     showStopPositionForm,
 } from "./busStopsContext.js"
 import {
@@ -27,6 +28,17 @@ import {
     setDecision,
     undecidedKeys,
 } from "./naptanTagAdditions.js"
+import {
+    addStopArea,
+    clearStopAreas,
+    existingAreaFor,
+    getPendingStopArea,
+    groupMembers,
+    reconcileStopAreas,
+    removeStopArea,
+    setExistingStopAreas,
+    stopAreaSignature,
+} from "./stopAreas.js"
 import {
     getStopPositionNode,
     hasStopPosition,
@@ -102,14 +114,18 @@ export function processBusStopData(fetchData) {
         applyPendingStopPositions()
 
         // worked out afresh for the whole downloaded area, so replaced rather than merged
+        setExistingStopAreas(fetchData.stopAreas)
+        reconcileGroups()
         naptanStops = fetchData.naptanStops ?? []
         naptanTagSuggestions = new Map((fetchData.naptanTags ?? []).map((suggestion) => [stopKey(suggestion), suggestion]))
     } else {
         busStopData = null
         naptanStops = []
         naptanTagSuggestions = new Map()
+        setExistingStopAreas([])
         clearNewStops()
         clearTagAdditions()
+        clearStopAreas()
     }
 
     onBusStopDataChanged()
@@ -258,6 +274,7 @@ function addBusStopToLayer(i, stop, name, role) {
             () => showAllTagsForm(e.latlng, tagSections(busStopData[i])),
             stopPositionAction(e, busStopData[i]),
             naptanDifferencesAction(e, stop, suggestion),
+            stopAreaAction(e, busStopData[i]),
         ),
     )
 
@@ -285,7 +302,7 @@ function stopPositionAction(e, collection) {
     if (!added && !placement) return null
 
     return {
-        label: added ? "Stop <b>position</b> added" : "Add stop <b>position</b>",
+        label: added ? "Stop <b>position</b> ✓" : "Stop <b>position</b>",
         onClick: () =>
             showStopPositionForm(e.latlng, {
                 added: added,
@@ -345,7 +362,7 @@ function naptanTagsAction(e, stop, suggestion, addition) {
     if (!fillable && !addition) return null
 
     return {
-        label: addition ? "NaPTAN <b>tags</b> added" : "Add NaPTAN <b>tags</b>",
+        label: addition ? "NaPTAN <b>tags</b> ✓" : "NaPTAN <b>tags</b>",
         onClick: () =>
             showNaptanTagsForm(e.latlng, {
                 tags: addition?.tags ?? suggestion.tags,
@@ -391,6 +408,96 @@ function naptanDifferencesAction(e, stop, suggestion) {
                 },
             }),
     }
+}
+
+// The stops of one place: the group the server worked out, plus any stop the user has
+// placed here since, which no download knows about yet.
+function collectionsInGroup(collection) {
+    const inGroup =
+        collection.groupId >= 0 ? busStopData.filter((entry) => entry.groupId === collection.groupId) : [collection]
+
+    const groupName = inGroup.map((entry) => (entry.platform ?? entry.stop)?.groupName).find(Boolean) ?? ""
+
+    for (const entry of busStopData) {
+        if (inGroup.includes(entry) || !isNewStop(entry.platform)) continue
+        if (groupName && entry.platform.groupName === groupName) inGroup.push(entry)
+    }
+
+    return inGroup
+}
+
+// what the relation should be called: the stops' own name, without the stop letter that
+// tells one side of the road from the other
+function groupName(collections) {
+    for (const entry of collections) {
+        const name = (entry.platform ?? entry.stop)?.tags?.name?.trim()
+        if (name) return name
+    }
+    return ""
+}
+
+// Offers a stop area for the stops of one place, or takes back one not yet uploaded.
+function stopAreaAction(e, collection) {
+    if (!busStopData || !collection) return null
+
+    const collections = collectionsInGroup(collection)
+    const members = groupMembers(collections)
+
+    // a single element is not a group; there is nothing for a relation to bring together
+    if (members.length < 2) return null
+
+    const existing = existingAreaFor(members)
+    const missing = existing ? members.filter((member) => !existing.members.includes(member.key)) : members
+    const pending = getPendingStopArea(members)
+
+    // already all in one, and nothing queued: nothing to offer
+    if (!pending && !missing.length) return null
+
+    const name = groupName(collections)
+    if (!existing && !name) return null
+
+    return {
+        label: pending ? "Stop <b>area</b> ✓" : "Stop <b>area</b>",
+        queued: Boolean(pending),
+        onClick: () =>
+            showStopAreaForm(e.latlng, {
+                name: existing?.name || name,
+                existing: existing,
+                members: members,
+                missing: missing,
+                queued: Boolean(pending),
+                onAdd: () => {
+                    addStopArea(members, name, existing)
+                    onStopAreasChanged()
+                },
+                onRemove: () => {
+                    removeStopArea(members)
+                    onStopAreasChanged()
+                },
+            }),
+    }
+}
+
+function onStopAreasChanged() {
+    clearBusStopsPopup()
+    updateBusStopsVisibility()
+    // a stop area is a change of its own, even when the route itself is untouched
+    requestCalcBusRoute()
+}
+
+// A download reshapes the groups, so anything queued against a group that no longer
+// looks the same is dropped rather than uploaded against stops the user never saw.
+function reconcileGroups() {
+    if (!busStopData) return
+
+    const seen = new Set()
+
+    for (const entry of busStopData) {
+        const members = groupMembers(collectionsInGroup(entry))
+        if (members.length >= 2) seen.add(stopAreaSignature(members))
+    }
+
+    reconcileStopAreas(seen)
 }
 
 // The stops the route calls at that are still waiting on a NaPTAN decision.

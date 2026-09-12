@@ -16,6 +16,14 @@ const TAGS_ICON = `
         <circle cx="8" cy="8" r="1.5"/>
     </svg>`
 
+const AREA_ICON = `
+    <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="3" stroke-dasharray="4 3"/>
+        <circle cx="9" cy="9" r="1.6"/>
+        <circle cx="15" cy="15" r="1.6"/>
+    </svg>`
+
 const DIFFERS_ICON = `
     <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -58,6 +66,7 @@ export function showContextMenu(
     onViewTags = null,
     stopPosition = null,
     naptanDifferences = null,
+    stopArea = null,
 ) {
     clearBusStopsPopup()
 
@@ -72,6 +81,14 @@ export function showContextMenu(
         ? `<button class="btn btn-sm ${naptanDifferences.undecided ? "btn-warning" : "btn-light"} d-flex flex-column align-items-center" id="bs-naptan-differs">
                ${DIFFERS_ICON}
                <div>${naptanDifferences.label}</div>
+           </button>`
+        : ""
+
+    const stopAreaButton = stopArea
+        ? `<button class="btn btn-sm ${stopArea.queued ? "btn-info" : "btn-light"}
+                       d-flex flex-column align-items-center" id="bs-stop-area">
+               ${AREA_ICON}
+               <div>${stopArea.label}</div>
            </button>`
         : ""
 
@@ -95,6 +112,7 @@ export function showContextMenu(
                 ${differencesButton}
                 ${naptanTagsButton}
                 ${stopPositionButton}
+                ${stopAreaButton}
                 ${viewTagsButton}
                 <button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-open-osm">
                     <img class="mb-1" src="/static/img/brands/openstreetmap.webp" width="24" alt="OpenStreetMap logo">
@@ -116,6 +134,8 @@ export function showContextMenu(
         popup.getElement().querySelector("#bs-naptan-differs").onclick = naptanDifferences.onClick
 
     if (stopPosition) popup.getElement().querySelector("#bs-stop-position").onclick = stopPosition.onClick
+
+    if (stopArea) popup.getElement().querySelector("#bs-stop-area").onclick = stopArea.onClick
 
     if (onViewTags) popup.getElement().querySelector("#bs-view-tags").onclick = onViewTags
 
@@ -475,6 +495,66 @@ export function showNaptanDifferencesForm(latlng, { rows, onDecide }) {
         }
 
         content.append(row)
+    }
+
+    popup = L.popup(latlng, {
+        content: content,
+        closeButton: false,
+        className: "popup-form popup-tags",
+        minWidth: 280,
+        maxWidth: 340,
+    }).openOn(map)
+}
+
+// The stops of one place and the stop_area relation that would bring them together,
+// either a new one or the one they are already partly in.
+export function showStopAreaForm(latlng, { name, existing, members, missing, queued, onAdd, onRemove }) {
+    clearBusStopsPopup()
+
+    const content = document.createElement("div")
+    content.className = "new-stop-form"
+    content.innerHTML = `
+        <div class="new-stop-title"></div>
+        <div class="new-stop-naptan"></div>
+        <table class="table table-sm naptan-tags-table mb-2"><tbody></tbody></table>
+        <button type="button"
+                class="btn btn-sm w-100 stop-area-action ${queued ? "btn-outline-danger" : "btn-primary"}"></button>`
+
+    // set through the DOM, so nothing from OSM is ever parsed as HTML
+    content.querySelector(".new-stop-title").textContent = existing ? "Complete the stop area" : "Create a stop area"
+
+    const missingCount = missing.length
+    content.querySelector(".new-stop-naptan").textContent = existing
+        ? `“${name}” is already a stop area. ${missingCount} of these ${
+              missingCount === 1 ? "stops is" : "stops are"
+          } not in it yet.`
+        : `A new relation named “${name}” grouping these stops: both sides of the road, each ` +
+          "with the point on the road where the bus halts."
+
+    const tbody = content.querySelector("tbody")
+
+    for (const member of members) {
+        const row = tbody.insertRow()
+        const roleCell = row.insertCell()
+        roleCell.className = "key"
+        roleCell.textContent = member.role
+
+        const label = member.name || member.key
+        // an existing area already holds some of them, which are not added again
+        row.insertCell().textContent = missing.includes(member) ? label : `${label} — already in`
+    }
+
+    const action = content.querySelector(".stop-area-action")
+    action.textContent = queued
+        ? "Don't do this"
+        : existing
+          ? `Add ${missingCount} to the stop area`
+          : "Create the stop area"
+
+    action.onclick = () => {
+        popup.close()
+        if (queued) onRemove()
+        else onAdd()
     }
 
     popup = L.popup(latlng, {

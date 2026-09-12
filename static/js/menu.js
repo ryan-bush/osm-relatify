@@ -1,5 +1,6 @@
 import { busStopData, processBusStopData, undecidedDisagreementStops } from "./busStopsLayer.js"
 import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
+import { completedStopAreaCount, newStopAreaCount, stopAreaCount, stopAreasPayload } from "./stopAreas.js"
 import { stopPositionCount, stopPositionsPayload } from "./stopPositions.js"
 import { tagAdditionsPayload, tagChangeCount } from "./naptanTagAdditions.js"
 import {
@@ -256,7 +257,7 @@ export const processRouteWarnings = (data) => {
 
     for (const warning of data.warnings) {
         // the relation is untouched, but the changeset still has stop tags to add
-        if (warning.severity === 10 && tagChangeCount() > 0) continue
+        if (warning.severity === 10 && (tagChangeCount() > 0 || stopAreaCount() > 0)) continue
 
         const severityLevel = warning.severity
         const severityText = {
@@ -435,10 +436,15 @@ const makeDefaultComment = () => {
     const positions = positionCount
         ? `; added ${positionCount} stop position${plural(positionCount)}`
         : ""
+    const newAreas = newStopAreaCount()
+    const doneAreas = completedStopAreaCount()
+    const areas =
+        (newAreas ? `; added ${newAreas} stop area${plural(newAreas)}` : "") +
+        (doneAreas ? `; completed ${doneAreas} stop area${plural(doneAreas)}` : "")
     const tagged = taggedCount
         ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
         : ""
-    return makeRouteComment() + added + positions + tagged
+    return makeRouteComment() + added + positions + areas + tagged
 }
 
 const makeRouteComment = () => {
@@ -557,6 +563,7 @@ submitUploadBtn.onclick = async () => {
             comment: submitComment.value,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
+            stopAreas: stopAreasPayload(),
             naptanTagAdditions: tagAdditionsPayload(),
         }),
     })
@@ -627,6 +634,7 @@ submitDownloadBtn.onclick = async () => {
             tagsOriginal: relationTagsOriginal,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
+            stopAreas: stopAreasPayload(),
             naptanTagAdditions: tagAdditionsPayload(),
         }),
     })

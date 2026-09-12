@@ -280,6 +280,39 @@ uploading.
   way the route passes it, which catches the stop across the road being picked. It only
   reads the tag, so it works without the download.
 
+### Stop areas
+
+A [`public_transport=stop_area`](https://wiki.openstreetmap.org/wiki/Tag:public_transport%3Dstop_area)
+relation groups the stops of one place: for an ordinary bus stop, the platform either
+side of the road and the stop position that serves each. The editor already works out
+which stops belong together — same name, same place — so it can offer the relation.
+
+Right-click a stop and choose **Stop area**. You get the stops it would group, each with
+the role it takes (`platform` or `stop`), and a button to queue it. It is created by the
+same changeset as the route, tagged `type=public_transport`, `public_transport=stop_area`
+and `name`, taken from the stops' own name without the stop letter.
+
+Stops the user has just added are grouped too, so a stop added from NaPTAN goes into the
+area along with the one across the road that was already mapped.
+
+Where the stops are already in a stop area, the editor says so and offers to add the ones
+it is missing — a newly created stop position, say — instead of making a second relation.
+The relation keeps the name it has. If the stops of one group sit in *different* stop
+areas, nothing is offered: choosing between them is not the editor's call. On upload the
+relation is fetched again, so a member added in the meantime is not added twice, and one
+that has stopped being a stop area stops the upload as a conflict.
+
+Existing stop areas are looked up through Overpass when the route is downloaded. If that
+lookup fails the download still works; the editor simply does not know about them, so
+check before creating one.
+
+A stop area queued against a group is dropped if a later download changes which stops are
+in that group, rather than being uploaded against a set you never saw.
+
+This is derived from the stops themselves, not from NaPTAN. NaPTAN does define StopAreas,
+but the feed this fork downloads does not carry them, and only about 28% of GB bus stops
+are in one — so `naptan:StopAreaCode` is not set.
+
 ### When NaPTAN and OSM disagree
 
 Filling in tags only ever adds what a stop lacks. Where the stop and NaPTAN hold
@@ -341,11 +374,11 @@ are not covered by it.
 - ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
 - ✅ Stop positions on the road, for new and existing stops
 - ✅ Reviewing tags NaPTAN and OSM disagree on
+- ✅ `stop_area` relations for grouped stops
 
 
 ### Planned
 
-- ⏳ `stop_area` for new stops
 - ⏳ Relation `type=restriction`
 - ⏳ `direction=*`
 - ⏳ `oneway=-1`
