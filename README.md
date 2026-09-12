@@ -172,6 +172,12 @@ only the handful the editor shows. Where the stop has both a platform and a stop
 position, each is listed separately under its own element id. The list is read-only;
 tags are changed in OSM itself, or through **Add NaPTAN tags** below.
 
+The new stop form has the same list under **All tags**, showing what the upload will
+actually write — including `highway=bus_stop`, `public_transport=platform` and
+`bus=yes`, which are added on upload rather than typed in — and the stop position's
+tags when one is being added. It updates as you type, so you can check a stop before
+creating it.
+
 ### Adding bus stops
 
 A stop the route serves that is missing from OSM can be added without leaving the
@@ -193,26 +199,35 @@ disappear the next time the route loads. Overpass also lags OSM by a few minutes
 new stop may not show when reloading straight after upload. There is still no
 `stop_area` relation.
 
-#### Stop positions on the road
+### Stop positions on the road
 
 PTv2 puts the platform beside the road and a `public_transport=stop_position` node on
-the road itself, where the bus actually halts. **Also mark where the bus halts** in the
-form adds one: the stop is projected onto the nearest member way, and the node goes
-into that way between the two nodes it falls between. It is shown as a ringed dot
-joined to the platform by a dashed line, and joins the relation with role `stop`.
+the road itself, where the bus actually halts. This fork can add one for a stop you are
+creating and for a stop that has been in OSM all along.
+
+For a new stop, tick **Also mark where the bus halts, on the road** in the form. For a
+stop already in OSM that has no stop position, right-click it and choose **Add stop
+position**; you get the exact tags to confirm before anything is added. Either way the
+stop is projected onto the nearest member way and the node goes into that way between
+the two nodes it falls between, shown as a ringed dot joined to the platform by a
+dashed line, and joins the relation with role `stop`.
 
 The node is created and the road way modified by the same changeset as everything else.
 On upload the way is fetched again and the node is inserted between the two neighbours
 the editor saw; if they are no longer next to each other, someone has edited the road
 since, and the upload stops as a conflict rather than putting the node in the wrong
-place. Dragging the stop moves its stop position with it, and unticking the box removes
-it again.
+place. Dragging a new stop moves its stop position with it, and the same button or
+checkbox takes it back out.
 
-The box is unavailable when no member way is within 30 m, or before the route has any
-ways, since there is then nothing to put the node on. Ways the route splits are skipped
-too: their node lists are rebuilt on upload, and a node inserted here would be lost in
-that. New nodes are also kept at least half a metre from the way's existing nodes, so a
-stop level with one never lands on top of it.
+A stop position is not offered when no member way is within 30 m, or before the route
+has any ways, since there is then nothing to put the node on. New nodes are kept at
+least half a metre from the way's existing nodes, so a stop level with one never lands
+on top of it.
+
+Ways come from the download cut up at every intersection, and the upload joins them
+back together. Where the route uses only part of a road, that road really is split on
+upload and its nodes rebuilt, so a stop position cannot go on it — such a road is
+skipped when choosing where to put the node.
 
 ### Stops from NaPTAN
 
@@ -299,7 +314,7 @@ are not covered by it.
 - ✅ U-turns without `highway=turning_circle`
 - ✅ Creating new bus stops (platforms)
 - ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
-- ✅ Stop positions on the road for new stops
+- ✅ Stop positions on the road, for new and existing stops
 
 
 ### Planned

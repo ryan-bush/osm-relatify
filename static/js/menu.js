@@ -1,5 +1,6 @@
 import { busStopData, processBusStopData } from "./busStopsLayer.js"
 import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
+import { stopPositionCount, stopPositionsPayload } from "./stopPositions.js"
 import { tagAdditionCount, tagAdditionsPayload } from "./naptanTagAdditions.js"
 import {
     downloadHistoryData,
@@ -403,12 +404,16 @@ editReloadBtn.onclick = async () => {
 const makeDefaultComment = () => {
     const plural = (count) => (count !== 1 ? "s" : "")
     const stopCount = newStopCount()
+    const positionCount = stopPositionCount()
     const taggedCount = tagAdditionCount()
     const added = stopCount ? `; added ${stopCount} bus stop${plural(stopCount)}` : ""
+    const positions = positionCount
+        ? `; added ${positionCount} stop position${plural(positionCount)}`
+        : ""
     const tagged = taggedCount
         ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
         : ""
-    return makeRouteComment() + added + tagged
+    return makeRouteComment() + added + positions + tagged
 }
 
 const makeRouteComment = () => {
@@ -526,6 +531,7 @@ submitUploadBtn.onclick = async () => {
             tagsOriginal: relationTagsOriginal,
             comment: submitComment.value,
             newStops: newStopsPayload(),
+            newStopPositions: stopPositionsPayload(),
             naptanTagAdditions: tagAdditionsPayload(),
         }),
     })
@@ -595,6 +601,7 @@ submitDownloadBtn.onclick = async () => {
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
             newStops: newStopsPayload(),
+            newStopPositions: stopPositionsPayload(),
             naptanTagAdditions: tagAdditionsPayload(),
         }),
     })

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sentry_sdk import start_transaction
 from starlette.websockets import WebSocketState
 
-from bus_stop_creation import NewBusStop
+from bus_stop_creation import NewBusStop, NewStopPosition
 from compression import deflate_compress, deflate_decompress
 from config import (
     CALC_ROUTE_MAX_PROCESSES,
@@ -388,6 +388,8 @@ class PostDownloadOsmChangeModel(BaseModel):
     comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
     # bus stops placed on the map, created by this changeset
     newStops: list[NewBusStop] = Field(default_factory=list)
+    # stop positions to put on the road, for new stops and for stops already in OSM
+    newStopPositions: list[NewStopPosition] = Field(default_factory=list)
     # NaPTAN tags to add to stops already in OSM
     naptanTagAdditions: list[StopTagAddition] = Field(default_factory=list)
 
@@ -399,6 +401,9 @@ class PostDownloadOsmChangeModel(BaseModel):
 
         if stop_count := len(self.newStops):
             comment += f'; added {stop_count} bus stop{"s" if stop_count != 1 else ""}'
+
+        if position_count := len(self.newStopPositions):
+            comment += f'; added {position_count} stop position{"s" if position_count != 1 else ""}'
 
         if tagged_count := len(self.naptanTagAdditions):
             comment += f'; added NaPTAN tags to {tagged_count} bus stop{"s" if tagged_count != 1 else ""}'
@@ -465,6 +470,7 @@ async def post_download_osm_change(model: PostDownloadOsmChangeModel, _=Depends(
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
             new_stops=model.newStops,
+            new_stop_positions=model.newStopPositions,
             tag_additions=model.naptanTagAdditions,
         )
 
@@ -491,6 +497,7 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
             new_stops=model.newStops,
+            new_stop_positions=model.newStopPositions,
             tag_additions=model.naptanTagAdditions,
         )
 

@@ -16,6 +16,15 @@ const TAGS_ICON = `
         <circle cx="8" cy="8" r="1.5"/>
     </svg>`
 
+const ROAD_ICON = `
+    <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 21 8 3"/>
+        <path d="M20 21 16 3"/>
+        <path d="M12 6v3"/>
+        <path d="M12 13v3"/>
+    </svg>`
+
 const LIST_ICON = `
     <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -27,15 +36,23 @@ const LIST_ICON = `
         <circle cx="4.5" cy="18" r="1"/>
     </svg>`
 
-// `naptanTags`, when given, is { label, onClick } for filling in NaPTAN tags.
+// `naptanTags` and `stopPosition`, when given, are each { label, onClick }: one for
+// filling in NaPTAN tags, one for putting a stop position on the road.
 // `onViewTags`, when given, opens the stop's full tag list.
-export function showContextMenu(e, stop, naptanTags = null, onViewTags = null) {
+export function showContextMenu(e, stop, naptanTags = null, onViewTags = null, stopPosition = null) {
     clearBusStopsPopup()
 
     const naptanTagsButton = naptanTags
         ? `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-naptan-tags">
                ${TAGS_ICON}
                <div>${naptanTags.label}</div>
+           </button>`
+        : ""
+
+    const stopPositionButton = stopPosition
+        ? `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-stop-position">
+               ${ROAD_ICON}
+               <div>${stopPosition.label}</div>
            </button>`
         : ""
 
@@ -50,6 +67,7 @@ export function showContextMenu(e, stop, naptanTags = null, onViewTags = null) {
         content: `
             <div class="btn-group text-center">
                 ${naptanTagsButton}
+                ${stopPositionButton}
                 ${viewTagsButton}
                 <button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-open-osm">
                     <img class="mb-1" src="/static/img/brands/openstreetmap.webp" width="24" alt="OpenStreetMap logo">
@@ -65,6 +83,8 @@ export function showContextMenu(e, stop, naptanTags = null, onViewTags = null) {
     const openOsmButton = popup.getElement().querySelector("#bs-open-osm")
 
     if (naptanTags) popup.getElement().querySelector("#bs-naptan-tags").onclick = naptanTags.onClick
+
+    if (stopPosition) popup.getElement().querySelector("#bs-stop-position").onclick = stopPosition.onClick
 
     if (onViewTags) popup.getElement().querySelector("#bs-view-tags").onclick = onViewTags
 
@@ -116,6 +136,21 @@ export function showNaptanTagsForm(latlng, { tags, added, onAdd, onRemove }) {
 
 const FORM_KEYS = ["name", "local_ref", "shelter", "bench"]
 
+// mirrors make_new_stop_tags() and make_stop_position_tags() in bus_stop_creation.py:
+// these are added on upload, so a preview without them would not be the whole story
+function platformUploadTags(tags, routeType) {
+    const result = { ...tags, highway: "bus_stop", public_transport: "platform" }
+    if (routeType) result[routeType] = "yes"
+    return result
+}
+
+function stopPositionUploadTags(tags, routeType) {
+    const result = { public_transport: "stop_position" }
+    if (routeType) result[routeType] = "yes"
+    if (tags.name) result.name = tags.name
+    return result
+}
+
 const yesNoOptions = `
     <option value="">Unknown</option>
     <option value="yes">Yes</option>
@@ -127,7 +162,7 @@ const yesNoOptions = `
 // position on the road was asked for.
 export function showNewStopForm(
     latlng,
-    { stop = null, tags = null, nearby = null, stopPosition = null, onSave, onDelete = null },
+    { stop = null, tags = null, nearby = null, stopPosition = null, routeType = null, onSave, onDelete = null },
 ) {
     clearBusStopsPopup()
 
@@ -158,6 +193,10 @@ export function showNewStopForm(
             <span></span>
         </label>
         <div class="new-stop-nearby d-none"></div>
+        <details class="new-stop-tags">
+            <summary>All tags</summary>
+            <div class="new-stop-tags-body"></div>
+        </details>
         <div class="d-flex gap-2">
             <button type="submit" class="btn btn-sm btn-primary flex-fill">${stop ? "Save" : "Add stop"}</button>
             ${stop ? '<button type="button" class="btn btn-sm btn-outline-danger new-stop-delete">Delete</button>' : ""}
@@ -201,19 +240,44 @@ export function showNewStopForm(
     // Leaflet pans and zooms the map on arrow and +/- keys, which would swallow them here
     L.DomEvent.on(form, "keydown", L.DomEvent.stopPropagation)
 
-    form.onsubmit = (e) => {
-        e.preventDefault()
-
-        const savedTags = Object.fromEntries(
+    // what the stop carries as the form stands: the tags it came with, minus the ones
+    // the form owns, plus whatever those fields now say
+    function collectTags() {
+        const collected = Object.fromEntries(
             Object.entries(initialTags).filter(([key]) => !FORM_KEYS.includes(key)),
         )
         for (const key of FORM_KEYS) {
             const value = form.elements[key].value.trim()
-            if (value) savedTags[key] = value
+            if (value) collected[key] = value
+        }
+        return collected
+    }
+
+    const tagsBody = form.querySelector(".new-stop-tags-body")
+
+    function refreshTags() {
+        const collected = collectTags()
+        const sections = [{ label: "Platform · new node", tags: platformUploadTags(collected, routeType) }]
+
+        if (stopPositionCheck.checked) {
+            sections.push({
+                label: "Stop position · new node on the road",
+                tags: stopPositionUploadTags(collected, routeType),
+            })
         }
 
+        tagsBody.replaceChildren(renderTagSections(sections))
+    }
+
+    refreshTags()
+    form.addEventListener("input", refreshTags)
+    form.addEventListener("change", refreshTags)
+
+    form.onsubmit = (e) => {
+        e.preventDefault()
+
         popup.close()
-        onSave(savedTags, stopPositionCheck.checked)
+        onSave(collectTags(), stopPositionCheck.checked)
     }
 
     if (stop) {
@@ -242,6 +306,20 @@ export function showAllTagsForm(latlng, sections) {
     const content = document.createElement("div")
     content.className = "new-stop-form"
     content.innerHTML = `<div class="new-stop-title">Tags</div>`
+    content.append(renderTagSections(sections))
+
+    popup = L.popup(latlng, {
+        content: content,
+        closeButton: false,
+        className: "popup-form popup-tags",
+        minWidth: 260,
+        maxWidth: 340,
+    }).openOn(map)
+}
+
+// One labelled table per element, built through the DOM so nothing is parsed as HTML.
+export function renderTagSections(sections) {
+    const content = document.createDocumentFragment()
 
     for (const { label, tags } of sections) {
         const heading = document.createElement("div")
@@ -275,11 +353,41 @@ export function showAllTagsForm(latlng, sections) {
         content.append(table)
     }
 
+    return content
+}
+
+// Offers the stop position for a stop already in OSM, to add it or take it back out.
+export function showStopPositionForm(latlng, { tags, added, distance, onAdd, onRemove }) {
+    clearBusStopsPopup()
+
+    const content = document.createElement("div")
+    content.className = "new-stop-form"
+    content.innerHTML = `
+        <div class="new-stop-title">${added ? "Stop position to add" : "Add a stop position"}</div>
+        <div class="new-stop-naptan"></div>
+        <button type="button"
+                class="btn btn-sm w-100 stop-position-action ${added ? "btn-outline-danger" : "btn-primary"}">
+            ${added ? "Don't add it" : "Add stop position"}
+        </button>`
+
+    content.querySelector(".new-stop-naptan").textContent = added
+        ? "A new node on the road, created with the route and added to the relation."
+        : `A new node goes on the route ${Math.round(distance)} m away, where the bus halts, ` +
+          "and joins the relation. Check the route runs the way the bus does here."
+
+    content.querySelector(".new-stop-title").after(renderTagSections([{ label: "New node on the road", tags: tags }]))
+
+    content.querySelector(".stop-position-action").onclick = () => {
+        popup.close()
+        if (added) onRemove()
+        else onAdd()
+    }
+
     popup = L.popup(latlng, {
         content: content,
         closeButton: false,
-        className: "popup-form popup-tags",
+        className: "popup-form",
         minWidth: 260,
-        maxWidth: 340,
+        maxWidth: 320,
     }).openOn(map)
 }

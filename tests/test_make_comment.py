@@ -52,3 +52,26 @@ def test_comment_over_the_length_limit_is_rejected():
     """Rejected up front rather than silently truncated with an ellipsis at upload time."""
     with pytest.raises(ValidationError):
         make(comment='x' * (TAG_MAX_LENGTH + 1))
+
+
+def _position(id=-2, name='High Street'):
+    return {'id': id, 'lat': 51.5, 'lon': -0.12, 'wayId': 201, 'afterNode': 10, 'beforeNode': 11, 'name': name}
+
+
+def test_generated_comment_counts_stop_positions():
+    model = make({'name': 'Bus 12'}, newStopPositions=[_position()])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 stop position'
+
+
+def test_generated_comment_counts_several_stop_positions():
+    model = make({'name': 'Bus 12'}, newStopPositions=[_position(), _position(id=-3)])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 2 stop positions'
+
+
+def test_generated_comment_counts_stops_and_their_stop_positions():
+    model = make(
+        {'name': 'Bus 12'},
+        newStops=[{'id': -1, 'lat': 51.5, 'lon': -0.12, 'tags': {'name': 'High Street'}}],
+        newStopPositions=[_position()],
+    )
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 bus stop; added 1 stop position'

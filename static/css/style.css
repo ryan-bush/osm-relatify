@@ -65,6 +65,22 @@
   color: #6c757d;
 }
 
+.new-stop-tags {
+  font-size: .8em;
+  margin-bottom: .5rem;
+}
+
+.new-stop-tags summary {
+  cursor: pointer;
+  margin-bottom: .3rem;
+}
+
+/* a stop with many tags scrolls rather than making the form taller than the map */
+.new-stop-tags-body {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
 .new-stop-nearby {
   font-size: .8em;
   color: #664d03;

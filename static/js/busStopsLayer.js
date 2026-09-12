@@ -4,6 +4,7 @@ import {
     showContextMenu,
     showNaptanTagsForm,
     showNewStopForm,
+    showStopPositionForm,
 } from "./busStopsContext.js"
 import {
     addNewStop,
@@ -14,9 +15,15 @@ import {
     removeNewStop,
     updateNewStop,
 } from "./busStopsNew.js"
-import { planStopPosition } from "./stopPositions.js"
 import { map } from "./map.js"
 import { addTagAddition, clearTagAdditions, getTagAddition, removeTagAddition } from "./naptanTagAdditions.js"
+import {
+    getStopPositionNode,
+    hasStopPosition,
+    planStopPosition,
+    removeStopPosition,
+    setStopPosition,
+} from "./stopPositions.js"
 import { relationTags } from "./tagEditor.js"
 import { escapeHtml, getBusCollectionName, haversine_distance } from "./utils.js"
 import { waysData, waysRBush } from "./waysLayer.js"
@@ -82,6 +89,7 @@ export function processBusStopData(fetchData) {
 
         // stops the user placed are not in OSM yet, so no download brings them back
         busStopData.push(...newStopCollections())
+        applyPendingStopPositions()
 
         // worked out afresh for the whole downloaded area, so replaced rather than merged
         naptanStops = fetchData.naptanStops ?? []
@@ -105,7 +113,29 @@ function onBusStopDataChanged() {
 
 function syncNewStops() {
     busStopData = busStopData.filter((entry) => !isNewStop(entry.platform)).concat(newStopCollections())
+    applyPendingStopPositions()
     onBusStopDataChanged()
+}
+
+// A stop position the user added to a stop already in OSM lives only in the browser, so
+// each fresh download has to be given it again.
+function applyPendingStopPositions() {
+    for (const entry of busStopData) {
+        if (!entry.platform || isNewStop(entry.platform)) continue
+
+        const node = getStopPositionNode(entry.platform)
+        if (!node) continue
+
+        // OSM has gained one since, so ours is not needed after all
+        if (entry.stop && !isNewStop(entry.stop)) {
+            removeStopPosition(entry.platform)
+            continue
+        }
+
+        // the platform decides whether the route calls here; the two never disagree
+        node.member = entry.platform.member !== false
+        entry.stop = node
+    }
 }
 
 export function updateBusStopsVisibility() {
@@ -191,10 +221,65 @@ function addBusStopToLayer(i, stop, name, role) {
 
     marker.on("click", () => setMemberState(i, !stop.member))
     marker.on("contextmenu", (e) =>
-        showContextMenu(e, stop, naptanTagsAction(e, stop, suggestion, addition), () =>
-            showAllTagsForm(e.latlng, tagSections(busStopData[i])),
+        showContextMenu(
+            e,
+            stop,
+            naptanTagsAction(e, stop, suggestion, addition),
+            () => showAllTagsForm(e.latlng, tagSections(busStopData[i])),
+            stopPositionAction(e, busStopData[i]),
         ),
     )
+
+    if (busStopData[i].stop && isNewStop(busStopData[i].stop)) {
+        addStopPositionToLayer(stop.latLng, busStopData[i].stop, addToLayer)
+    }
+}
+
+// Offers a stop position on the road for a stop already in OSM that has none, or takes
+// back one that has not been uploaded yet.
+function stopPositionAction(e, collection) {
+    const platform = collection.platform
+    if (!platform || !canAddStops()) return null
+
+    const added = hasStopPosition(platform)
+
+    // one it already has, from OSM, is nothing for us to add to
+    if (!added && collection.stop) return null
+
+    const placement = added ? null : planStopPosition(platform.latLng, waysData)
+    if (!added && !placement) return null
+
+    return {
+        label: added ? "Stop <b>position</b> added" : "Add stop <b>position</b>",
+        onClick: () =>
+            showStopPositionForm(e.latlng, {
+                added: added,
+                distance: placement?.distance,
+                tags: stopPositionTagsFor(platform),
+                onAdd: () => {
+                    setStopPosition(platform, placement, platform.tags?.name ?? "")
+                    onStopPositionsChanged()
+                },
+                onRemove: () => {
+                    removeStopPosition(platform)
+                    onStopPositionsChanged()
+                },
+            }),
+    }
+}
+
+// mirrors make_stop_position_tags() in bus_stop_creation.py
+function stopPositionTagsFor(platform) {
+    const tags = { public_transport: "stop_position" }
+    if (relationTags?.route) tags[relationTags.route] = "yes"
+    const name = platform.tags?.name?.trim()
+    if (name) tags.name = name
+    return tags
+}
+
+function onStopPositionsChanged() {
+    clearBusStopsPopup()
+    syncNewStops()
 }
 
 // the platform and the stop position are separate elements, each with its own tags
@@ -271,6 +356,7 @@ map.on("contextmenu", (e) => {
 
     showNewStopForm(e.latlng, {
         nearby: findNearbyStop(latLng, null),
+        routeType: relationTags?.route,
         stopPosition: { available: Boolean(planStopPosition(latLng, waysData)), checked: true },
         onSave: (tags, wantStopPosition) => {
             addNewStop(latLng, tags, stopPositionFor(latLng, wantStopPosition))
@@ -283,6 +369,7 @@ function editNewStop(e, stop) {
     showNewStopForm(e.latlng, {
         stop: stop,
         nearby: findNearbyStop(stop.latLng, stop),
+        routeType: relationTags?.route,
         stopPosition: {
             available: Boolean(planStopPosition(stop.latLng, waysData)),
             checked: Boolean(stop.stopPosition),
@@ -323,6 +410,7 @@ function addNaptanStopsToLayer() {
             showNewStopForm(L.latLng(naptanStop.latLng), {
                 tags: naptanStop.tags,
                 nearby: findNearbyStop(naptanStop.latLng, null),
+                routeType: relationTags?.route,
                 stopPosition: {
                     available: Boolean(planStopPosition(naptanStop.latLng, waysData)),
                     checked: true,
@@ -363,12 +451,13 @@ function addNewStopToLayer(stop) {
     marker.on("click", (e) => editNewStop(e, stop))
     marker.on("contextmenu", (e) => editNewStop(e, stop))
 
-    if (stop.stopPosition) addStopPositionToLayer(stop)
+    const node = getStopPositionNode(stop)
+    if (node) addStopPositionToLayer(stop.latLng, node, activeBusStopsLayer)
 }
 
 // the node that will go on the road, shown so its place along the route is obvious
-function addStopPositionToLayer(stop) {
-    const latLng = stop.stopPosition.node.latLng
+function addStopPositionToLayer(platformLatLng, node, layer) {
+    const latLng = node.latLng
 
     L.circleMarker(latLng, {
         radius: 5,
@@ -377,16 +466,16 @@ function addStopPositionToLayer(stop) {
         fillColor: "#fff",
         fillOpacity: 1,
     })
-        .addTo(activeBusStopsLayer)
-        .bindTooltip(`${escapeHtml(stop.name)} <i>(new stop position)</i>`, {
+        .addTo(layer)
+        .bindTooltip(`${escapeHtml(node.name)} <i>(new stop position)</i>`, {
             direction: "top",
             offset: [0, -8],
         })
 
-    L.polyline([stop.latLng, latLng], {
+    L.polyline([platformLatLng, latLng], {
         color: "#e0a800",
         weight: 2,
         dashArray: "3 3",
         interactive: false,
-    }).addTo(activeBusStopsLayer)
+    }).addTo(layer)
 }

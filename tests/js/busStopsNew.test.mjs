@@ -5,13 +5,17 @@ import { beforeEach, test } from "node:test"
 import {
     addNewStop,
     clearNewStops,
-    moveNewStop,
     newStopCollections,
-    newStopPlacements,
     newStopsPayload,
+    moveNewStop,
     updateNewStop,
 } from "../../static/js/busStopsNew.js"
-import { insertStopPositionsIntoWays, planStopPosition } from "../../static/js/stopPositions.js"
+import {
+    insertStopPositionsIntoWays,
+    planStopPosition,
+    stopPositionPlacements,
+    stopPositionsPayload,
+} from "../../static/js/stopPositions.js"
 
 const WAYS = {
     "201": {
@@ -37,7 +41,7 @@ test("the point put into the way is the one the stop position node has", () => {
     addStop()
 
     const { stop } = newStopCollections()[0]
-    const result = insertStopPositionsIntoWays(WAYS, newStopPlacements())
+    const result = insertStopPositionsIntoWays(WAYS, stopPositionPlacements())
 
     // the route calculation keeps a stop position only when it finds it on the route,
     // which it does by looking for this exact point
@@ -56,17 +60,25 @@ test("a stop placed away from the route has no stop position", () => {
     addNewStop(BESIDE_THE_ROAD, { name: "High Street" }, null)
 
     assert.equal(newStopCollections()[0].stop, null)
-    assert.equal(newStopsPayload()[0].stopPosition, null)
+    assert.deepEqual(stopPositionsPayload(), [])
 })
 
 test("the payload names the way and the two nodes to go between", () => {
     addStop()
 
-    const { stopPosition } = newStopsPayload()[0]
-    assert.equal(stopPosition.wayId, 201)
-    assert.equal(stopPosition.afterNode, 10)
-    assert.equal(stopPosition.beforeNode, 11)
-    assert.ok(stopPosition.id < 0)
+    const [position] = stopPositionsPayload()
+    assert.equal(position.wayId, 201)
+    assert.equal(position.afterNode, 10)
+    assert.equal(position.beforeNode, 11)
+    assert.equal(position.name, "High Street")
+    assert.ok(position.id < 0)
+})
+
+test("the platform payload no longer carries the stop position", () => {
+    addStop()
+
+    // stop positions are sent on their own, as a stop already in OSM can have one too
+    assert.equal(newStopsPayload()[0].stopPosition, undefined)
 })
 
 test("dragging the stop moves its stop position without changing its id", () => {
@@ -77,7 +89,7 @@ test("dragging the stop moves its stop position without changing its id", () => 
     moveNewStop(stop, moved, planStopPosition(moved, WAYS))
 
     assert.equal(newStopCollections()[0].stop.id, before, "the route still refers to it")
-    assert.equal(newStopsPayload()[0].stopPosition.afterNode, 11, "and it followed along the road")
+    assert.equal(stopPositionsPayload()[0].afterNode, 11, "and it followed along the road")
 })
 
 test("unticking the box takes the stop position away again", () => {
