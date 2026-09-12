@@ -187,13 +187,18 @@ export function clearStopPositions() {
     nextId = -1
 }
 
-export const stopPositionCount = () => pending.size
+// A stop position belongs to the route through the stop it serves. One whose stop has
+// left the route would be created on the road as a member of nothing, so it is never
+// uploaded; the caller drops it, and this makes sure of it.
+const uploadable = () => Array.from(pending.values()).filter(({ node }) => node.member !== false)
+
+export const stopPositionCount = () => uploadable().length
 
 // where each one goes, for the route calculation to allow for
 export const stopPositionPlacements = () => Array.from(pending.values(), (entry) => entry.placement)
 
 export const stopPositionsPayload = () =>
-    Array.from(pending.values(), ({ node, placement, name }) => ({
+    uploadable().map(({ node, placement, name }) => ({
         id: Number.parseInt(node.id, 10),
         lat: node.latLng[0],
         lon: node.latLng[1],

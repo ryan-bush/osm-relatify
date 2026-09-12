@@ -132,6 +132,12 @@ function applyPendingStopPositions() {
             continue
         }
 
+        // the stop is no longer in the route, so neither is its stop position
+        if (!entry.platform.member) {
+            removeStopPosition(entry.platform)
+            continue
+        }
+
         // the platform decides whether the route calls here; the two never disagree
         node.member = entry.platform.member !== false
         entry.stop = node
@@ -169,6 +175,12 @@ const setMemberState = (i, member) => {
 
     if (entry.stop) {
         entry.stop.member = member
+    }
+
+    // a stop position is only ever uploaded as part of the stop it serves
+    if (!member && entry.platform && entry.stop && isNewStop(entry.stop)) {
+        removeStopPosition(entry.platform)
+        entry.stop = null
     }
 
     onBusStopDataChanged()
@@ -240,6 +252,10 @@ function addBusStopToLayer(i, stop, name, role) {
 function stopPositionAction(e, collection) {
     const platform = collection.platform
     if (!platform || !canAddStops()) return null
+
+    // the node joins the relation along with the stop, so a stop the route does not call
+    // at would leave it on the road as a member of nothing
+    if (!platform.member) return null
 
     const added = hasStopPosition(platform)
 
