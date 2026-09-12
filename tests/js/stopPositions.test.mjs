@@ -12,6 +12,7 @@ import {
     planStopPosition,
     removeStopPosition,
     setStopPosition,
+    stopPositionCount,
     stopPositionsPayload,
 } from "../../static/js/stopPositions.js"
 
@@ -213,4 +214,23 @@ test("setting it again keeps the id, so the route still refers to it", () => {
     const second = setStopPosition(osmStop, placementFor([51.50009, 0.001]), "The Station")
 
     assert.equal(first.id, second.id)
+})
+
+test("a stop position for a stop the route does not call at is never uploaded", () => {
+    // it would otherwise be created on the road as a member of nothing
+    setStopPosition(platform({ member: false }), placementFor(), "The Station")
+
+    assert.deepEqual(stopPositionsPayload(), [])
+    assert.equal(stopPositionCount(), 0)
+})
+
+test("a stop leaving the route takes its stop position out of the upload", () => {
+    const osmStop = platform()
+    const node = setStopPosition(osmStop, placementFor(), "The Station")
+    assert.equal(stopPositionsPayload().length, 1)
+
+    // as setMemberState() does when the stop is clicked off the route
+    node.member = false
+
+    assert.deepEqual(stopPositionsPayload(), [])
 })

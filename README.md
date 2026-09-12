@@ -220,7 +220,9 @@ place. Dragging a new stop moves its stop position with it, and the same button 
 checkbox takes it back out.
 
 A stop position is not offered when no member way is within 30 m, or before the route
-has any ways, since there is then nothing to put the node on. New nodes are kept at
+has any ways, since there is then nothing to put the node on. It is only offered for a
+stop the route actually calls at, as the node joins the relation along with its stop;
+taking a stop out of the route takes its stop position with it. New nodes are kept at
 least half a metre from the way's existing nodes, so a stop level with one never lands
 on top of it.
 
