@@ -350,8 +350,9 @@ function tagSections(collection) {
     return sections
 }
 
-function onTagAdditionsChanged() {
-    clearBusStopsPopup()
+// `keepPopup` leaves an open popup alone, for one that redraws itself as it is used
+function onTagAdditionsChanged({ keepPopup = false } = {}) {
+    if (!keepPopup) clearBusStopsPopup()
     updateBusStopsVisibility()
     // a tag-only change still has something to upload when the route itself is unchanged
     requestCalcBusRoute()
@@ -404,7 +405,8 @@ function naptanDifferencesAction(e, stop, suggestion) {
                 })),
                 onDecide: (tagKey, naptanValue, decision) => {
                     setDecision(stop, tagKey, naptanValue, decision)
-                    onTagAdditionsChanged()
+                    // the popup stays up so the rest of the stop's tags can be decided too
+                    onTagAdditionsChanged({ keepPopup: true })
                 },
             }),
     }

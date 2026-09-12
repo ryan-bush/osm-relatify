@@ -452,54 +452,74 @@ export function showNaptanDifferencesForm(latlng, { rows, onDecide }) {
     const content = document.createElement("div")
     content.className = "new-stop-form"
     content.innerHTML = `
-        <div class="new-stop-title">NaPTAN disagrees</div>
-        <div class="new-stop-naptan"></div>`
+        <div class="new-stop-title"></div>
+        <div class="new-stop-naptan"></div>
+        <div class="naptan-diff-rows"></div>`
 
     content.querySelector(".new-stop-naptan").textContent =
         "Pick the value that is right for each tag. The route cannot be uploaded until every one " +
         "is decided; keeping the stop's value changes nothing in OSM."
 
-    for (const { tagKey, osmValue, naptanValue, decision } of rows) {
-        const row = document.createElement("div")
-        row.className = "naptan-diff"
+    const title = content.querySelector(".new-stop-title")
+    const rowsElement = content.querySelector(".naptan-diff-rows")
 
-        const key = document.createElement("div")
-        key.className = "naptan-diff-key"
-        // set through the DOM, so nothing from OSM or NaPTAN is parsed as HTML
-        key.textContent = tagKey
-        row.append(key)
+    // Redrawn in place after each choice, so a stop with several disagreements is decided
+    // in one sitting rather than reopening the menu between them.
+    function render() {
+        const left = rows.filter((row) => !row.decision).length
+        title.textContent = left ? `NaPTAN disagrees (${left} to decide)` : "NaPTAN disagrees — all decided"
 
-        for (const [side, value, label] of [
-            ["osm", osmValue, "In OSM"],
-            ["naptan", naptanValue, "In NaPTAN"],
-        ]) {
-            const button = document.createElement("button")
-            button.type = "button"
-            button.className = `btn btn-sm naptan-diff-choice ${
-                decision === side ? "btn-primary" : "btn-outline-secondary"
-            }`
-            button.setAttribute("aria-pressed", decision === side ? "true" : "false")
+        rowsElement.replaceChildren()
 
-            const heading = document.createElement("div")
-            heading.className = "naptan-diff-side"
-            heading.textContent = label
-            button.append(heading)
+        for (const row of rows) {
+            const element = document.createElement("div")
+            element.className = "naptan-diff"
 
-            const shown = document.createElement("div")
-            shown.className = "naptan-diff-value"
-            shown.textContent = value
-            button.append(shown)
+            const key = document.createElement("div")
+            key.className = "naptan-diff-key"
+            // set through the DOM, so nothing from OSM or NaPTAN is parsed as HTML
+            key.textContent = row.tagKey
+            element.append(key)
 
-            button.onclick = () => onDecide(tagKey, naptanValue, side)
-            row.append(button)
+            for (const [side, value, label] of [
+                ["osm", row.osmValue, "In OSM"],
+                ["naptan", row.naptanValue, "In NaPTAN"],
+            ]) {
+                const button = document.createElement("button")
+                button.type = "button"
+                button.className = `btn btn-sm naptan-diff-choice ${
+                    row.decision === side ? "btn-primary" : "btn-outline-secondary"
+                }`
+                button.setAttribute("aria-pressed", row.decision === side ? "true" : "false")
+
+                const heading = document.createElement("div")
+                heading.className = "naptan-diff-side"
+                heading.textContent = label
+                button.append(heading)
+
+                const shown = document.createElement("div")
+                shown.className = "naptan-diff-value"
+                shown.textContent = value
+                button.append(shown)
+
+                button.onclick = () => {
+                    row.decision = side
+                    onDecide(row.tagKey, row.naptanValue, side)
+                    render()
+                }
+
+                element.append(button)
+            }
+
+            rowsElement.append(element)
         }
-
-        content.append(row)
     }
+
+    render()
 
     popup = L.popup(latlng, {
         content: content,
-        closeButton: false,
+        closeButton: true,
         className: "popup-form popup-tags",
         minWidth: 280,
         maxWidth: 340,

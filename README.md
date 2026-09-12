@@ -322,7 +322,9 @@ bearing — that is a judgement call, so the editor puts it in front of you inst
 Such a stop glows red and its right-click menu has **NaPTAN differs**, listing each tag
 with both values side by side. Pick the one that is right: taking NaPTAN's value writes
 it on upload, replacing what is there; keeping the stop's value changes nothing in OSM
-and simply records that you looked.
+and simply records that you looked. The list stays open as you work through it, counting
+down what is left, so a stop with several disagreements is settled in one go; close it
+when you are done, and you can change an answer at any time before uploading.
 
 **Until every disagreement on a stop the route calls at has been decided, the route
 cannot be uploaded** — the submit button stays hidden behind a warning, the same as any
