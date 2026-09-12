@@ -517,6 +517,11 @@ export function showNaptanDifferencesForm(latlng, { rows, onDecide }) {
 
     render()
 
+    // Leaflet closes the open popup on any click that reaches the map, which a button in
+    // here does. Every other popup closes itself on use, so this only bites the one that
+    // is meant to stay up while it is worked through.
+    L.DomEvent.disableClickPropagation(content)
+
     popup = L.popup(latlng, {
         content: content,
         closeButton: true,
