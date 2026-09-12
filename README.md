@@ -295,6 +295,10 @@ and `name`, taken from the stops' own name without the stop letter.
 Stops the user has just added are grouped too, so a stop added from NaPTAN goes into the
 area along with the one across the road that was already mapped.
 
+Where you have accepted a NaPTAN rename for a stop in the same session, the stop area and
+any stop position take the name the stop is about to have, not the one being replaced, so
+everything in one changeset agrees.
+
 Where the stops are already in a stop area, the editor says so and offers to add the ones
 it is missing — a newly created stop position, say — instead of making a second relation.
 The relation keeps the name it has. If the stops of one group sit in *different* stop

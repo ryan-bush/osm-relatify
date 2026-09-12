@@ -178,6 +178,18 @@ export function setStopPosition(platform, placement, name = "") {
 
 export const getStopPositionNode = (platform) => pending.get(platformKey(platform))?.node ?? null
 
+// The stop the node serves may be renamed after the node was placed, by a NaPTAN
+// disagreement the mapper settled later; the node carries the name it will end up with.
+export function renameStopPosition(platform, name) {
+    const entry = pending.get(platformKey(platform))
+    if (!entry || entry.name === name) return false
+
+    entry.name = name
+    entry.node.name = name
+    entry.node.groupName = name.toLowerCase()
+    return true
+}
+
 export const hasStopPosition = (platform) => pending.has(platformKey(platform))
 
 export const removeStopPosition = (platform) => pending.delete(platformKey(platform))
