@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -14,10 +14,14 @@ class NaptanStop:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class NaptanTagSuggestion:
-    """Tags from NaPTAN that an OSM stop matched to it is missing."""
+    """What NaPTAN has to say about an OSM stop matched to it."""
 
     # the OSM platform the tags would go on
     type: str
     id: str
     atcoCode: str
+    # NaPTAN's value for each tag the stop lacks, to fill in
     tags: dict[str, str]
+    # NaPTAN's value for each tag the stop holds a different value for, to review.
+    # The stop's own tags are already on the client, which is where the two are compared.
+    differing: dict[str, str] = field(default_factory=dict)

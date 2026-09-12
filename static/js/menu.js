@@ -1,7 +1,7 @@
-import { busStopData, processBusStopData } from "./busStopsLayer.js"
+import { busStopData, processBusStopData, undecidedDisagreementStops } from "./busStopsLayer.js"
 import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
 import { stopPositionCount, stopPositionsPayload } from "./stopPositions.js"
-import { tagAdditionCount, tagAdditionsPayload } from "./naptanTagAdditions.js"
+import { tagAdditionsPayload, tagChangeCount } from "./naptanTagAdditions.js"
 import {
     downloadHistoryData,
     processRelationDownloadTriggers,
@@ -256,7 +256,7 @@ export const processRouteWarnings = (data) => {
 
     for (const warning of data.warnings) {
         // the relation is untouched, but the changeset still has stop tags to add
-        if (warning.severity === 10 && tagAdditionCount() > 0) continue
+        if (warning.severity === 10 && tagChangeCount() > 0) continue
 
         const severityLevel = warning.severity
         const severityText = {
@@ -329,7 +329,32 @@ export const processRouteWarnings = (data) => {
         }
     }
 
-    editSubmitBtn.classList.toggle("mt-2", data.warnings.length > 0)
+    // A stop NaPTAN disagrees with is a decision for the mapper, not something to guess
+    // at, so it holds the upload until every one has been answered one way or the other.
+    const undecided = undecidedDisagreementStops()
+
+    if (undecided.length) {
+        highestSeverityLevel = Math.max(highestSeverityLevel, 1)
+
+        const undecidedMessage =
+            undecided.length === 1
+                ? "A stop disagrees with NaPTAN"
+                : `${undecided.length} stops disagree with NaPTAN`
+
+        const child = createElementFromHTML(`
+        <div class="warning warning-HIGH">
+            <div class="warning-message">${undecidedMessage}</div>
+            <div class="btn-group-vertical ms-2">
+                <button class="btn primary btn-primary">Show me</button>
+            </div>
+        </div>`)
+
+        child.querySelector("button.primary").onclick = () => map.setView(undecided[0].latLng, 19)
+
+        editWarnings.appendChild(child)
+    }
+
+    editSubmitBtn.classList.toggle("mt-2", data.warnings.length > 0 || undecided.length > 0)
 
     if (highestSeverityLevel === 0) editSubmitBtn.classList.remove("d-none")
 }
@@ -405,7 +430,7 @@ const makeDefaultComment = () => {
     const plural = (count) => (count !== 1 ? "s" : "")
     const stopCount = newStopCount()
     const positionCount = stopPositionCount()
-    const taggedCount = tagAdditionCount()
+    const taggedCount = tagChangeCount()
     const added = stopCount ? `; added ${stopCount} bus stop${plural(stopCount)}` : ""
     const positions = positionCount
         ? `; added ${positionCount} stop position${plural(positionCount)}`
