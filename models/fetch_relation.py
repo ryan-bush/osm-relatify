@@ -9,6 +9,7 @@ from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
 from models.naptan_stop import NaptanStop, NaptanTagSuggestion
+from models.stop_area import StopArea
 from utils import normalize_name
 
 
@@ -129,6 +130,10 @@ class FetchRelationBusStop:
 class FetchRelationBusStopCollection:
     platform: FetchRelationBusStop | None
     stop: FetchRelationBusStop | None
+    # The stops sharing a name in one place, which is what a stop_area relation groups:
+    # typically the two sides of a road. Only meaningful within one response, as the
+    # groups are worked out afresh from whatever has been downloaded.
+    groupId: int = -1
 
     @property
     def best(self) -> FetchRelationBusStop:
@@ -163,6 +168,8 @@ class FetchRelation:
     naptanStops: list[NaptanStop] = field(default_factory=list)
     # stops in OSM that are missing tags NaPTAN has for them, offered for filling in
     naptanTags: list[NaptanTagSuggestion] = field(default_factory=list)
+    # stop_area relations the downloaded stops are already in, so none is duplicated
+    stopAreas: list[StopArea] = field(default_factory=list)
 
 
 def find_start_stop_ways(

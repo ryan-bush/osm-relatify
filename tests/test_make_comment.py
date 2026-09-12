@@ -75,3 +75,23 @@ def test_generated_comment_counts_stops_and_their_stop_positions():
         newStopPositions=[_position()],
     )
     assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 bus stop; added 1 stop position'
+
+
+def _area(id=None, name='The Station'):
+    return {'id': id, 'name': name, 'members': [{'type': 'node', 'id': 1, 'role': 'platform'},
+                                                {'type': 'node', 'id': 2, 'role': 'stop'}]}
+
+
+def test_generated_comment_counts_new_stop_areas():
+    model = make({'name': 'Bus 12'}, stopAreas=[_area()])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 stop area'
+
+
+def test_generated_comment_counts_completed_stop_areas():
+    model = make({'name': 'Bus 12'}, stopAreas=[_area(id=99)])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; completed 1 stop area'
+
+
+def test_generated_comment_tells_new_and_completed_apart():
+    model = make({'name': 'Bus 12'}, stopAreas=[_area(), _area(id=99), _area(id=98)])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 stop area; completed 2 stop areas'

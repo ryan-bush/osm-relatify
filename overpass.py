@@ -24,6 +24,8 @@ from models.bounding_box_collection import BoundingBoxCollection
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, FetchRelationElement
+from models.stop_area import StopArea
+from stop_areas import build_stop_areas_query, parse_stop_areas
 from utils import HTTP
 from xmltodict_postprocessor import postprocessor
 
@@ -642,6 +644,17 @@ class Overpass:
         download_triggers = get_download_triggers(bbc, union_grid_cells, ways)
 
         return global_bb, download_hist, download_triggers, ways, id_map, bus_stop_collections
+
+    @cached(TTLCache(maxsize=128, ttl=60))
+    async def query_stop_areas(self, node_ids: frozenset[int], way_ids: frozenset[int]) -> list[StopArea]:
+        """The stop_area relations the given stops are already in, so none is duplicated."""
+        timeout = 30
+        query = build_stop_areas_query(node_ids, way_ids, timeout)
+        if not query:
+            return []
+
+        r = await overpass_post(query, timeout)
+        return parse_stop_areas(r.json().get('elements', ()))
 
     @cached(TTLCache(maxsize=128, ttl=60))
     async def query_parents(self, way_ids_set: frozenset[int]) -> QueryParentsResult:

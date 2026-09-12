@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Sequence
-from itertools import combinations
+from itertools import combinations, count
 from math import radians
 from operator import itemgetter
 
@@ -50,6 +50,7 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
             G.add_edge(i, j)
 
     collections: list[FetchRelationBusStopCollection] = []
+    group_ids = count()
 
     for component in nx.connected_components(G):
         # make area group from member indices
@@ -123,6 +124,8 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
 
         # for each named group, pick best platform and best stop
         for name_key, name_group in name_groups.items():
+            # every collection out of this group belongs to the same stop area
+            group_id = next(group_ids)
             platforms: list[FetchRelationBusStop] = []
             stops: list[FetchRelationBusStop] = []
 
@@ -152,31 +155,34 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 for platform, stop in zip(
                     platforms_explicit, _assign(platforms_explicit, stops, allow_element_reuse=True)
                 ):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
+                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop, groupId=group_id))
                 continue
 
             if stops_explicit:
                 for stop, platform in zip(
                     stops_explicit, _assign(stops_explicit, platforms, allow_element_reuse=False)
                 ):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
+                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop, groupId=group_id))
                 continue
 
             if platforms_implicit and stops_implicit:
                 for platform, stop in zip(
                     platforms_implicit, _assign(platforms_implicit, stops, allow_element_reuse=True)
                 ):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
+                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop, groupId=group_id))
                 continue
 
             if platforms_implicit:  # and not stops_implicit
                 collections.extend(
-                    FetchRelationBusStopCollection(platform=platform, stop=None) for platform in platforms_implicit
+                    FetchRelationBusStopCollection(platform=platform, stop=None, groupId=group_id)
+                    for platform in platforms_implicit
                 )
                 continue
 
             if stops_implicit:  # and not platforms_implicit
-                collections.extend(FetchRelationBusStopCollection(platform=None, stop=stop) for stop in stops_implicit)
+                collections.extend(
+                    FetchRelationBusStopCollection(platform=None, stop=stop, groupId=group_id) for stop in stops_implicit
+                )
                 continue
 
     return collections

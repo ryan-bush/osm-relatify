@@ -20,6 +20,7 @@ from models.relation_member import RelationMember
 from naptan_tags import StopTagAddition, build_tag_addition_elements
 from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
+from stop_areas import StopAreaChange, build_new_stop_area_relations, build_stop_area_modifications
 from tag_editing import apply_tag_changes, normalize_tags
 
 
@@ -435,6 +436,7 @@ async def build_osm_change(
     new_stops: Sequence[NewBusStop] = (),
     new_stop_positions: Sequence[NewStopPosition] = (),
     tag_additions: Sequence[StopTagAddition] = (),
+    stop_areas: Sequence[StopAreaChange] = (),
 ) -> str:
     split_ways_mutable: set[int] = set()
     native_id_element_ids_map: dict[int, dict[int, ElementId]] = defaultdict(dict)
@@ -475,9 +477,22 @@ async def build_osm_change(
     # route is a protected tag, so the edited copy cannot disagree with the loaded one
     route_type = (tags_edited or route.tags).get('route')
 
-    for node in build_new_stop_nodes(new_stops, new_stop_positions, route_type, route.members):
+    new_nodes = build_new_stop_nodes(new_stops, new_stop_positions, route_type, route.members)
+
+    for node in new_nodes:
         _set_changeset_placeholder(node, include_changeset_id)
         result['osmChange']['create']['node'].append(node)
+
+    # a stop area may group stops this very changeset is creating
+    created_node_ids = {node['@id'] for node in new_nodes}
+
+    for relation_data in build_new_stop_area_relations(stop_areas, created_node_ids):
+        _set_changeset_placeholder(relation_data, include_changeset_id)
+        result['osmChange']['create']['relation'].append(relation_data)
+
+    for relation_data in await build_stop_area_modifications(stop_areas, created_node_ids, osm):
+        _set_changeset_placeholder(relation_data, include_changeset_id)
+        result['osmChange']['modify']['relation'].append(relation_data)
 
     # a split way is already rewritten below, and cannot be modified twice
     if any(addition.type == 'way' and addition.id in split_ways for addition in tag_additions):
