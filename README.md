@@ -18,7 +18,7 @@ custom changeset comments, U-turns at untagged turning points, and creating rela
 from scratch. See [what this fork adds](#what-this-fork-adds) below.
 
 The original remains the reference implementation, and the official instance at
-[relatify.monicz.dev](https://relatify.monicz.dev) but has issued with Overpass. If you find this tool useful, please
+[relatify.monicz.dev](https://relatify.monicz.dev) but has issues with Overpass Timeouts. If you find this tool useful, please
 [support the original author](https://liberapay.com/Zaczero/).
 
 ### Is there a hosted instance?
@@ -84,73 +84,17 @@ Everything below has a working default and can be set in `.env`:
 
 ## What this fork adds
 
-### Editing relation tags
+There are several additions from the Planned section, plus others that help with QoL and removing the need for multiple editors.
 
-The edit view shows the relation's tags in a table you can change in place, add to,
-and delete from. Previously the only way to fix a `name` or add an `operator` was to
-leave for another editor.
+- Editing relation tags
+- Custom changeset comments
+- U-turns without a turning circle
+- Creating new bus relations
+- Improved overpass resilience
+- NaPTAN support in UK
+- Stop Locations & Areas
 
-Edits are merged rather than overwritten: on upload the relation is fetched fresh and
-only the keys you actually touched are applied, so a tag someone else changed while
-you were working is left alone. The structural tags that decide whether the app can
-load the relation at all — `type`, `route`, `public_transport:version` and the
-`disused:`/`was:` variants — are shown but locked.
-
-Changing `roundtrip` re-runs the route calculation, since it changes which stop roles
-are valid.
-
-### Custom changeset comments
-
-The submit view has a comment field. Leave it blank and you get the generated comment
-as before, shown as the placeholder so you can see what will be used.
-
-### U-turns without a turning circle
-
-The router will only turn a bus around where OSM has `highway=turning_circle`. Plenty
-of real routes turn where there is no such tag — a road end, or a corner the bus swings
-round — and the way then has nowhere to continue to and drops out as unused.
-
-Right-click a member way near the end where the bus turns and choose **Allow U-turn**.
-A purple ring marks the node, and the route can now run in and back out over that way,
-which is listed twice in the relation as PTv2 requires. The setting lives in your
-browser only: nothing is uploaded, and it survives the incremental downloads that
-happen as you pan.
-
-The only end that cannot be turned at is either end of a `oneway`, since coming back
-would mean driving it the wrong way.
-
-### Creating new relations
-
-Instead of entering an existing relation id, pan to where the route starts, pick
-**Bus** or **Tram**, and click **Create**. The visible area is downloaded and you get
-an empty relation to build up.
-
-From there it works like editing an existing one: click the ways the route follows,
-right-click to set **START** and **END**, and fill in `name`, `ref`, `from` and `to`
-in the tag table. The three structural PTv2 tags are set for you. Panning downloads
-more of the map as you go, so you only need to start somewhere sensible rather than
-fit the whole route on screen.
-
-Nothing is written to OSM until you upload. The relation is created by that upload,
-and its new id is shown as a link when it succeeds.
-
-> **New in this fork and lightly tested.** The API host is hardcoded to live OSM,
-> so there is no dev-server option — start with a short, simple route, and check the
-> changeset afterwards. The success message links a revert tool if you need it.
-
-### Overpass resilience
-
-`OVERPASS_API_INTERPRETER` accepts several comma-separated endpoints. Each is retried,
-then the next is tried, so a single overloaded instance no longer fails the download.
-Only worldwide instances work — a regional extract silently returns nothing outside
-its own area.
-
-## User documentation
-
-<https://wiki.openstreetmap.org/wiki/Relatify>
-
-The wiki documents the original. Everything there still applies; the additions above
-are not covered by it.
+For detailed guides on new features, see the wiki.
 
 ## Features
 
@@ -172,11 +116,11 @@ are not covered by it.
 - ✅ Custom changeset comment
 - ✅ Creating new relations
 - ✅ U-turns without `highway=turning_circle`
-
+- ✅ Creating new bus stops
+- ✅ NaPTAN data
 
 ### Planned
 
-- ⏳ Creating new bus stops
 - ⏳ Relation `type=restriction`
 - ⏳ `direction=*`
 - ⏳ `oneway=-1`
