@@ -16,8 +16,20 @@ const TAGS_ICON = `
         <circle cx="8" cy="8" r="1.5"/>
     </svg>`
 
-// `naptanTags`, when given, is { label, onClick } for filling in NaPTAN tags
-export function showContextMenu(e, stop, naptanTags = null) {
+const LIST_ICON = `
+    <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="9" y1="6" x2="20" y2="6"/>
+        <line x1="9" y1="12" x2="20" y2="12"/>
+        <line x1="9" y1="18" x2="20" y2="18"/>
+        <circle cx="4.5" cy="6" r="1"/>
+        <circle cx="4.5" cy="12" r="1"/>
+        <circle cx="4.5" cy="18" r="1"/>
+    </svg>`
+
+// `naptanTags`, when given, is { label, onClick } for filling in NaPTAN tags.
+// `onViewTags`, when given, opens the stop's full tag list.
+export function showContextMenu(e, stop, naptanTags = null, onViewTags = null) {
     clearBusStopsPopup()
 
     const naptanTagsButton = naptanTags
@@ -27,10 +39,18 @@ export function showContextMenu(e, stop, naptanTags = null) {
            </button>`
         : ""
 
+    const viewTagsButton = onViewTags
+        ? `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-view-tags">
+               ${LIST_ICON}
+               <div>Tags</div>
+           </button>`
+        : ""
+
     popup = L.popup(e.latlng, {
         content: `
             <div class="btn-group text-center">
                 ${naptanTagsButton}
+                ${viewTagsButton}
                 <button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-open-osm">
                     <img class="mb-1" src="/static/img/brands/openstreetmap.webp" width="24" alt="OpenStreetMap logo">
                     <div>Inspect</div>
@@ -45,6 +65,8 @@ export function showContextMenu(e, stop, naptanTags = null) {
     const openOsmButton = popup.getElement().querySelector("#bs-open-osm")
 
     if (naptanTags) popup.getElement().querySelector("#bs-naptan-tags").onclick = naptanTags.onClick
+
+    if (onViewTags) popup.getElement().querySelector("#bs-view-tags").onclick = onViewTags
 
     openOsmButton.onclick = () => {
         const id = stop.id.split("_")[0]
@@ -187,4 +209,54 @@ export function showNewStopForm(latlng, { stop = null, tags = null, nearby = nul
     }).openOn(map)
 
     form.elements.name.focus()
+}
+
+// Every tag on a stop, read-only. `sections` is one entry per element of the collection,
+// as { label, tags }, so a platform and its stop position are shown together.
+export function showAllTagsForm(latlng, sections) {
+    clearBusStopsPopup()
+
+    const content = document.createElement("div")
+    content.className = "new-stop-form"
+    content.innerHTML = `<div class="new-stop-title">Tags</div>`
+
+    for (const { label, tags } of sections) {
+        const heading = document.createElement("div")
+        heading.className = "all-tags-heading"
+        // set through the DOM, so nothing from OSM is ever parsed as HTML
+        heading.textContent = label
+        content.append(heading)
+
+        const entries = Object.entries(tags)
+
+        if (!entries.length) {
+            const empty = document.createElement("div")
+            empty.className = "all-tags-empty"
+            empty.textContent = "No tags"
+            content.append(empty)
+            continue
+        }
+
+        const table = document.createElement("table")
+        table.className = "table table-sm naptan-tags-table mb-2"
+        const tbody = table.createTBody()
+
+        for (const [key, value] of entries.sort(([a], [b]) => a.localeCompare(b))) {
+            const row = tbody.insertRow()
+            const keyCell = row.insertCell()
+            keyCell.className = "key"
+            keyCell.textContent = key
+            row.insertCell().textContent = value
+        }
+
+        content.append(table)
+    }
+
+    popup = L.popup(latlng, {
+        content: content,
+        closeButton: false,
+        className: "popup-form popup-tags",
+        minWidth: 260,
+        maxWidth: 340,
+    }).openOn(map)
 }

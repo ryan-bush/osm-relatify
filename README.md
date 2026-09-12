@@ -153,6 +153,13 @@ and its new id is shown as a link when it succeeds.
 > start with a short, simple route and check the changeset afterwards; the success
 > message links a revert tool if you need it.
 
+### Viewing a stop's tags
+
+Right-click a bus stop and choose **Tags** to see every tag it carries, rather than
+only the handful the editor shows. Where the stop has both a platform and a stop
+position, each is listed separately under its own element id. The list is read-only;
+tags are changed in OSM itself, or through **Add NaPTAN tags** below.
+
 ### Adding bus stops
 
 A stop the route serves that is missing from OSM can be added without leaving the
