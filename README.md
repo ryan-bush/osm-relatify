@@ -83,6 +83,7 @@ Everything below has a working default and can be set in `.env`:
 | `SENTRY_DSN` | Enables error reporting, off unless set. |
 | `OSM_URL` | The OSM instance to sign in to and upload to. Defaults to live OSM. |
 | `OSM_API_URL` | Its API host, if different. Only live OSM needs this, and it is set for you. |
+| `STOP_AREA_SEARCH_AREA` | How far apart the stops of one place can be, for [stop areas](#stop-areas). Metres; defaults to 150. |
 | `NAPTAN_ENABLED` | [Suggests and checks stops using NaPTAN](#stops-from-naptan). On by default; set to `0` to turn off. |
 | `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
 
@@ -291,6 +292,18 @@ A [`public_transport=stop_area`](https://wiki.openstreetmap.org/wiki/Tag:public_
 relation groups the stops of one place: for an ordinary bus stop, the platform either
 side of the road and the stop position that serves each. The editor already works out
 which stops belong together — same name, same place — so it can offer the relation.
+
+Stops belong to the same place when they carry the same `name` and are within 150 m of
+each other, which `STOP_AREA_SEARCH_AREA` changes. The name tag is what counts, not the
+name shown on the map: the latter has the stop letter appended, so "The Orchards A" and
+"The Orchards B" would otherwise never be grouped despite being the two sides of one
+road. A stop with no name is never grouped.
+
+That distance is deliberately wider than the 50 m the editor uses to pair a platform with
+its stop position, since the two sides of a road can be a fair way apart. Bear in mind
+that a stop 150 m away may not have been downloaded yet, so pan far enough to bring both
+sides in before creating the area. At a busy interchange a good many stands share a name,
+and they are grouped into one area; the list shows every stop before you commit to it.
 
 Right-click a stop and choose **Stop area**. You get the stops it would group, each with
 the role it takes (`platform` or `stop`), and a button to queue it. It is created by the
