@@ -57,6 +57,22 @@ def route() -> FinalRoute:
         busStops=(),
         tags=dict(ORIGINAL_TAGS),
         extraWaysToUpdate=(),
+        # the route has gained a way since, so the relation really does change; a route
+        # identical to what OSM holds is its own case, covered below
+        members=(RelationMember(id='10', type='way', role=''), RelationMember(id='11', type='way', role='')),
+        warnings=(),
+    )
+
+
+@pytest.fixture
+def unchanged_route() -> FinalRoute:
+    """A route exactly as OSM already has it, members and all."""
+    return FinalRoute(
+        ways=(),
+        latLngs=(),
+        busStops=(),
+        tags=dict(ORIGINAL_TAGS),
+        extraWaysToUpdate=(),
         members=(RelationMember(id='10', type='way', role=''),),
         warnings=(),
     )
@@ -74,6 +90,21 @@ def build(route: FinalRoute, **kwargs) -> dict:
         )
     )
     return xmltodict.parse(osm_change)['osmChange']['modify']['relation']
+
+
+def build_change(route: FinalRoute, relation_id=RELATION_ID, **kwargs) -> dict:
+    """The whole osmChange, for checking whether the relation is in it at all."""
+    osm_change = asyncio.run(
+        build_osm_change(
+            relation_id,
+            route,
+            include_changeset_id=False,
+            overpass=UnusedOverpass(),
+            osm=FakeOpenStreetMap(),
+            **kwargs,
+        )
+    )
+    return xmltodict.parse(osm_change)['osmChange']
 
 
 def tags_of(relation: dict) -> dict[str, str]:
@@ -115,7 +146,10 @@ def test_members_are_still_rewritten_alongside_tags(route):
         tags_edited={**ORIGINAL_TAGS, 'operator': 'Beta'},
     )
 
-    assert relation['member'] == {'@type': 'way', '@ref': '10', '@role': ''}
+    assert relation['member'] == [
+        {'@type': 'way', '@ref': '10', '@role': ''},
+        {'@type': 'way', '@ref': '11', '@role': ''},
+    ]
 
 
 def test_metadata_is_still_stripped(route):
@@ -126,3 +160,77 @@ def test_metadata_is_still_stripped(route):
     assert '@uid' not in relation
     assert '@changeset' not in relation
     assert relation['@version'] == '3', 'version must be preserved for optimistic locking'
+
+
+def test_an_unchanged_relation_is_left_out(unchanged_route):
+    """Uploading it would give the route a new version saying nothing at all."""
+    change = build_change(unchanged_route, tags_original=ORIGINAL_TAGS, tags_edited=dict(ORIGINAL_TAGS))
+
+    assert not change['modify'], 'nothing was changed, so nothing is uploaded'
+
+
+def test_an_unchanged_relation_is_left_out_without_tag_edits(unchanged_route):
+    assert not build_change(unchanged_route)['modify']
+
+
+def test_a_relation_whose_tags_changed_is_sent(unchanged_route):
+    change = build_change(
+        unchanged_route,
+        tags_original=ORIGINAL_TAGS,
+        tags_edited={**ORIGINAL_TAGS, 'operator': 'Beta'},
+    )
+
+    assert change['modify']['relation']['@id'] == '7'
+
+
+def test_a_relation_whose_members_changed_is_sent(route):
+    # the route fixture has gained way 11
+    assert build_change(route)['modify']['relation']['@id'] == '7'
+
+
+def test_a_reordered_route_is_sent():
+    """Same members, different order, is a real change to the relation."""
+    reordered = FinalRoute(
+        ways=(),
+        latLngs=(),
+        busStops=(),
+        tags=dict(ORIGINAL_TAGS),
+        extraWaysToUpdate=(),
+        members=(
+            RelationMember(id='11', type='way', role=''),
+            RelationMember(id='10', type='way', role=''),
+        ),
+        warnings=(),
+    )
+
+    assert build_change(reordered)['modify']['relation']['@id'] == '7'
+
+
+def test_a_changed_role_is_sent():
+    rerolled = FinalRoute(
+        ways=(),
+        latLngs=(),
+        busStops=(),
+        tags=dict(ORIGINAL_TAGS),
+        extraWaysToUpdate=(),
+        members=(RelationMember(id='10', type='way', role='forward'),),
+        warnings=(),
+    )
+
+    assert build_change(rerolled)['modify']['relation']['@id'] == '7'
+
+
+def test_a_relation_being_created_is_always_sent():
+    """There is nothing on the server to compare it with."""
+    new_route = FinalRoute(
+        ways=(),
+        latLngs=(),
+        busStops=(),
+        tags=dict(ORIGINAL_TAGS),
+        extraWaysToUpdate=(),
+        members=(RelationMember(id='10', type='way', role=''),),
+        warnings=(),
+    )
+    change = build_change(new_route, relation_id=None, tags_edited=dict(ORIGINAL_TAGS))
+
+    assert change['create']['relation']['@id'] == '-1'

@@ -22,6 +22,7 @@ from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
 from stop_areas import StopAreaChange, build_new_stop_area_relations, build_stop_area_modifications
 from tag_editing import apply_tag_changes, normalize_tags
+from utils import ensure_list
 
 
 class SortedBusEntry(NamedTuple):
@@ -581,9 +582,17 @@ async def build_osm_change(
 
             result['osmChange']['modify']['relation'].append(parent_relation)
 
+    relation_as_fetched: dict | None = None
+
     if relation_task is not None:
         relation_data = await relation_task
         relation_action = 'modify'
+
+        # what the relation looked like before any of this, to spot a no-op below
+        relation_as_fetched = {
+            'tag': _relation_tags(relation_data),
+            'member': _member_signature(relation_data.get('member')),
+        }
 
         # strip unnecessary data
         relation_data.pop('@timestamp', None)
@@ -608,6 +617,27 @@ async def build_osm_change(
         for member in route.members
     ]
 
-    result['osmChange'][relation_action]['relation'].append(relation_data)
+    # A changeset that only touches stops would otherwise carry the route relation along
+    # unchanged, giving it a new version that says nothing. Only what really changed is
+    # uploaded; a relation being created is always sent, as there is nothing to compare.
+    unchanged = relation_as_fetched is not None and (
+        relation_as_fetched['tag'] == _relation_tags(relation_data)
+        and relation_as_fetched['member'] == _member_signature(relation_data['member'])
+    )
+
+    if not unchanged:
+        result['osmChange'][relation_action]['relation'].append(relation_data)
 
     return xmltodict.unparse(result, pretty=not include_changeset_id)
+
+
+def _relation_tags(relation_data: dict) -> dict[str, str]:
+    return {tag['@k']: tag['@v'] for tag in ensure_list(relation_data.get('tag') or [])}
+
+
+def _member_signature(members) -> list[tuple[str, str, str]]:
+    """Members as plain values, so a ref fetched as text matches one built as a number."""
+    return [
+        (member['@type'], str(member['@ref']), member.get('@role') or '')
+        for member in ensure_list(members or [])
+    ]
