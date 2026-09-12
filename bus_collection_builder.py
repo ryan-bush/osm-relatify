@@ -1,6 +1,7 @@
 from collections import defaultdict
 from collections.abc import Sequence
-from itertools import combinations, count
+from dataclasses import replace
+from itertools import combinations
 from math import radians
 from operator import itemgetter
 
@@ -12,10 +13,10 @@ from scipy.optimize import linear_sum_assignment
 from sentry_sdk import trace
 from sklearn.neighbors import BallTree
 
-from config import BUS_COLLECTION_SEARCH_AREA
+from config import BUS_COLLECTION_SEARCH_AREA, STOP_AREA_SEARCH_AREA
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, PublicTransport
-from utils import extract_numbers
+from utils import extract_numbers, normalize_name
 
 
 @trace
@@ -50,7 +51,6 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
             G.add_edge(i, j)
 
     collections: list[FetchRelationBusStopCollection] = []
-    group_ids = count()
 
     for component in nx.connected_components(G):
         # make area group from member indices
@@ -124,8 +124,6 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
 
         # for each named group, pick best platform and best stop
         for name_key, name_group in name_groups.items():
-            # every collection out of this group belongs to the same stop area
-            group_id = next(group_ids)
             platforms: list[FetchRelationBusStop] = []
             stops: list[FetchRelationBusStop] = []
 
@@ -155,37 +153,37 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 for platform, stop in zip(
                     platforms_explicit, _assign(platforms_explicit, stops, allow_element_reuse=True)
                 ):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop, groupId=group_id))
+                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
                 continue
 
             if stops_explicit:
                 for stop, platform in zip(
                     stops_explicit, _assign(stops_explicit, platforms, allow_element_reuse=False)
                 ):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop, groupId=group_id))
+                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
                 continue
 
             if platforms_implicit and stops_implicit:
                 for platform, stop in zip(
                     platforms_implicit, _assign(platforms_implicit, stops, allow_element_reuse=True)
                 ):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop, groupId=group_id))
+                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
                 continue
 
             if platforms_implicit:  # and not stops_implicit
                 collections.extend(
-                    FetchRelationBusStopCollection(platform=platform, stop=None, groupId=group_id)
+                    FetchRelationBusStopCollection(platform=platform, stop=None)
                     for platform in platforms_implicit
                 )
                 continue
 
             if stops_implicit:  # and not platforms_implicit
                 collections.extend(
-                    FetchRelationBusStopCollection(platform=None, stop=stop, groupId=group_id) for stop in stops_implicit
+                    FetchRelationBusStopCollection(platform=None, stop=stop) for stop in stops_implicit
                 )
                 continue
 
-    return collections
+    return assign_stop_area_groups(collections)
 
 
 def _pick_best(
@@ -243,3 +241,60 @@ def _assign(
         return [elements[0]] * len(primary)
     else:
         return [None] * len(primary)
+
+
+def _stop_area_key(collection: FetchRelationBusStopCollection) -> str:
+    """
+    What makes two stops part of one place: the name on the sign.
+
+    Deliberately the `name` tag rather than the collection's display name, which has the
+    stop letter appended — "The Orchards A" and "The Orchards B" are the two sides of one
+    road, and grouping by display name would never put them together.
+    """
+    for stop in (collection.platform, collection.stop):
+        if stop is not None and (name := stop.tags.get('name', '').strip()):
+            return normalize_name(name, lower=True, special=True, whitespace=True)
+
+    return ''
+
+
+def assign_stop_area_groups(
+    collections: list[FetchRelationBusStopCollection],
+    search_area: float = STOP_AREA_SEARCH_AREA,
+) -> list[FetchRelationBusStopCollection]:
+    """
+    Mark which collections a stop_area relation would bring together.
+
+    Not the same grouping as the collections themselves, which pair a platform with the
+    stop position serving it and so keep to a tight radius. The stops of one place can be
+    much further apart, so this reaches further and goes by name alone. Stops with no name
+    are left ungrouped, as there is nothing to say they belong together.
+    """
+    named = [(i, collection) for i, collection in enumerate(collections) if _stop_area_key(collection)]
+    if not named:
+        return collections
+
+    coordinates = tuple(radians_tuple(collection.best.latLng) for _, collection in named)
+    tree = BallTree(coordinates, metric='haversine')
+    nearby = tree.query_radius(coordinates, r=radians(search_area / 111_111))
+
+    G = nx.Graph()  # noqa: N806
+
+    for position, (index, collection) in enumerate(named):
+        G.add_node(index)
+
+        for other in nearby[position]:
+            if other == position:
+                continue
+
+            other_index, other_collection = named[other]
+            if _stop_area_key(collection) == _stop_area_key(other_collection):
+                G.add_edge(index, other_index)
+
+    group_of: dict[int, int] = {}
+
+    for group_id, component in enumerate(nx.connected_components(G)):
+        for index in component:
+            group_of[index] = group_id
+
+    return [replace(collection, groupId=group_of.get(i, -1)) for i, collection in enumerate(collections)]
