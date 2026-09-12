@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from sklearn.neighbors import BallTree
 from starlette import status
 
-from bus_stop_creation import NewBusStop, build_new_stop_nodes
+from bus_stop_creation import NewBusStop, build_new_stop_nodes, build_stop_position_way_elements
 from config import CHANGESET_ID_PLACEHOLDER, CREATED_BY
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id, split_element_id
@@ -481,6 +481,10 @@ async def build_osm_change(
     # a split way is already rewritten below, and cannot be modified twice
     if any(addition.type == 'way' and addition.id in split_ways for addition in tag_additions):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'NaPTAN tags cannot be added to a way the route splits')
+
+    for way_data in await build_stop_position_way_elements(new_stops, split_ways, osm):
+        _set_changeset_placeholder(way_data, include_changeset_id)
+        result['osmChange']['modify']['way'].append(way_data)
 
     for element_type, element in await build_tag_addition_elements(tag_additions, osm):
         element.pop('@timestamp', None)

@@ -14,11 +14,12 @@ import {
     removeNewStop,
     updateNewStop,
 } from "./busStopsNew.js"
+import { planStopPosition } from "./stopPositions.js"
 import { map } from "./map.js"
 import { addTagAddition, clearTagAdditions, getTagAddition, removeTagAddition } from "./naptanTagAdditions.js"
 import { relationTags } from "./tagEditor.js"
 import { escapeHtml, getBusCollectionName, haversine_distance } from "./utils.js"
-import { waysRBush } from "./waysLayer.js"
+import { waysData, waysRBush } from "./waysLayer.js"
 import { requestCalcBusRoute } from "./waysRoute.js"
 
 export let busStopData = null
@@ -240,6 +241,10 @@ function naptanTagsAction(e, stop, suggestion, addition) {
     }
 }
 
+// Where the stop position goes, or null when the user did not ask for one or no route
+// road is close enough to carry it.
+const stopPositionFor = (latLng, wanted) => (wanted ? planStopPosition(latLng, waysData) : null)
+
 // new stops are bus platforms; tram stops are tagged differently and sit on the track
 const canAddStops = () => busStopData !== null && ["bus", "trolleybus"].includes(relationTags?.route)
 
@@ -266,8 +271,9 @@ map.on("contextmenu", (e) => {
 
     showNewStopForm(e.latlng, {
         nearby: findNearbyStop(latLng, null),
-        onSave: (tags) => {
-            addNewStop(latLng, tags)
+        stopPosition: { available: Boolean(planStopPosition(latLng, waysData)), checked: true },
+        onSave: (tags, wantStopPosition) => {
+            addNewStop(latLng, tags, stopPositionFor(latLng, wantStopPosition))
             syncNewStops()
         },
     })
@@ -277,8 +283,12 @@ function editNewStop(e, stop) {
     showNewStopForm(e.latlng, {
         stop: stop,
         nearby: findNearbyStop(stop.latLng, stop),
-        onSave: (tags) => {
-            updateNewStop(stop, tags)
+        stopPosition: {
+            available: Boolean(planStopPosition(stop.latLng, waysData)),
+            checked: Boolean(stop.stopPosition),
+        },
+        onSave: (tags, wantStopPosition) => {
+            updateNewStop(stop, tags, stopPositionFor(stop.latLng, wantStopPosition))
             syncNewStops()
         },
         onDelete: () => {
@@ -313,8 +323,13 @@ function addNaptanStopsToLayer() {
             showNewStopForm(L.latLng(naptanStop.latLng), {
                 tags: naptanStop.tags,
                 nearby: findNearbyStop(naptanStop.latLng, null),
-                onSave: (tags) => {
-                    addNewStop([...naptanStop.latLng], tags)
+                stopPosition: {
+                    available: Boolean(planStopPosition(naptanStop.latLng, waysData)),
+                    checked: true,
+                },
+                onSave: (tags, wantStopPosition) => {
+                    const latLng = [...naptanStop.latLng]
+                    addNewStop(latLng, tags, stopPositionFor(latLng, wantStopPosition))
                     syncNewStops()
                 },
             })
@@ -339,10 +354,39 @@ function addNewStopToLayer(stop) {
 
     marker.on("dragend", () => {
         const { lat, lng } = marker.getLatLng()
-        moveNewStop(stop, [lat, lng])
+        const latLng = [lat, lng]
+        // a stop that had a stop position keeps one, worked out afresh for where it now is
+        moveNewStop(stop, latLng, stop.stopPosition ? stopPositionFor(latLng, true) : null)
         syncNewStops()
     })
 
     marker.on("click", (e) => editNewStop(e, stop))
     marker.on("contextmenu", (e) => editNewStop(e, stop))
+
+    if (stop.stopPosition) addStopPositionToLayer(stop)
+}
+
+// the node that will go on the road, shown so its place along the route is obvious
+function addStopPositionToLayer(stop) {
+    const latLng = stop.stopPosition.node.latLng
+
+    L.circleMarker(latLng, {
+        radius: 5,
+        weight: 2,
+        color: "#e0a800",
+        fillColor: "#fff",
+        fillOpacity: 1,
+    })
+        .addTo(activeBusStopsLayer)
+        .bindTooltip(`${escapeHtml(stop.name)} <i>(new stop position)</i>`, {
+            direction: "top",
+            offset: [0, -8],
+        })
+
+    L.polyline([stop.latLng, latLng], {
+        color: "#e0a800",
+        weight: 2,
+        dashArray: "3 3",
+        interactive: false,
+    }).addTo(activeBusStopsLayer)
 }

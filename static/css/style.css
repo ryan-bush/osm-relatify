@@ -53,6 +53,18 @@
   margin-bottom: .4rem;
 }
 
+.new-stop-form .new-stop-check {
+  display: flex;
+  align-items: baseline;
+  gap: .35rem;
+  font-size: .8em;
+  margin-bottom: .45rem;
+}
+
+.new-stop-form .new-stop-check input:disabled + span {
+  color: #6c757d;
+}
+
 .new-stop-nearby {
   font-size: .8em;
   color: #664d03;

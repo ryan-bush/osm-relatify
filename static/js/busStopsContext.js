@@ -123,7 +123,12 @@ const yesNoOptions = `
 
 // Adds a new stop when `stop` is null, starting from `tags` if given, otherwise edits
 // that pending stop. Tags the form has no field for, such as naptan:*, are kept.
-export function showNewStopForm(latlng, { stop = null, tags = null, nearby = null, onSave, onDelete = null }) {
+// `stopPosition` is { available, checked }; onSave is given the tags and whether a stop
+// position on the road was asked for.
+export function showNewStopForm(
+    latlng,
+    { stop = null, tags = null, nearby = null, stopPosition = null, onSave, onDelete = null },
+) {
     clearBusStopsPopup()
 
     const initialTags = stop?.tags ?? tags ?? {}
@@ -148,6 +153,10 @@ export function showNewStopForm(latlng, { stop = null, tags = null, nearby = nul
                 <select class="form-select form-select-sm" name="bench">${yesNoOptions}</select>
             </label>
         </div>
+        <label class="new-stop-check">
+            <input type="checkbox" name="stop_position">
+            <span></span>
+        </label>
         <div class="new-stop-nearby d-none"></div>
         <div class="d-flex gap-2">
             <button type="submit" class="btn btn-sm btn-primary flex-fill">${stop ? "Save" : "Add stop"}</button>
@@ -156,6 +165,20 @@ export function showNewStopForm(latlng, { stop = null, tags = null, nearby = nul
 
     // set through the DOM rather than the template, so typed text is never parsed as HTML
     for (const key of FORM_KEYS) form.elements[key].value = initialTags[key] ?? ""
+
+    const stopPositionCheck = form.elements.stop_position
+    const stopPositionLabel = stopPositionCheck.nextElementSibling
+
+    if (stopPosition?.available) {
+        stopPositionCheck.checked = stopPosition.checked
+        stopPositionLabel.textContent = "Also mark where the bus halts, on the road"
+    } else {
+        stopPositionCheck.checked = false
+        stopPositionCheck.disabled = true
+        stopPositionLabel.textContent = stopPosition
+            ? "No route road is close enough for a stop position"
+            : "A stop position needs the route drawn first"
+    }
 
     if (atcoCode) {
         const details = [
@@ -190,7 +213,7 @@ export function showNewStopForm(latlng, { stop = null, tags = null, nearby = nul
         }
 
         popup.close()
-        onSave(savedTags)
+        onSave(savedTags, stopPositionCheck.checked)
     }
 
     if (stop) {

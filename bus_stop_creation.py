@@ -1,4 +1,6 @@
+from collections import defaultdict
 from collections.abc import Sequence
+from itertools import pairwise
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
@@ -6,6 +8,22 @@ from pydantic import BaseModel, Field
 from models.element_id import element_id, split_element_id
 from models.relation_member import RelationMember
 from tag_editing import normalize_tags, validate_tag
+from utils import ensure_list
+
+
+class NewStopPosition(BaseModel):
+    """The point on the road where the bus halts, created as a node of the way itself."""
+
+    # the placeholder the route refers to the stop position by, as for the platform
+    id: int = Field(lt=0)
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    # the way the node is inserted into, and the two of its nodes it goes between.
+    # Sending the neighbours rather than an index means a way that has changed since the
+    # client loaded it is noticed instead of being given a node in the wrong place.
+    wayId: int = Field(gt=0)
+    afterNode: int
+    beforeNode: int
 
 
 class NewBusStop(BaseModel):
@@ -17,6 +35,8 @@ class NewBusStop(BaseModel):
     lon: float = Field(ge=-180, le=180)
     # only what the user entered; the tags that make the node a stop are added on top
     tags: dict[str, str]
+    # absent when the road is too far away, or the user did not want one
+    stopPosition: NewStopPosition | None = None
 
 
 def make_new_stop_tags(route_type: str | None, tags: dict[str, str]) -> dict[str, str]:
@@ -39,12 +59,26 @@ def make_new_stop_tags(route_type: str | None, tags: dict[str, str]) -> dict[str
     return tags
 
 
+def make_stop_position_tags(route_type: str | None, platform_tags: dict[str, str]) -> dict[str, str]:
+    """The stop position carries the stop's name, and nothing else the platform owns."""
+    tags = {'public_transport': 'stop_position', route_type: 'yes'}
+
+    if name := platform_tags.get('name'):
+        tags['name'] = name
+
+    for key, value in tags.items():
+        validate_tag(key, value)
+
+    return tags
+
+
 def build_new_stop_nodes(
     new_stops: Sequence[NewBusStop],
     route_type: str | None,
     members: Sequence[RelationMember],
 ) -> list[dict]:
     ids = [stop.id for stop in new_stops]
+    ids += [stop.stopPosition.id for stop in new_stops if stop.stopPosition is not None]
     if len(ids) != len(set(ids)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'New bus stops must have distinct ids')
 
@@ -59,13 +93,97 @@ def build_new_stop_nodes(
             f'The route refers to new bus stops that were not sent: {", ".join(missing)}',
         )
 
-    return [
-        {
-            '@id': stop.id,
-            # the OSM API stores coordinates to 7 decimal places
-            '@lat': f'{stop.lat:.7f}',
-            '@lon': f'{stop.lon:.7f}',
-            'tag': [{'@k': k, '@v': v} for k, v in make_new_stop_tags(route_type, stop.tags).items()],
-        }
-        for stop in new_stops
-    ]
+    nodes = []
+
+    for stop in new_stops:
+        nodes.append(_node(stop.id, stop.lat, stop.lon, make_new_stop_tags(route_type, stop.tags)))
+
+        if stop.stopPosition is not None:
+            position = stop.stopPosition
+            nodes.append(
+                _node(position.id, position.lat, position.lon, make_stop_position_tags(route_type, stop.tags))
+            )
+
+    return nodes
+
+
+def _node(node_id: int, lat: float, lon: float, tags: dict[str, str]) -> dict:
+    return {
+        '@id': node_id,
+        # the OSM API stores coordinates to 7 decimal places
+        '@lat': f'{lat:.7f}',
+        '@lon': f'{lon:.7f}',
+        'tag': [{'@k': k, '@v': v} for k, v in tags.items()],
+    }
+
+
+def insert_into_way_nodes(refs: list[int], insertions: Sequence[tuple[int, int, int]], way_id: int) -> list[int]:
+    """
+    Put each new node into a way's node list, between the pair of nodes it belongs to.
+
+    `insertions` is (after_node, before_node, new_id). Positions are all resolved against
+    the way as fetched, so several stops on one way do not shift each other's pair out
+    from under them. A pair that is no longer next to each other means the way changed.
+    """
+    after_index: dict[int, list[int]] = defaultdict(list)
+
+    for after_node, before_node, new_id in insertions:
+        for i, (a, b) in enumerate(pairwise(refs)):
+            if a == after_node and b == before_node:
+                after_index[i].append(new_id)
+                break
+        else:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f'Conflict: way {way_id} no longer runs from node {after_node} to {before_node}. '
+                'Go back and click the relation reload button.',
+            )
+
+    result: list[int] = []
+
+    for i, ref in enumerate(refs):
+        result.append(ref)
+        result.extend(after_index.get(i, ()))
+
+    return result
+
+
+async def build_stop_position_way_elements(
+    new_stops: Sequence[NewBusStop],
+    split_ways: frozenset[int],
+    osm,
+) -> list[dict]:
+    """The road ways to modify, each with its new stop position nodes inserted."""
+    by_way: dict[int, list[tuple[int, int, int]]] = defaultdict(list)
+
+    for stop in new_stops:
+        if (position := stop.stopPosition) is None:
+            continue
+
+        # the split rewrite below builds its own node lists, which this would be lost in
+        if position.wayId in split_ways:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f'A stop position cannot go on way {position.wayId}, which the route splits',
+            )
+
+        by_way[position.wayId].append((position.afterNode, position.beforeNode, position.id))
+
+    if not by_way:
+        return []
+
+    result = []
+
+    # fetched again rather than trusting what was loaded, so a way someone else changed
+    # in the meantime is noticed
+    for way in await osm.get_ways(tuple(map(str, by_way)), json=False):
+        way_id = int(way['@id'])
+        refs = [int(nd['@ref']) for nd in ensure_list(way.get('nd') or [])]
+
+        way.pop('@timestamp', None)
+        way.pop('@user', None)
+        way.pop('@uid', None)
+        way['nd'] = [{'@ref': ref} for ref in insert_into_way_nodes(refs, by_way[way_id], way_id)]
+        result.append(way)
+
+    return result
