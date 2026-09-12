@@ -11,6 +11,7 @@ import {
     insertStopPositionsIntoWays,
     planStopPosition,
     removeStopPosition,
+    renameStopPosition,
     setStopPosition,
     stopPositionCount,
     stopPositionsPayload,
@@ -233,4 +234,25 @@ test("a stop leaving the route takes its stop position out of the upload", () =>
     node.member = false
 
     assert.deepEqual(stopPositionsPayload(), [])
+})
+
+test("a stop renamed after the node was placed renames the node too", () => {
+    // the mapper accepts a NaPTAN rename after queueing the stop position
+    const osmStop = platform()
+    const node = setStopPosition(osmStop, placementFor(), "Wharf Road")
+
+    assert.equal(renameStopPosition(osmStop, "The Orchards"), true)
+    assert.equal(node.name, "The Orchards")
+    assert.equal(stopPositionsPayload()[0].name, "The Orchards")
+})
+
+test("renaming to the name it already has changes nothing", () => {
+    const osmStop = platform()
+    setStopPosition(osmStop, placementFor(), "The Orchards")
+
+    assert.equal(renameStopPosition(osmStop, "The Orchards"), false)
+})
+
+test("renaming a stop with no stop position is harmless", () => {
+    assert.equal(renameStopPosition(platform(), "The Orchards"), false)
 })

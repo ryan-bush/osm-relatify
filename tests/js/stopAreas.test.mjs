@@ -12,6 +12,7 @@ import {
     newStopAreaCount,
     reconcileStopAreas,
     removeStopArea,
+    renameStopArea,
     setExistingStopAreas,
     stopAreaSignature,
     stopAreasPayload,
@@ -117,4 +118,28 @@ test("a group that still looks the same survives a download", () => {
     reconcileStopAreas([stopAreaSignature(members)])
 
     assert.equal(stopAreasPayload().length, 1)
+})
+
+test("a stop renamed after the area was queued renames the area too", () => {
+    const members = groupMembers([northbound, southbound])
+    addStopArea(members, "Wharf Road", null)
+
+    assert.equal(renameStopArea(members, "The Orchards"), true)
+    assert.equal(stopAreasPayload()[0].name, "The Orchards")
+})
+
+test("an area already in OSM keeps the name it has there", () => {
+    const members = groupMembers([northbound, southbound])
+    addStopArea(members, "Wharf Road", { id: 99, name: "Station Approach", members: [] })
+
+    assert.equal(renameStopArea(members, "The Orchards"), false)
+    assert.equal(stopAreasPayload()[0].name, "Station Approach")
+})
+
+test("an empty name never replaces a real one", () => {
+    const members = groupMembers([northbound, southbound])
+    addStopArea(members, "Wharf Road", null)
+
+    assert.equal(renameStopArea(members, ""), false)
+    assert.equal(stopAreasPayload()[0].name, "Wharf Road")
 })

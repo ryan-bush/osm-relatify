@@ -36,6 +36,7 @@ import {
     groupMembers,
     reconcileStopAreas,
     removeStopArea,
+    renameStopArea,
     setExistingStopAreas,
     stopAreaSignature,
 } from "./stopAreas.js"
@@ -44,8 +45,10 @@ import {
     hasStopPosition,
     planStopPosition,
     removeStopPosition,
+    renameStopPosition,
     setStopPosition,
 } from "./stopPositions.js"
+import { effectiveName } from "./stopNames.js"
 import { relationTags } from "./tagEditor.js"
 import { escapeHtml, getBusCollectionName, haversine_distance } from "./utils.js"
 import { waysData, waysRBush } from "./waysLayer.js"
@@ -118,6 +121,9 @@ export function processBusStopData(fetchData) {
         reconcileGroups()
         naptanStops = fetchData.naptanStops ?? []
         naptanTagSuggestions = new Map((fetchData.naptanTags ?? []).map((suggestion) => [stopKey(suggestion), suggestion]))
+
+        // after the suggestions, which is where an accepted rename is looked up
+        refreshDerivedNames()
     } else {
         busStopData = null
         naptanStops = []
@@ -309,7 +315,7 @@ function stopPositionAction(e, collection) {
                 distance: placement?.distance,
                 tags: stopPositionTagsFor(platform),
                 onAdd: () => {
-                    setStopPosition(platform, placement, platform.tags?.name ?? "")
+                    setStopPosition(platform, placement, nameOf(platform))
                     onStopPositionsChanged()
                 },
                 onRemove: () => {
@@ -320,13 +326,47 @@ function stopPositionAction(e, collection) {
     }
 }
 
+// the name a stop is going to have, once any NaPTAN rename accepted here is uploaded
+function nameOf(stop) {
+    if (!stop) return ""
+
+    const naptanName = naptanTagSuggestions.get(stopKey(stop))?.differing?.name
+
+    return effectiveName(stop, naptanName, naptanName && getDecision(stop, "name", naptanName))
+}
+
 // mirrors make_stop_position_tags() in bus_stop_creation.py
 function stopPositionTagsFor(platform) {
     const tags = { public_transport: "stop_position" }
     if (relationTags?.route) tags[relationTags.route] = "yes"
-    const name = platform.tags?.name?.trim()
+    const name = nameOf(platform)
     if (name) tags.name = name
     return tags
+}
+
+// A decision made after a stop position or stop area was queued has to reach it, so the
+// names in one changeset agree with each other.
+function refreshDerivedNames() {
+    if (!busStopData) return
+
+    let changed = false
+
+    for (const entry of busStopData) {
+        const platform = entry.platform
+        if (!platform || isNewStop(platform)) continue
+
+        if (hasStopPosition(platform)) {
+            changed = renameStopPosition(platform, nameOf(platform)) || changed
+        }
+
+        const collections = collectionsInGroup(entry)
+        const members = groupMembers(collections)
+        if (members.length >= 2) {
+            changed = renameStopArea(members, groupName(collections)) || changed
+        }
+    }
+
+    return changed
 }
 
 function onStopPositionsChanged() {
@@ -353,6 +393,7 @@ function tagSections(collection) {
 // `keepPopup` leaves an open popup alone, for one that redraws itself as it is used
 function onTagAdditionsChanged({ keepPopup = false } = {}) {
     if (!keepPopup) clearBusStopsPopup()
+    refreshDerivedNames()
     updateBusStopsVisibility()
     // a tag-only change still has something to upload when the route itself is unchanged
     requestCalcBusRoute()
@@ -432,7 +473,7 @@ function collectionsInGroup(collection) {
 // tells one side of the road from the other
 function groupName(collections) {
     for (const entry of collections) {
-        const name = (entry.platform ?? entry.stop)?.tags?.name?.trim()
+        const name = nameOf(entry.platform ?? entry.stop)
         if (name) return name
     }
     return ""

@@ -67,6 +67,16 @@ export function addStopArea(members, name, existingArea) {
 
 export const removeStopArea = (members) => pending.delete(signatureOf(members))
 
+// As for a stop position: a stop renamed after the area was queued renames the area too.
+// One that already exists in OSM keeps the name it has there.
+export function renameStopArea(members, name) {
+    const area = pending.get(signatureOf(members))
+    if (!area || area.id !== null || !name || area.name === name) return false
+
+    area.name = name
+    return true
+}
+
 export const clearStopAreas = () => pending.clear()
 
 export const stopAreaCount = () => pending.size
