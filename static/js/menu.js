@@ -1,6 +1,12 @@
 import { busStopData, processBusStopData, undecidedDisagreementStops } from "./busStopsLayer.js"
 import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
-import { completedStopAreaCount, newStopAreaCount, stopAreaCount, stopAreasPayload } from "./stopAreas.js"
+import {
+    completedStopAreaCount,
+    newStopAreaCount,
+    stopAreaCount,
+    stopAreasKnown,
+    stopAreasPayload,
+} from "./stopAreas.js"
 import { stopPositionCount, stopPositionsPayload } from "./stopPositions.js"
 import { tagAdditionsPayload, tagChangeCount } from "./naptanTagAdditions.js"
 import {
@@ -355,7 +361,28 @@ export const processRouteWarnings = (data) => {
         editWarnings.appendChild(child)
     }
 
-    editSubmitBtn.classList.toggle("mt-2", data.warnings.length > 0 || undecided.length > 0)
+    // Stop areas are looked up by a second Overpass query, and one that fails leaves the
+    // application unable to tell a place that has no stop area from one it simply could
+    // not ask about. It stops offering them rather than offer to create a second
+    // relation beside the one the stops are already in, and says so here.
+    const areasUnknown = busStopData !== null && !stopAreasKnown()
+
+    if (areasUnknown) {
+        editWarnings.appendChild(
+            createElementFromHTML(`
+        <div class="warning warning-LOW">
+            <div class="warning-message">
+                Overpass could not say which stop areas these stops are already in, so none are
+                offered. Reload the relation to try again.
+            </div>
+        </div>`),
+        )
+    }
+
+    editSubmitBtn.classList.toggle(
+        "mt-2",
+        data.warnings.length > 0 || undecided.length > 0 || areasUnknown,
+    )
 
     if (highestSeverityLevel === 0) editSubmitBtn.classList.remove("d-none")
 }

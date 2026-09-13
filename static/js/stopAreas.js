@@ -6,9 +6,18 @@
 // stop_area relations the downloaded stops are already in, from the last download
 let existingAreas = []
 
+// Whether that list is the whole truth. The lookup is a second Overpass query, and one
+// that fails says nothing about what is out there: an empty list would read as "no stop
+// area here", which is exactly what invites the mapper to create a second one beside the
+// relation the stops are already in.
+let existingAreasKnown = true
+
 export function setExistingStopAreas(areas) {
+    existingAreasKnown = areas != null
     existingAreas = areas ?? []
 }
+
+export const stopAreasKnown = () => existingAreasKnown
 
 const elementKey = (stop) => `${stop.type}/${stop.id.split("_")[0]}`
 

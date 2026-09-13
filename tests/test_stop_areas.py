@@ -4,6 +4,7 @@ import pytest
 import xmltodict
 from fastapi import HTTPException
 
+from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection
 from models.final_route import FinalRoute
 from relation_builder import build_osm_change
 from stop_areas import (
@@ -224,3 +225,33 @@ class TestBuildOsmChange:
         [modified] = change['modify']['relation']
         assert modified['@id'] == '99'
         assert len(modified['member']) == 2
+
+
+def test_a_failed_lookup_is_not_the_same_as_no_stop_areas():
+    """
+    An empty list is what invites the mapper to create one, so a lookup that could not
+    reach Overpass says None instead and the client stops offering stop areas at all.
+    """
+    import main
+
+    class _Failing:
+        async def query_stop_areas(self, node_ids, way_ids):
+            raise RuntimeError('Overpass is unavailable')
+
+    collection = FetchRelationBusStopCollection(
+        platform=FetchRelationBusStop.from_data({
+            'id': 1,
+            'type': 'node',
+            'lat': 51.5,
+            'lon': -1.7,
+            'tags': {'name': 'Bladen Close', 'public_transport': 'platform', 'highway': 'bus_stop'},
+        }),
+        stop=None,
+    )
+
+    original = main._OVERPASS
+    main._OVERPASS = _Failing()
+    try:
+        assert asyncio.run(main._query_stop_areas([collection])) is None
+    finally:
+        main._OVERPASS = original
