@@ -14,6 +14,7 @@ import {
     processRelationDownloadTriggers,
 } from "./downloadTriggers.js"
 import { map } from "./map.js"
+import { processRouteMasters } from "./routeMastersView.js"
 import { showMessage } from "./messageBox.js"
 import {
     processRelationTags,
@@ -251,6 +252,7 @@ export const processFetchRelationData = (data) => {
     // order is not important here
     processRelationDownloadTriggers(data)
     processBusStopData(data)
+    processRouteMasters(data, { relationId, isCreating })
 }
 
 export const processRouteWarnings = (data) => {
@@ -394,6 +396,7 @@ const unload = () => {
     processRelationWaysData(null)
     processRelationDownloadTriggers(null)
     processBusStopData(null)
+    processRouteMasters(null)
     unloadRelationTags()
     submitComment.value = ""
 
