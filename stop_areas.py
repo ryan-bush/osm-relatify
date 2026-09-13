@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Container, Iterable, Sequence
 from typing import Literal
 
@@ -101,6 +102,43 @@ def _check_members(changes: Sequence[StopAreaChange], created_node_ids: Containe
 
         if change.id is None and not change.name.strip():
             raise HTTPException(status.HTTP_400_BAD_REQUEST, 'A new stop area needs a name')
+
+
+async def check_new_stop_areas(changes: Sequence[StopAreaChange], osm) -> None:
+    """
+    Refuse to create a stop area for stops that are already in one.
+
+    Which stop areas exist is answered by Overpass at download time, and an instance that
+    has fallen behind answers it with silence: a relation created since its snapshot is
+    simply not there, so a place that is already grouped looks ungrouped and is offered a
+    relation of its own. The download is checked for that, but the data can also go out
+    from under a session that was fine when it started, so the question is put once more
+    here to OSM itself, which is never behind.
+    """
+    for change in changes:
+        if change.id is not None:
+            continue
+
+        # a member this changeset is creating cannot be in anything yet
+        existing = [m for m in change.members if m.id > 0]
+        if not existing:
+            continue
+
+        found = await asyncio.gather(*(osm.get_parent_relations(m.type, m.id) for m in existing))
+
+        for member, relations in zip(existing, found, strict=True):
+            for relation in relations:
+                tags = relation.get('tags') or {}
+                if any(tags.get(key) != value for key, value in STOP_AREA_TAGS.items()):
+                    continue
+
+                name = tags.get('name', '').strip()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f'Conflict: {member.key} is already in stop area relation {relation["id"]}'
+                    f'{f" ({name})" if name else ""}, so a new one would be a duplicate. '
+                    'Go back and click the relation reload button.',
+                )
 
 
 def build_new_stop_area_relations(

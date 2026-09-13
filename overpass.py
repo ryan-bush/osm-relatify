@@ -1,7 +1,9 @@
 import asyncio
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from itertools import chain
 from typing import NamedTuple
 
@@ -18,6 +20,7 @@ from config import (
     DOWNLOAD_RELATION_WAY_BB_EXPAND,
     OVERPASS_API_ATTEMPTS,
     OVERPASS_API_INTERPRETERS,
+    OVERPASS_MAX_DATA_AGE,
 )
 from models.bounding_box import BoundingBox
 from models.bounding_box_collection import BoundingBoxCollection
@@ -37,9 +40,40 @@ from xmltodict_postprocessor import postprocessor
 # other configured instances instead of failing the whole request.
 _RETRY_STATUS_CODES = frozenset((429, 502, 503, 504))
 
+# Every reply says how far its data has caught up: `timestamp_osm_base` in JSON,
+# `osm_base` on the meta element in XML. Both sit in the first few hundred bytes.
+_OSM_BASE_RE = re.compile(r'(?:"timestamp_osm_base"\s*:\s*"|osm_base=")([^"]+)"')
+
+
+def data_age(response: httpx.Response) -> float | None:
+    """How many seconds behind live OSM this reply's data is, or None when it does not say."""
+    match = _OSM_BASE_RE.search(response.text[:4096])
+    if match is None:
+        return None
+
+    try:
+        stamp = datetime.fromisoformat(match[1])
+    except ValueError:
+        return None
+
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+
+    return (datetime.now(UTC) - stamp).total_seconds()
+
+
+def _describe_age(age: float) -> str:
+    if age >= 172_800:
+        return f'{age / 86_400:.0f} days'
+    if age >= 7200:
+        return f'{age / 3600:.0f} hours'
+    return f'{age / 60:.0f} minutes'
+
 
 async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
     last_error: Exception | None = None
+    # the least far behind of the instances that answered but are too old to use
+    stale: tuple[float, str] | None = None
 
     for url in OVERPASS_API_INTERPRETERS:
         for attempt in range(1, OVERPASS_API_ATTEMPTS + 1):
@@ -51,13 +85,32 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
             else:
                 if r.status_code not in _RETRY_STATUS_CODES:
                     r.raise_for_status()
-                    return r
+
+                    age = data_age(r)
+                    if not OVERPASS_MAX_DATA_AGE or age is None or age <= OVERPASS_MAX_DATA_AGE:
+                        return r
+
+                    # An instance this far behind answers everything successfully and
+                    # wrongly, so it is passed over for one that has caught up. Waiting
+                    # would not help, so the remaining attempts on it are skipped.
+                    print(f'[OVERPASS] ⚠️ {url} is {_describe_age(age)} behind, trying another instance')
+                    if stale is None or age < stale[0]:
+                        stale = (age, url)
+                    break
 
                 last_error = httpx.HTTPStatusError(f'{url} returned {r.status_code}', request=r.request, response=r)
                 print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
 
             if attempt < OVERPASS_API_ATTEMPTS:
                 await asyncio.sleep(2 ** (attempt - 1))
+
+    if stale is not None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f'Every Overpass instance is out of date - the closest, {stale[1]}, is '
+            f'{_describe_age(stale[0])} behind. Editing from data that old would recreate stops '
+            'that already exist, so please try again later.',
+        )
 
     raise HTTPException(
         status.HTTP_503_SERVICE_UNAVAILABLE,

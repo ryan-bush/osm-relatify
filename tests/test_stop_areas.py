@@ -13,6 +13,7 @@ from stop_areas import (
     build_new_stop_area_relations,
     build_stop_area_modifications,
     build_stop_areas_query,
+    check_new_stop_areas,
     parse_stop_areas,
 )
 
@@ -30,13 +31,18 @@ def _change(id=None, name='The Station', members=None):
 class FakeOsm:
     """Stands in for the OSM API, returning the stop area relations being added to."""
 
-    def __init__(self, relations: dict[int, dict]):
+    def __init__(self, relations: dict[int, dict], parents: dict[tuple[str, int], list[dict]] | None = None):
         self._relations = relations
+        # what each element is already a member of, for the duplicate check
+        self._parents = parents or {}
         self.requested = None
 
     async def get_relations(self, relation_ids, json: bool = True):  # noqa: ARG002
         self.requested = tuple(relation_ids)
         return [self._relations[int(i)] for i in relation_ids]
+
+    async def get_parent_relations(self, element_type: str, element_id: int):
+        return self._parents.get((element_type, element_id), [])
 
 
 _STOP_AREA_TAGS = {'type': 'public_transport', 'public_transport': 'stop_area', 'name': 'The Station'}
@@ -255,3 +261,56 @@ def test_a_failed_lookup_is_not_the_same_as_no_stop_areas():
         assert asyncio.run(main._query_stop_areas([collection])) is None
     finally:
         main._OVERPASS = original
+
+
+def _parent_area(id=21385736, name='Berkeley Road'):
+    return {
+        'type': 'relation',
+        'id': id,
+        'tags': {'type': 'public_transport', 'public_transport': 'stop_area', 'name': name},
+    }
+
+
+class TestCheckNewStopAreas:
+    """
+    A download from an Overpass instance that has fallen behind does not know about a
+    stop area created since its snapshot, so it offers to create one that already exists.
+    OSM itself is asked again before anything is uploaded.
+    """
+
+    def _check(self, changes, parents=None):
+        return asyncio.run(check_new_stop_areas(changes, FakeOsm({}, parents)))
+
+    def test_a_stop_already_in_one_is_refused(self):
+        with pytest.raises(HTTPException) as e:
+            self._check([_change()], {('node', 1): [_parent_area()]})
+
+        assert e.value.status_code == 409
+        assert 'node/1' in e.value.detail
+        assert '21385736' in e.value.detail
+        assert 'Berkeley Road' in e.value.detail
+
+    def test_a_stop_in_nothing_is_let_through(self):
+        assert self._check([_change()]) is None
+
+    def test_some_other_relation_the_stop_is_in_does_not_count(self):
+        route = {'type': 'relation', 'id': 5, 'tags': {'type': 'route', 'route': 'bus'}}
+
+        assert self._check([_change()], {('node', 1): [route]}) is None
+
+    def test_completing_an_existing_area_is_not_a_duplicate(self):
+        # the whole point of that change is to add to the relation it is already in
+        assert self._check([_change(id=99)], {('node', 1): [_parent_area()]}) is None
+
+    def test_a_stop_this_changeset_creates_is_not_looked_up(self):
+        change = _change(members=[_member(id=-3), _member(id=-4, role='stop')])
+
+        assert self._check([change]) is None
+
+    def test_the_upload_is_stopped_by_it(self):
+        osm = FakeOsm({}, {('node', 1): [_parent_area()]})
+
+        with pytest.raises(HTTPException) as e:
+            _build([_change()], osm)
+
+        assert e.value.status_code == 409

@@ -20,7 +20,12 @@ from models.relation_member import RelationMember
 from naptan_tags import StopTagAddition, build_tag_addition_elements
 from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
-from stop_areas import StopAreaChange, build_new_stop_area_relations, build_stop_area_modifications
+from stop_areas import (
+    StopAreaChange,
+    build_new_stop_area_relations,
+    build_stop_area_modifications,
+    check_new_stop_areas,
+)
 from tag_editing import apply_tag_changes, normalize_tags
 from utils import ensure_list
 
@@ -486,6 +491,10 @@ async def build_osm_change(
 
     # a stop area may group stops this very changeset is creating
     created_node_ids = {node['@id'] for node in new_nodes}
+
+    # asked of OSM rather than of the download, which may have come from an instance that
+    # does not know about a stop area created since it last caught up
+    await check_new_stop_areas(stop_areas, osm)
 
     for relation_data in build_new_stop_area_relations(stop_areas, created_node_ids):
         _set_changeset_placeholder(relation_data, include_changeset_id)
