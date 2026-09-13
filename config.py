@@ -29,16 +29,26 @@ if TEST_ENV:
 # Multiple comma-separated endpoints may be given; they are tried in order whenever
 # the preceding one is unreachable or overloaded.
 #
-# Two things make an instance unsuitable, and neither of them looks like a failure.
-# A regional extract (overpass.osm.ch, overpass.osm.jp, ...) answers with no data
-# outside of its own area. An instance that has fallen behind answers from an old
-# snapshot: overpass.kumi.systems and overpass.private.coffee both stood months out
-# of date through September 2026, offering to recreate stops and stop areas mapped
-# since, so they are no longer listed here. OVERPASS_MAX_DATA_AGE below turns that
-# into a refusal rather than a silent wrong answer, whichever instances are used.
+# What rules an instance out, none of which looks like a failure at the time:
+#
+# - A regional extract (overpass.osm.ch, overpass.osm.jp, ...) answers with no data
+#   outside of its own area.
+# - One that has fallen behind answers from an old snapshot. overpass.kumi.systems and
+#   overpass.private.coffee both sat on 2026-06-01 through September 2026, which is
+#   what had the editor offering to recreate stops and stop areas mapped since.
+#   OVERPASS_MAX_DATA_AGE below turns that into a refusal rather than a wrong answer,
+#   whichever instances are named.
+# - One built without metadata cannot serve `out meta`, and the parent relations a way
+#   split rewrites keep the @version it returns, which OSM requires to accept a
+#   modification. This rules out the Britain and Ireland instance
+#   (overpass.atownsend.org.uk), which is also reachable over IPv6 only.
+#
+# maps.mail.ru was measured a minute behind and holding the whole world, so it stands
+# as the fallback for when the main instance is overloaded.
 OVERPASS_API_INTERPRETER = os.getenv(
     'OVERPASS_API_INTERPRETER',
-    'https://overpass-api.de/api/interpreter',
+    'https://overpass-api.de/api/interpreter,'
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 )
 OVERPASS_API_INTERPRETERS = tuple(u.strip() for u in OVERPASS_API_INTERPRETER.split(',') if u.strip())
 assert OVERPASS_API_INTERPRETERS, 'OVERPASS_API_INTERPRETER must contain at least one URL'

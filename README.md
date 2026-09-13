@@ -387,8 +387,12 @@ Three ways an instance answers wrongly without failing are caught rather than tr
 - **A 200 carrying an error** — an HTML page saying the server is busy, or a remark on a
   query that gave up part way through — is treated as a failure and retried elsewhere.
 
-Only `overpass-api.de` is configured by default: `overpass.kumi.systems` and
-`overpass.private.coffee` both stood months out of date through September 2026.
+`overpass-api.de` is used first, with `maps.mail.ru` behind it — measured a minute
+behind and holding the whole world. `overpass.kumi.systems` and `overpass.private.coffee`
+are no longer configured: both sat on 2026-06-01 through September 2026. The Britain and
+Ireland instance (`overpass.atownsend.org.uk`) is minutely and would otherwise be ideal
+here, but it holds no metadata, and the parent relations a way split rewrites keep the
+`@version` that `out meta` returns; it is also reachable over IPv6 only.
 
 ## User documentation
 
