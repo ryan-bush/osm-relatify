@@ -7,6 +7,7 @@ import {
     clearStopAreas,
     completedStopAreaCount,
     existingAreaFor,
+    existingAreasFor,
     getPendingStopArea,
     groupMembers,
     newStopAreaCount,
@@ -142,4 +143,28 @@ test("an empty name never replaces a real one", () => {
 
     assert.equal(renameStopArea(members, ""), false)
     assert.equal(stopAreasPayload()[0].name, "Wharf Road")
+})
+
+test("every area the stops are spread over is reported", () => {
+    setExistingStopAreas([
+        { id: 1, name: "The Station", members: ["node/1", "node/2"] },
+        { id: 2, name: "The Station", members: ["node/3"] },
+        { id: 3, name: "Somewhere else", members: ["node/9"] },
+    ])
+
+    const found = existingAreasFor(groupMembers([northbound, southbound]))
+    assert.deepEqual(
+        found.map((area) => area.id),
+        [1, 2],
+    )
+})
+
+test("no single area is claimed when the place is grouped twice over", () => {
+    setExistingStopAreas([
+        { id: 1, name: "The Station", members: ["node/1", "node/2"] },
+        { id: 2, name: "The Station", members: ["node/3"] },
+    ])
+
+    // which of them should hold the rest is not ours to guess at
+    assert.equal(existingAreaFor(groupMembers([northbound, southbound])), null)
 })

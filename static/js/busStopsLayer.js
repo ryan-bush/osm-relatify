@@ -32,6 +32,7 @@ import {
     addStopArea,
     clearStopAreas,
     existingAreaFor,
+    existingAreasFor,
     getPendingStopArea,
     groupMembers,
     reconcileStopAreas,
@@ -583,9 +584,21 @@ function stopAreaAction(e, collection) {
     // a single element is not a group; there is nothing for a relation to bring together
     if (members.length < 2) return null
 
-    const existing = existingAreaFor(members)
-    const missing = existing ? members.filter((member) => !existing.members.includes(member.key)) : members
+    const found = existingAreasFor(members)
     const pending = getPendingStopArea(members)
+
+    // The place is grouped twice over already. Creating a third is the one thing that
+    // would certainly be wrong, and picking one of them to complete is not ours to
+    // guess at, so this says what is there and leaves it to the mapper.
+    if (found.length > 1) {
+        return {
+            label: "Stop <b>area</b> ⚠",
+            onClick: () => showStopAreaForm(e.latlng, { members: members, several: found }),
+        }
+    }
+
+    const existing = found[0] ?? null
+    const missing = existing ? members.filter((member) => !existing.members.includes(member.key)) : members
 
     // already all in one, and nothing queued: nothing to offer
     if (!pending && !missing.length) return null

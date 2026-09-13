@@ -535,10 +535,61 @@ export function showNaptanDifferencesForm(latlng, { rows, onDecide }) {
     }).openOn(map)
 }
 
+// Says which stop areas a place is already spread over, when there is more than one.
+// Deliberately without an action: creating another would make it worse, and merging them
+// is a decision about the place rather than about the route being edited.
+function showSeveralStopAreasForm(latlng, members, several) {
+    const content = document.createElement("div")
+    content.className = "new-stop-form"
+    content.innerHTML = `
+        <div class="new-stop-title">Already in more than one stop area</div>
+        <div class="new-stop-naptan"></div>
+        <table class="table table-sm naptan-tags-table mb-2"><tbody></tbody></table>`
+
+    // set through the DOM, so nothing from OSM is ever parsed as HTML
+    content.querySelector(".new-stop-naptan").textContent =
+        `These ${members.length} stops are spread over ${several.length} stop areas, so there is nothing ` +
+        "to add here. Merging them is a job for an editor that can see the whole place."
+
+    const tbody = content.querySelector("tbody")
+
+    for (const area of several) {
+        const row = tbody.insertRow()
+        const keyCell = row.insertCell()
+        keyCell.className = "key"
+        keyCell.textContent = `relation/${area.id}`
+
+        const held = members.filter((member) => area.members.includes(member.key)).length
+        row.insertCell().textContent = `${area.name || "unnamed"} — holds ${held} of them`
+    }
+
+    // the list is there to be read, and a click reaching the map closes it
+    L.DomEvent.disableClickPropagation(content)
+
+    popup = L.popup(latlng, {
+        content: content,
+        closeButton: true,
+        className: "popup-form popup-tags",
+        minWidth: 280,
+        maxWidth: 340,
+    }).openOn(map)
+}
+
 // The stops of one place and the stop_area relation that would bring them together,
 // either a new one or the one they are already partly in.
-export function showStopAreaForm(latlng, { name, existing, members, missing, queued, onAdd, onRemove }) {
+export function showStopAreaForm(
+    latlng,
+    { name, existing, members, missing, queued, onAdd, onRemove, several = null },
+) {
     clearBusStopsPopup()
+
+    // The stops of this place are spread over more than one stop area. Nothing here can
+    // put that right - which of them should have the others' stops is a judgement about
+    // the place, not about this route - so it is shown and left alone.
+    if (several) {
+        showSeveralStopAreasForm(latlng, members, several)
+        return
+    }
 
     const content = document.createElement("div")
     content.className = "new-stop-form"
