@@ -45,11 +45,18 @@ export function groupMembers(collections) {
     return members
 }
 
-// The stop area these stops are already in, if any. A group whose stops sit in different
+// Every stop area any of these stops is already in. More than one means the place has
+// been grouped twice over, which is a thing to say rather than a thing to add to.
+export function existingAreasFor(members) {
+    const keys = new Set(members.map((member) => member.key))
+
+    return existingAreas.filter((area) => area.members.some((key) => keys.has(key)))
+}
+
+// The one stop area these stops are already in. A group whose stops sit in different
 // relations is left alone: picking one of them is not ours to guess at.
 export function existingAreaFor(members) {
-    const keys = new Set(members.map((member) => member.key))
-    const found = existingAreas.filter((area) => area.members.some((key) => keys.has(key)))
+    const found = existingAreasFor(members)
 
     return found.length === 1 ? found[0] : null
 }
