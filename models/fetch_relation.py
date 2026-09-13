@@ -9,6 +9,7 @@ from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
 from models.naptan_stop import NaptanStop, NaptanTagSuggestion
+from models.route_master import RouteMaster
 from models.stop_area import StopArea
 from utils import normalize_name
 
@@ -171,6 +172,13 @@ class FetchRelation:
     # stop_area relations the downloaded stops are already in, so none is duplicated.
     # None when the lookup failed, which is not the same as there being none of them.
     stopAreas: list[StopArea] | None = field(default_factory=list)
+    # the route_master relations this route is already a member of. None when the lookup
+    # failed: "not in one" is what invites linking it into one, and guessing that wrongly
+    # would put the route in a second master beside the one it already belongs to.
+    routeMasters: list[RouteMaster] | None = field(default_factory=list)
+    # route masters that other routes with the same ref belong to, offered to link into.
+    # None, again, when they could not be looked up.
+    routeMasterCandidates: list[RouteMaster] | None = field(default_factory=list)
 
 
 def find_start_stop_ways(

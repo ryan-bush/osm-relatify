@@ -27,7 +27,9 @@ from models.bounding_box_collection import BoundingBoxCollection
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, FetchRelationElement
+from models.route_master import RouteMaster
 from models.stop_area import StopArea
+from route_masters import build_route_master_candidates_query, parse_route_masters
 from stop_areas import build_stop_areas_query, parse_stop_areas
 from utils import HTTP
 from xmltodict_postprocessor import postprocessor
@@ -749,6 +751,22 @@ class Overpass:
 
         r = await overpass_post(query, timeout)
         return parse_stop_areas(r.json().get('elements', ()))
+
+    @cached(TTLCache(maxsize=128, ttl=60))
+    async def query_route_master_candidates(
+        self,
+        ref: str,
+        route_value: str,
+        bounds: BoundingBox,
+    ) -> list[RouteMaster]:
+        """The route masters that routes sharing this ref already belong to."""
+        timeout = 30
+        query = build_route_master_candidates_query(ref, route_value, bounds, timeout)
+        if not query:
+            return []
+
+        r = await overpass_post(query, timeout)
+        return parse_route_masters(r.json().get('elements', ()))
 
     @cached(TTLCache(maxsize=128, ttl=60))
     async def query_parents(self, way_ids_set: frozenset[int]) -> QueryParentsResult:

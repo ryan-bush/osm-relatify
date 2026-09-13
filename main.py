@@ -48,12 +48,20 @@ from models.fetch_relation import (
     find_start_stop_ways,
 )
 from models.final_route import FinalRoute, WarningSeverity
+from models.route_master import RouteMaster
 from models.stop_area import StopArea
 from naptan import NAPTAN
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
 from relation_builder import build_osm_change, get_relation_members, sort_and_upgrade_members
+from route_masters import (
+    MAX_DESCRIBED_ROUTES,
+    describe_members,
+    member_route_ids,
+    parse_route_masters,
+    parse_routes,
+)
 from route_warnings import check_for_issues
 from stop_areas import StopAreaChange
 from user_session import fetch_user_details, require_user_access_token, require_user_details
@@ -156,6 +164,16 @@ def get_route_type(tags: dict[str, str]) -> str | None:
     if type_specifier not in {'bus', 'tram'}:
         return None
     return type_specifier
+
+
+def get_route_value(tags: dict[str, str]) -> str:
+    """
+    The kind of route as it is actually tagged: bus, tram or trolleybus.
+
+    get_route_type() reads a trolleybus route as a bus one, which is right for routing but
+    wrong for finding its siblings: a trolleybus route's master holds trolleybus routes.
+    """
+    return tags.get(tags.get('type', ''), '')
 
 
 # a full viewport at low zoom is far too much to download in one go; panning grows
@@ -263,6 +281,11 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
     with print_run_time('Finding existing stop areas'):
         stop_areas = await _query_stop_areas(bus_stop_collections)
 
+    with print_run_time('Finding route masters'):
+        route_masters, route_master_candidates = await _query_route_masters(
+            model.relationId, relation_tags, bounds
+        )
+
     return FetchRelation(
         fetchMerge=len(download_hist.history) > 1 or model.reload,
         nameOrRef=relation_tags.get('name', relation_tags.get('ref', '')).strip(),
@@ -277,6 +300,8 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         naptanStops=naptan_stops,
         naptanTags=naptan_tags,
         stopAreas=stop_areas,
+        routeMasters=route_masters,
+        routeMasterCandidates=route_master_candidates,
     )
 
 
@@ -304,6 +329,64 @@ async def _query_stop_areas(bus_stop_collections) -> list[StopArea] | None:
         # the download still works without them, and the client stops offering stop areas
         print(f'🚧 Warning: Could not look up stop areas: {e!r}')
         return None
+
+
+async def _query_route_masters(
+    relation_id: int | None,
+    relation_tags: dict[str, str],
+    bounds: BoundingBox,
+) -> tuple[list[RouteMaster] | None, list[RouteMaster] | None]:
+    """
+    The route masters this route is in, and the ones it could be linked into.
+
+    Membership is asked of OSM itself rather than of Overpass, which may be behind: a
+    master created since its last snapshot would leave a route that is already in one
+    looking unlinked, which is exactly what invites putting it in a second. When even OSM
+    cannot say, nothing is offered — None is not the same answer as an empty list.
+    """
+    if relation_id is None:
+        # invented here, so it is a member of nothing yet; siblings are still worth finding
+        current: list[RouteMaster] = []
+    else:
+        try:
+            current = parse_route_masters(await _OSM.get_parent_relations('relation', relation_id))
+        except Exception as e:
+            print(f'🚧 Warning: Could not look up route masters: {e!r}')
+            return None, None
+
+    try:
+        candidates = await _OVERPASS.query_route_master_candidates(
+            relation_tags.get('ref', ''),
+            get_route_value(relation_tags),
+            bounds,
+        )
+        # the route's own master is reached through the route itself, and is not a
+        # relation to offer joining
+        current_ids = {master.id for master in current}
+        candidates = [master for master in candidates if master.id not in current_ids]
+    except Exception as e:
+        print(f'🚧 Warning: Could not look up route master candidates: {e!r}')
+        candidates = None
+
+    routes = await _describe_route_master_members([*current, *(candidates or ())])
+
+    return describe_members(current, routes), (
+        describe_members(candidates, routes) if candidates is not None else None
+    )
+
+
+async def _describe_route_master_members(masters):
+    """The member routes of these masters, by id, so the client can name the variants."""
+    route_ids = member_route_ids(masters)
+    if not route_ids or len(route_ids) > MAX_DESCRIBED_ROUTES:
+        return {}
+
+    try:
+        return parse_routes(await _OSM.get_relations(tuple(route_ids)))
+    except Exception as e:
+        # the masters are still worth showing, just without their variants listed
+        print(f'🚧 Warning: Could not look up route master members: {e!r}')
+        return {}
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

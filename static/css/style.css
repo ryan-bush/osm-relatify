@@ -333,6 +333,42 @@
   background-color: #f8d7da;
 }
 
+#edit-route-master {
+  background: #f2f2f2;
+  padding: 6px 6px 6px 10px;
+  border-radius: 5px;
+  font-size: .875em;
+}
+
+.route-master-title {
+  font-weight: 600;
+}
+
+.route-master-heading {
+  margin-top: .25em;
+}
+
+.route-master-id {
+  color: #666;
+}
+
+.route-master-note {
+  color: #444;
+}
+
+.route-master-note::before {
+  content: "🛈 ";
+}
+
+.route-master-routes {
+  margin: .25em 0 0;
+  padding-left: 1.25em;
+}
+
+.route-master-route-current {
+  font-weight: 600;
+}
+
 .warning {
   background: #f2f2f2;
   padding: 6px 6px 6px 10px;
