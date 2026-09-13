@@ -57,6 +57,7 @@ from overpass import Overpass
 from relation_builder import build_osm_change, get_relation_members, sort_and_upgrade_members
 from route_masters import (
     MAX_DESCRIBED_ROUTES,
+    RouteMasterChange,
     describe_members,
     member_route_ids,
     parse_route_masters,
@@ -64,6 +65,7 @@ from route_masters import (
 )
 from route_warnings import check_for_issues
 from stop_areas import StopAreaChange
+from tag_editing import normalize_tags
 from user_session import fetch_user_details, require_user_access_token, require_user_details
 from utils import HTTP, print_run_time
 
@@ -509,6 +511,10 @@ class PostDownloadOsmChangeModel(BaseModel):
     stopAreas: list[StopAreaChange] = Field(default_factory=list)
     # NaPTAN tags to add to stops already in OSM
     naptanTagAdditions: list[StopTagAddition] = Field(default_factory=list)
+    # the route master to put this route in, created by this changeset or already in OSM
+    routeMaster: RouteMasterChange | None = Field(default=None)
+    # route masters to take this route out of
+    routeMasterDetach: list[int] = Field(default_factory=list)
 
     def make_comment(self) -> str:
         if self.comment is not None and (comment := self.comment.strip()):
@@ -538,6 +544,27 @@ class PostDownloadOsmChangeModel(BaseModel):
 
         if tagged := sum(1 for addition in self.naptanTagAdditions if addition.from_naptan()):
             comment += f'; added NaPTAN tags to {tagged} bus stop{"s" if tagged != 1 else ""}'
+
+        comment += self._make_route_master_comment()
+
+        return comment
+
+    def _make_route_master_comment(self) -> str:
+        comment = ''
+
+        if self.routeMaster is not None:
+            if self.routeMaster.id is None:
+                comment += '; created route master'
+            else:
+                comment += f'; added to route master #{self.routeMaster.id}'
+                # the tags of a master already in OSM are only touched when they changed
+                if self.routeMaster.tagsOriginal is not None and normalize_tags(
+                    self.routeMaster.tags
+                ) != normalize_tags(self.routeMaster.tagsOriginal):
+                    comment += ' and edited its tags'
+
+        if detached := len(self.routeMasterDetach):
+            comment += f'; removed from {detached} route master{"s" if detached != 1 else ""}'
 
         return comment
 
@@ -607,6 +634,8 @@ async def post_download_osm_change(model: PostDownloadOsmChangeModel, _=Depends(
             new_stop_positions=model.newStopPositions,
             tag_additions=model.naptanTagAdditions,
             stop_areas=model.stopAreas,
+            route_master=model.routeMaster,
+            route_master_detach=model.routeMasterDetach,
         )
 
     return Response(content=osm_change, media_type='text/xml; charset=utf-8')
@@ -635,6 +664,8 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
             new_stop_positions=model.newStopPositions,
             tag_additions=model.naptanTagAdditions,
             stop_areas=model.stopAreas,
+            route_master=model.routeMaster,
+            route_master_detach=model.routeMasterDetach,
         )
 
     async with OpenStreetMap(access_token=access_token) as osm:

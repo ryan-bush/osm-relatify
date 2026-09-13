@@ -13,10 +13,21 @@ let candidateMasters = []
 // invite putting it in a second one beside the master it already belongs to.
 let mastersKnown = true
 
+// A download replaces what is known and drops any change queued against the old answer,
+// which may have been about masters that are no longer what they were.
 export function setRouteMasters(data) {
     mastersKnown = data?.routeMasters != null
     currentMasters = data?.routeMasters ?? []
     candidateMasters = data?.routeMasterCandidates ?? []
+
+    clearRouteMasterChanges()
+
+    // PTv2 asks that every route be in a master, so the one this is plainly a variant of
+    // is queued without being asked for. It says so, and can be undone.
+    if (mastersKnown && currentMasters.length === 0) {
+        const found = unambiguousCandidate(candidateMasters, data?.tags ?? {})
+        if (found) linkRouteMaster(found, { automatic: true })
+    }
 }
 
 export const routeMastersKnown = () => mastersKnown
@@ -68,3 +79,124 @@ export function mismatchesOf(master, tags) {
 // relation, or one too large to have been expanded.
 export const undescribedMemberCount = (master) =>
     master.members.length - master.routes.length
+
+// The change queued for upload: the master to put this route in, either one already in
+// OSM (by id) or one to create (tags only). Null while the route's membership is left
+// exactly as it is.
+let pending = null
+// ids of masters to take this route out of
+const detaching = new Set()
+
+export const pendingRouteMaster = () => pending
+export const detachingRouteMasters = () => [...detaching]
+
+// Puts the route in a master already in OSM. Its tags are left alone until the mapper
+// opens them, which is what gives the upload a baseline to diff against.
+export function linkRouteMaster(master, { automatic = false } = {}) {
+    pending = {
+        id: master.id,
+        tags: { ...master.tags },
+        tagsOriginal: null,
+        automatic,
+    }
+}
+
+// Creates a master for this route, seeded from the route's own tags.
+export function createRouteMaster(routeTags) {
+    pending = {
+        id: null,
+        tags: defaultMasterTags(routeTags),
+        tagsOriginal: null,
+        automatic: false,
+    }
+}
+
+// Opens an existing master's tags for editing. What it is called now becomes the baseline
+// the edits are diffed against, so a tag someone else changes meanwhile is a conflict
+// rather than something quietly overwritten.
+export function editRouteMasterTags(master) {
+    pending = {
+        id: master.id,
+        tags: { ...master.tags },
+        tagsOriginal: { ...master.tags },
+        automatic: false,
+    }
+}
+
+export const setPendingRouteMasterTags = (tags) => {
+    // The editor reports null as it is unloaded, which happens whenever the tag table
+    // stops belonging to anything — not only when a master's tags are put away, but when
+    // the queued change moves to one whose tags are not open. That is not an edit, and
+    // taking it as one emptied the tags of a change nobody had touched.
+    if (pending && tags !== null) pending.tags = tags
+}
+
+export const clearPendingRouteMaster = () => {
+    pending = null
+}
+
+export function detachRouteMaster(id) {
+    detaching.add(id)
+    // leaving a master and joining it in the same breath is not a thing to send
+    if (pending?.id === id) pending = null
+}
+
+export const undetachRouteMaster = (id) => detaching.delete(id)
+export const isDetaching = (id) => detaching.has(id)
+
+export function clearRouteMasterChanges() {
+    pending = null
+    detaching.clear()
+}
+
+// The tags a new master starts with, taken from the route it is being made for. The
+// mapper can change any of them before uploading; what makes it a master is set server
+// side either way.
+export function defaultMasterTags(routeTags) {
+    const kind = routeValue(routeTags).trim()
+    const tags = { type: "route_master", route_master: kind }
+    const ref = routeTags?.ref?.trim() ?? ""
+
+    if (ref) {
+        tags.ref = ref
+        // the wiki's convention: the kind of route, then the line it runs
+        if (kind) tags.name = `${kind[0].toUpperCase()}${kind.slice(1)} ${ref}`
+    }
+
+    for (const key of ["network", "operator", "colour"]) {
+        const value = routeTags?.[key]?.trim()
+        if (value) tags[key] = value
+    }
+
+    return tags
+}
+
+// The one candidate that is unmistakably this route's master: same ref, same network.
+// Anything less certain is left for the mapper to pick, rather than guessed at.
+export function unambiguousCandidate(candidates, routeTags) {
+    const ref = routeTags?.ref?.trim() ?? ""
+    if (!ref) return null
+
+    const network = routeTags?.network?.trim() ?? ""
+    const matches = candidates.filter(
+        (master) =>
+            (master.tags?.ref?.trim() ?? "") === ref &&
+            (master.tags?.network?.trim() ?? "") === network,
+    )
+
+    return matches.length === 1 ? matches[0] : null
+}
+
+export const routeMasterPayload = () => ({
+    routeMaster: pending && {
+        id: pending.id,
+        tags: pending.tags,
+        tagsOriginal: pending.tagsOriginal,
+    },
+    routeMasterDetach: [...detaching],
+})
+
+// How many changes to this route's masters the changeset carries, which is what makes a
+// changeset that leaves the route relation itself untouched still worth uploading.
+export const routeMasterChangeCount = () =>
+    (pending === null ? 0 : 1) + detaching.size

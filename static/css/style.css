@@ -369,6 +369,27 @@
   font-weight: 600;
 }
 
+.route-master-block:not(:first-of-type) {
+  margin-top: .5em;
+  padding-top: .5em;
+  border-top: 1px solid #ddd;
+}
+
+.route-master-pending {
+  border-top-style: dashed;
+}
+
+.route-master-actions {
+  display: flex;
+  gap: .75em;
+  align-items: center;
+  margin-top: .25em;
+}
+
+.route-master-actions .form-select {
+  margin-bottom: .25em;
+}
+
 .warning {
   background: #f2f2f2;
   padding: 6px 6px 6px 10px;

@@ -3,14 +3,26 @@ import assert from "node:assert/strict"
 import { beforeEach, test } from "node:test"
 
 import {
+    createRouteMaster,
     currentRouteMasters,
+    defaultMasterTags,
     describeMaster,
     describeRoute,
+    detachRouteMaster,
+    detachingRouteMasters,
+    editRouteMasterTags,
+    isDetaching,
+    linkRouteMaster,
     mismatchesOf,
+    pendingRouteMaster,
     routeMasterCandidates,
+    routeMasterChangeCount,
+    routeMasterPayload,
     routeMastersKnown,
     routeValue,
+    setPendingRouteMasterTags,
     setRouteMasters,
+    undetachRouteMaster,
     undescribedMemberCount,
 } from "../../static/js/routeMasters.js"
 
@@ -168,4 +180,193 @@ test("members that were not described are counted, not invented", () => {
     )
     // one too large to have been expanded at all
     assert.equal(undescribedMemberCount(master({ routes: [] })), 2)
+})
+
+// --- queueing a change -------------------------------------------------------
+
+const fullRouteTags = { ...routeTags, network: "Oxfordshire", operator: "Stagecoach" }
+
+const download = (over = {}) => ({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [], ...over })
+
+test("nothing is queued until something is asked for", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+
+    assert.equal(pendingRouteMaster(), null)
+    assert.deepEqual(detachingRouteMasters(), [])
+    assert.equal(routeMasterChangeCount(), 0)
+})
+
+test("linking queues an existing master by id", () => {
+    setRouteMasters(download())
+    linkRouteMaster(master({ id: 101 }))
+
+    assert.equal(pendingRouteMaster().id, 101)
+    // its tags are left alone until they are opened, which is what gives a baseline
+    assert.equal(pendingRouteMaster().tagsOriginal, null)
+    assert.deepEqual(routeMasterPayload().routeMaster.tagsOriginal, null)
+})
+
+test("creating queues a master with no id and tags from the route", () => {
+    setRouteMasters(download())
+    createRouteMaster(fullRouteTags)
+
+    const queued = pendingRouteMaster()
+
+    assert.equal(queued.id, null)
+    assert.equal(queued.tags.name, "Bus 71")
+    assert.equal(queued.tags.ref, "71")
+    assert.equal(queued.tags.route_master, "bus")
+    assert.equal(queued.tags.network, "Oxfordshire")
+})
+
+test("a new master is named for the kind of route it holds", () => {
+    assert.equal(defaultMasterTags({ type: "route", route: "tram", ref: "3" }).name, "Tram 3")
+    assert.equal(defaultMasterTags({ type: "route", route: "trolleybus", ref: "3" }).name, "Trolleybus 3")
+})
+
+test("a route with no ref gives a master no ref to be named after", () => {
+    const tags = defaultMasterTags({ type: "route", route: "bus" })
+
+    assert.equal("ref" in tags, false)
+    assert.equal("name" in tags, false)
+    assert.equal(tags.route_master, "bus")
+})
+
+test("only the tags the route actually has are copied to a new master", () => {
+    const tags = defaultMasterTags({ type: "route", route: "bus", ref: "71", operator: "  " })
+
+    assert.equal("operator" in tags, false)
+    assert.equal("colour" in tags, false)
+})
+
+test("opening an existing master's tags records what they were", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+    editRouteMasterTags(master())
+
+    assert.deepEqual(pendingRouteMaster().tagsOriginal, master().tags)
+})
+
+test("edited tags reach the payload", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+    editRouteMasterTags(master())
+    setPendingRouteMasterTags({ ...master().tags, operator: "Stagecoach" })
+
+    assert.equal(routeMasterPayload().routeMaster.tags.operator, "Stagecoach")
+})
+
+test("detaching queues the master the route leaves", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+    detachRouteMaster(100)
+
+    assert.equal(isDetaching(100), true)
+    assert.deepEqual(routeMasterPayload().routeMasterDetach, [100])
+
+    undetachRouteMaster(100)
+    assert.deepEqual(routeMasterPayload().routeMasterDetach, [])
+})
+
+// the server refuses this outright, and there is no point building it here either
+test("leaving a master drops any plan to join it", () => {
+    setRouteMasters(download())
+    linkRouteMaster(master({ id: 101 }))
+    detachRouteMaster(101)
+
+    assert.equal(pendingRouteMaster(), null)
+    assert.deepEqual(routeMasterPayload().routeMasterDetach, [101])
+})
+
+test("every queued change counts toward the changeset having something to say", () => {
+    setRouteMasters(download())
+    assert.equal(routeMasterChangeCount(), 0)
+
+    linkRouteMaster(master({ id: 101 }))
+    assert.equal(routeMasterChangeCount(), 1)
+
+    detachRouteMaster(102)
+    assert.equal(routeMasterChangeCount(), 2)
+})
+
+test("a payload with nothing queued asks for nothing", () => {
+    setRouteMasters(download())
+
+    assert.deepEqual(routeMasterPayload(), { routeMaster: null, routeMasterDetach: [] })
+})
+
+// --- linking without being asked ---------------------------------------------
+
+const candidate = (over = {}) =>
+    master({ id: 101, tags: { type: "route_master", route_master: "bus", ref: "71", network: "Oxfordshire" }, ...over })
+
+test("the one candidate matching ref and network is queued by itself", () => {
+    setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
+
+    assert.equal(pendingRouteMaster().id, 101)
+    assert.equal(pendingRouteMaster().automatic, true)
+})
+
+test("a candidate whose network differs is left for the mapper", () => {
+    const elsewhere = candidate({ tags: { type: "route_master", route_master: "bus", ref: "71", network: "Kent" } })
+
+    setRouteMasters(download({ routeMasterCandidates: [elsewhere] }))
+
+    assert.equal(pendingRouteMaster(), null)
+})
+
+test("two candidates that both match are not chosen between", () => {
+    setRouteMasters(download({ routeMasterCandidates: [candidate(), candidate({ id: 102 })] }))
+
+    assert.equal(pendingRouteMaster(), null)
+})
+
+test("a route already in a master is not queued into another", () => {
+    setRouteMasters(download({ routeMasters: [master()], routeMasterCandidates: [candidate()] }))
+
+    assert.equal(pendingRouteMaster(), null)
+})
+
+test("nothing is queued when the lookup could not answer", () => {
+    setRouteMasters({ tags: fullRouteTags, routeMasters: null, routeMasterCandidates: null })
+
+    assert.equal(pendingRouteMaster(), null)
+})
+
+test("a route with no ref matches nothing", () => {
+    setRouteMasters({ tags: { type: "route", route: "bus" }, routeMasters: [], routeMasterCandidates: [candidate()] })
+
+    assert.equal(pendingRouteMaster(), null)
+})
+
+test("a candidate matches when neither it nor the route names a network", () => {
+    const plain = candidate({ tags: { type: "route_master", route_master: "bus", ref: "71" } })
+
+    setRouteMasters({
+        tags: { type: "route", route: "bus", ref: "71" },
+        routeMasters: [],
+        routeMasterCandidates: [plain],
+    })
+
+    assert.equal(pendingRouteMaster().id, 101)
+})
+
+// a change queued against one download is not a change to what the next one found
+test("a fresh download drops what was queued against the last one", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+    detachRouteMaster(100)
+    editRouteMasterTags(master())
+
+    setRouteMasters(download({ routeMasters: [master()] }))
+
+    assert.equal(pendingRouteMaster(), null)
+    assert.deepEqual(detachingRouteMasters(), [])
+})
+
+// The tag table is unloaded whenever it stops belonging to anything, and says so by
+// reporting null. Taking that as an edit emptied the tags of a change nobody had touched.
+test("putting the tag table away is not an edit to what is queued", () => {
+    setRouteMasters(download())
+    linkRouteMaster(master({ id: 101 }))
+
+    setPendingRouteMasterTags(null)
+
+    assert.deepEqual(pendingRouteMaster().tags, master().tags)
 })
