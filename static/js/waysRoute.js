@@ -1,7 +1,7 @@
 import { clearAntPath, processRouteAntPath } from "./antPathLayer.js"
 import { busStopData, refreshStopPositionDirections } from "./busStopsLayer.js"
 import { processRouteStops, processRouteWarnings, relationId } from "./menu.js"
-import { relationTags } from "./tagEditor.js"
+import { relationTags } from "./relationTagEditor.js"
 import { deflateCompress, deflateDecompress } from "./utils.js"
 import { insertStopPositionsIntoWays, stopPositionPlacements } from "./stopPositions.js"
 import { startWay, stopWay } from "./waysEndpoint.js"

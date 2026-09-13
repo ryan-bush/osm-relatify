@@ -60,7 +60,7 @@ import {
     setStopPositionDirection,
 } from "./stopPositions.js"
 import { effectiveName } from "./stopNames.js"
-import { relationTags } from "./tagEditor.js"
+import { relationTags } from "./relationTagEditor.js"
 import { escapeHtml, getBusCollectionName, haversine_distance } from "./utils.js"
 import { waysData, waysRBush } from "./waysLayer.js"
 import { requestCalcBusRoute, routeData } from "./waysRoute.js"
