@@ -196,7 +196,58 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 )
                 continue
 
-    return assign_stop_area_groups(collections)
+    return _pair_by_distance_within_places(assign_stop_area_groups(collections))
+
+
+def _pair_by_distance_within_places(
+    collections: list[FetchRelationBusStopCollection],
+) -> list[FetchRelationBusStopCollection]:
+    """
+    Within one place, give each stop position to the platform it stands beside.
+
+    Collections are put together by name, and a stop position carries the bare name of
+    its place while a platform often carries a ref alongside it. The one whose name has
+    no ref therefore matches the stop position exactly and takes it, whichever side of
+    the road each of them is actually on: at Bladen Close that paired the stop position
+    with a platform 20 m away over the one 5 m away, and left the near side looking as
+    though it had no stop position to add.
+
+    The stops of one place are already worked out for stop areas, which goes by the name
+    on the sign and so reaches across those groups. Settling the pairs again over that
+    wider group is what puts each one back on its own side.
+    """
+    by_group: dict[int, list[int]] = defaultdict(list)
+
+    for i, collection in enumerate(collections):
+        # a stop position of its own is nobody's to move; only platforms take one
+        if collection.groupId >= 0 and collection.platform is not None:
+            by_group[collection.groupId].append(i)
+
+    result = list(collections)
+
+    for indices in by_group.values():
+        if len(indices) < 2:
+            continue
+
+        stops = [result[i].stop for i in indices if result[i].stop is not None]
+        if not stops:
+            continue
+
+        platforms = [result[i].platform for i in indices]
+
+        distance_matrix = np.zeros((len(platforms), len(stops)))
+        for i, platform in enumerate(platforms):
+            for j, stop in enumerate(stops):
+                distance_matrix[i, j] = haversine_distance(platform.latLng, stop.latLng)
+
+        # never more stops than platforms, one each at most, so every stop keeps a place
+        row_ind, col_ind = linear_sum_assignment(distance_matrix)
+        assigned = {indices[i]: stops[j] for i, j in zip(row_ind, col_ind, strict=False)}
+
+        for i in indices:
+            result[i] = replace(result[i], stop=assigned.get(i))
+
+    return result
 
 
 def _pick_best(
