@@ -53,14 +53,23 @@ map.on("contextmenu", (e) => {
 
 // map tiles
 const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+
+// Neither tile server draws past z19, so beyond that the z19 tiles are stretched rather
+// than asked for tiles that do not exist. Blurry, but the two sides of a road and the
+// stop position between them are far easier to tell apart with the room to spare.
+const MAX_ZOOM = 21
+const MAX_TILE_ZOOM = 19
+
 const baseLayers = {
     OpenStreetMap: L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: attribution,
-        maxZoom: 19,
+        maxZoom: MAX_ZOOM,
+        maxNativeZoom: MAX_TILE_ZOOM,
     }),
     "OpenStreetMap DE": L.tileLayer("https://tile.openstreetmap.de/{z}/{x}/{y}.png", {
         attribution: attribution,
-        maxZoom: 19,
+        maxZoom: MAX_ZOOM,
+        maxNativeZoom: MAX_TILE_ZOOM,
     }),
 }
 

@@ -92,3 +92,41 @@ def test_the_platform_without_a_ref_does_not_take_a_stop_position_off_the_far_si
     )
 
     assert sorted(pairs) == [('1', None), ('2', '3')]
+
+
+_HIGH_STREET = [
+    ('1465269924', 51.5230835, -1.7929290, 'platform', 'swiawmp'),
+    ('1574764342', 51.5229704, -1.7928543, 'platform', None),
+    ('14176056501', 51.5230096, -1.7929133, 'stop_position', None),
+    ('14177644556', 51.5230082, -1.7929296, 'stop_position', None),
+]
+
+
+def _terminus():
+    result = []
+    for id, lat, lon, kind, ref in _HIGH_STREET:
+        tags = {'name': 'High Street', 'public_transport': kind}
+        if kind == 'platform':
+            tags['highway'] = 'bus_stop'
+        if ref:
+            tags['ref'] = ref
+        result.append(_stop(int(id), tags, lat=lat, lon=lon))
+    return result
+
+
+def test_a_spare_stop_position_is_not_dropped():
+    """
+    One name group held both stop positions and only one platform, and the one left over
+    fell out of the collections: gone from the map, gone from the route on upload, and
+    invisible to the platform that would then be offered a second one on top of it.
+    """
+    collections = build_bus_stop_collections(_terminus())
+
+    kept = {c.stop.id for c in collections if c.stop is not None}
+    assert kept == {'14176056501', '14177644556'}
+
+
+def test_both_ends_of_a_terminus_keep_their_own_stop_position():
+    pairs = _pairs(_terminus())
+
+    assert sorted(pairs) == [('1465269924', '14177644556'), ('1574764342', '14176056501')]
