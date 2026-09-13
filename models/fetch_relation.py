@@ -1,5 +1,5 @@
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from itertools import pairwise
 from typing import Self
@@ -8,6 +8,8 @@ from cython_lib.geoutils import haversine_distance
 from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
+from models.naptan_stop import NaptanStop, NaptanTagSuggestion
+from models.stop_area import StopArea
 from utils import normalize_name
 
 
@@ -128,10 +130,25 @@ class FetchRelationBusStop:
 class FetchRelationBusStopCollection:
     platform: FetchRelationBusStop | None
     stop: FetchRelationBusStop | None
+    # The stops sharing a name in one place, which is what a stop_area relation groups:
+    # typically the two sides of a road. Only meaningful within one response, as the
+    # groups are worked out afresh from whatever has been downloaded.
+    groupId: int = -1
 
     @property
     def best(self) -> FetchRelationBusStop:
         return self.platform or self.stop
+
+    @property
+    def atco_codes(self) -> set[str]:
+        """The NaPTAN codes the platform and stop position carry, if any."""
+        return {
+            code.strip()
+            for stop in (self.platform, self.stop)
+            if stop is not None
+            for code in stop.tags.get('naptan:AtcoCode', '').split(';')
+            if code.strip()
+        }
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -147,6 +164,13 @@ class FetchRelation:
     stopWay: FetchRelationElement | None
     ways: dict[ElementId, FetchRelationElement]
     busStops: list[FetchRelationBusStopCollection]
+    # stops in NaPTAN that are missing from OSM, offered for adding
+    naptanStops: list[NaptanStop] = field(default_factory=list)
+    # stops in OSM that are missing tags NaPTAN has for them, offered for filling in
+    naptanTags: list[NaptanTagSuggestion] = field(default_factory=list)
+    # stop_area relations the downloaded stops are already in, so none is duplicated.
+    # None when the lookup failed, which is not the same as there being none of them.
+    stopAreas: list[StopArea] | None = field(default_factory=list)
 
 
 def find_start_stop_ways(
@@ -231,8 +255,8 @@ def assign_none_members(
     for member in relation['members']:
         typed_id = (member['type'], element_id(member['ref']))
 
-        # != 1 because platforms should not be reused by multiple collections
-        # see bus_collection_builder: element_reuse
+        # != 1 because a platform standing for two collections says nothing about which
+        # of them the relation calls at; build_bus_stop_collections should never make one
         if collection_platform_use_counter[typed_id] != 1:
             continue
 

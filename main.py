@@ -18,14 +18,18 @@ from pydantic import BaseModel, Field
 from sentry_sdk import start_transaction
 from starlette.websockets import WebSocketState
 
+from bus_stop_creation import NewBusStop, NewStopPosition
 from compression import deflate_compress, deflate_decompress
 from config import (
     CALC_ROUTE_MAX_PROCESSES,
     CALC_ROUTE_N_PROCESSES,
     CREATED_BY,
+    NAPTAN_ENABLED,
     OSM_CLIENT,
+    OSM_IS_LIVE,
     OSM_SCOPES,
     OSM_SECRET,
+    OSM_URL,
     TAG_MAX_LENGTH,
     TEST_ENV,
     WEBSITE,
@@ -34,7 +38,7 @@ from cython_lib.route import calc_bus_route
 from deflate_middleware import DeflateRoute
 from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
-from models.element_id import ElementId
+from models.element_id import ElementId, split_element_id
 from models.fetch_relation import (
     FetchRelation,
     FetchRelationBusStopCollection,
@@ -44,15 +48,20 @@ from models.fetch_relation import (
     find_start_stop_ways,
 )
 from models.final_route import FinalRoute, WarningSeverity
+from models.stop_area import StopArea
+from naptan import NAPTAN
+from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
 from relation_builder import build_osm_change, get_relation_members, sort_and_upgrade_members
 from route_warnings import check_for_issues
+from stop_areas import StopAreaChange
 from user_session import fetch_user_details, require_user_access_token, require_user_details
 from utils import HTTP, print_run_time
 
 _SESSION_MAX_AGE = 31536000  # 1 year
 _TEMPLATES = Jinja2Templates(directory='templates', auto_reload=TEST_ENV)
+_TEMPLATES.env.globals.update(osm_url=OSM_URL, osm_is_live=OSM_IS_LIVE)
 
 _PROCESS_EXECUTOR = ProcessPoolExecutor(CALC_ROUTE_MAX_PROCESSES)
 _OSM = OpenStreetMap()
@@ -62,7 +71,13 @@ _OVERPASS = Overpass()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     async with _OSM:
-        yield
+        # in the background, so starting up does not wait on the download
+        naptan_task = asyncio.create_task(NAPTAN.keep_fresh()) if NAPTAN_ENABLED else None
+        try:
+            yield
+        finally:
+            if naptan_task is not None:
+                naptan_task.cancel()
 
 
 app = FastAPI(
@@ -88,7 +103,7 @@ async def index(request: Request, user=Depends(fetch_user_details)):
 @app.post('/login')
 async def login(request: Request):
     state = os.urandom(32).hex()
-    authorization_url = 'https://www.openstreetmap.org/oauth2/authorize?' + urlencode({
+    authorization_url = f'{OSM_URL}/oauth2/authorize?' + urlencode({
         'client_id': OSM_CLIENT,
         'redirect_uri': str(request.url_for('callback')),
         'response_type': 'code',
@@ -106,7 +121,7 @@ async def callback(request: Request, code: Annotated[str, Query()], state: Annot
     if cookie_state != state:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Invalid OAuth state')
     r = await HTTP.post(
-        'https://www.openstreetmap.org/oauth2/token',
+        f'{OSM_URL}/oauth2/token',
         data={
             'client_id': OSM_CLIENT,
             'client_secret': OSM_SECRET,
@@ -236,6 +251,18 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
     with print_run_time('Assigning members for stops'):
         bus_stop_collections = assign_none_members(bus_stop_collections, relation)
 
+    naptan_stops = []
+    naptan_tags = []
+    # get_route_type() reads trolleybus routes as bus
+    if NAPTAN_ENABLED and route_type == 'bus':
+        with print_run_time('Matching stops with NaPTAN'):
+            matches = await NAPTAN.match(download_hist, bus_stop_collections)
+        naptan_stops = matches.unmapped
+        naptan_tags = matches.tag_suggestions
+
+    with print_run_time('Finding existing stop areas'):
+        stop_areas = await _query_stop_areas(bus_stop_collections)
+
     return FetchRelation(
         fetchMerge=len(download_hist.history) > 1 or model.reload,
         nameOrRef=relation_tags.get('name', relation_tags.get('ref', '')).strip(),
@@ -247,7 +274,36 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         stopWay=stop_way,
         ways=ways,
         busStops=bus_stop_collections,
+        naptanStops=naptan_stops,
+        naptanTags=naptan_tags,
+        stopAreas=stop_areas,
     )
+
+
+async def _query_stop_areas(bus_stop_collections) -> list[StopArea] | None:
+    """
+    The stop areas the downloaded stops already belong to.
+
+    None when Overpass could not say, which is not the same as there being none: an empty
+    list is what invites the mapper to create one, and doing that unknowingly would put a
+    second relation beside the one the stops are already in.
+    """
+    node_ids: set[int] = set()
+    way_ids: set[int] = set()
+
+    for collection in bus_stop_collections:
+        for stop in (collection.platform, collection.stop):
+            if stop is None:
+                continue
+            target = node_ids if stop.type == 'node' else way_ids
+            target.add(split_element_id(stop.id).id)
+
+    try:
+        return await _OVERPASS.query_stop_areas(frozenset(node_ids), frozenset(way_ids))
+    except Exception as e:
+        # the download still works without them, and the client stops offering stop areas
+        print(f'🚧 Warning: Could not look up stop areas: {e!r}')
+        return None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -330,6 +386,8 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                 route = replace(route, extraWaysToUpdate=tuple(ways_non_members.values()))
                 route = sort_and_upgrade_members(route, relation_members)
 
+                inactive_naptan_codes = await NAPTAN.find_inactive(route.busStops) if NAPTAN_ENABLED else frozenset()
+
                 final_route = check_for_issues(
                     route=route,
                     ways=ways_members,
@@ -337,6 +395,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                     end_way=model.stopWay,
                     bus_stop_collections=model.busStops,
                     relation_members=relation_members,
+                    inactive_naptan_codes=inactive_naptan_codes,
                 )
 
                 response = deflate_compress(orjson.dumps(final_route, option=orjson.OPT_STRICT_INTEGER))
@@ -359,11 +418,63 @@ class PostDownloadOsmChangeModel(BaseModel):
     tagsOriginal: dict[str, str] | None = None
     # overrides the generated changeset comment when the user provides one
     comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
+    # bus stops placed on the map, created by this changeset
+    newStops: list[NewBusStop] = Field(default_factory=list)
+    # stop positions to put on the road, for new stops and for stops already in OSM
+    newStopPositions: list[NewStopPosition] = Field(default_factory=list)
+    # stop areas to create, and existing ones to add the stops they are missing to
+    stopAreas: list[StopAreaChange] = Field(default_factory=list)
+    # NaPTAN tags to add to stops already in OSM
+    naptanTagAdditions: list[StopTagAddition] = Field(default_factory=list)
 
     def make_comment(self) -> str:
         if self.comment is not None and (comment := self.comment.strip()):
             return comment
 
+        comment = self._make_route_comment()
+
+        if stop_count := len(self.newStops):
+            comment += f'; added {stop_count} bus stop{"s" if stop_count != 1 else ""}'
+
+        if position_count := len(self.newStopPositions):
+            comment += f'; added {position_count} stop position{"s" if position_count != 1 else ""}'
+
+        if created := sum(1 for area in self.stopAreas if area.id is None):
+            comment += f'; added {created} stop area{"s" if created != 1 else ""}'
+
+        if renamed := sum(1 for area in self.stopAreas if area.id is not None and area.expectedName is not None):
+            comment += f'; renamed {renamed} stop area{"s" if renamed != 1 else ""}'
+
+        completed = sum(1 for area in self.stopAreas if area.id is not None and area.expectedName is None)
+        if completed:
+            comment += f'; completed {completed} stop area{"s" if completed != 1 else ""}'
+
+        # one stop can carry both, and the two are not the same thing to say
+        if edited := sum(1 for addition in self.naptanTagAdditions if addition.byHand):
+            comment += f'; edited {edited} bus stop{"s" if edited != 1 else ""}'
+
+        if tagged := sum(1 for addition in self.naptanTagAdditions if addition.from_naptan()):
+            comment += f'; added NaPTAN tags to {tagged} bus stop{"s" if tagged != 1 else ""}'
+
+        return comment
+
+    def make_changeset_tags(self) -> dict[str, str]:
+        tags = {
+            'comment': self.make_comment(),
+            'created_by': CREATED_BY,
+            'host': WEBSITE,
+        }
+
+        # Credits NaPTAN, as its licence requires, when a stop was made or tagged from it.
+        # What the mapper typed themselves is not from NaPTAN and does not credit it.
+        if any(addition.from_naptan() for addition in self.naptanTagAdditions) or any(
+            'naptan:AtcoCode' in stop.tags for stop in self.newStops
+        ):
+            tags['source'] = 'NaPTAN'
+
+        return tags
+
+    def _make_route_comment(self) -> str:
         tags_name = self.tags.get('name', '')
         tags_ref = self.tags.get('ref', '')
 
@@ -409,6 +520,10 @@ async def post_download_osm_change(model: PostDownloadOsmChangeModel, _=Depends(
             osm=_OSM,
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
+            new_stops=model.newStops,
+            new_stop_positions=model.newStopPositions,
+            tag_additions=model.naptanTagAdditions,
+            stop_areas=model.stopAreas,
         )
 
     return Response(content=osm_change, media_type='text/xml; charset=utf-8')
@@ -433,6 +548,10 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
             osm=_OSM,
             tags_original=model.tagsOriginal,
             tags_edited=model.tags,
+            new_stops=model.newStops,
+            new_stop_positions=model.newStopPositions,
+            tag_additions=model.naptanTagAdditions,
+            stop_areas=model.stopAreas,
         )
 
     async with OpenStreetMap(access_token=access_token) as osm:
@@ -440,12 +559,7 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
         user_edits = osm_user['changesets']['count']
         upload_result = await osm.upload_osm_change(
             osm_change,
-            {
-                'changesets_count': user_edits + 1,
-                'comment': model.make_comment(),
-                'created_by': CREATED_BY,
-                'host': WEBSITE,
-            },
+            {'changesets_count': user_edits + 1, **model.make_changeset_tags()},
         )
 
     if upload_result.ok:

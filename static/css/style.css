@@ -38,6 +38,154 @@
   border-left: 1px solid #ddd;
 }
 
+.popup-form .leaflet-popup-content {
+  margin: .6rem .7rem;
+}
+
+.new-stop-form label {
+  display: block;
+  font-size: .85em;
+  margin-bottom: .45rem;
+}
+
+.new-stop-title {
+  font-weight: bold;
+  margin-bottom: .4rem;
+}
+
+.new-stop-form .new-stop-check {
+  display: flex;
+  align-items: baseline;
+  gap: .35rem;
+  font-size: .8em;
+  margin-bottom: .45rem;
+}
+
+.new-stop-form .new-stop-check input:disabled + span {
+  color: #6c757d;
+}
+
+.new-stop-tags {
+  font-size: .8em;
+  margin-bottom: .5rem;
+}
+
+.new-stop-tags summary {
+  cursor: pointer;
+  margin-bottom: .3rem;
+}
+
+/* a stop with many tags scrolls rather than making the form taller than the map */
+.new-stop-tags-body {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.new-stop-nearby {
+  font-size: .8em;
+  color: #664d03;
+  background: #fff3cd;
+  border-radius: 4px;
+  padding: .3rem .45rem;
+  margin-bottom: .5rem;
+}
+
+.new-stop-naptan {
+  font-size: .8em;
+  color: #2b3a4a;
+  background: #e7eef5;
+  border-radius: 4px;
+  padding: .3rem .45rem;
+  margin-bottom: .5rem;
+}
+
+/* a NaPTAN stop that OSM does not have yet */
+.naptan-stop-icon {
+  filter: grayscale(1) contrast(.8);
+  outline: 2px dashed #6c7a89;
+  outline-offset: 1px;
+  border-radius: 50%;
+}
+
+/* a stop in OSM that NaPTAN tags will be added to on upload */
+.bus-stop-tags-added {
+  filter: drop-shadow(0 0 2px #2f7bd8) drop-shadow(0 0 2px #2f7bd8);
+}
+
+.naptan-tags-table td {
+  font-size: .8em;
+  padding: .1rem .3rem;
+  word-break: break-word;
+}
+
+.naptan-tags-table td.key {
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+/* a stop with many tags scrolls rather than running off the map */
+.popup-tags .leaflet-popup-content {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.all-tags-heading {
+  font-size: .8em;
+  font-weight: bold;
+  margin-bottom: .2rem;
+}
+
+.all-tags-empty {
+  font-size: .8em;
+  color: #6c757d;
+  margin-bottom: .5rem;
+}
+
+/* a stop whose NaPTAN disagreement is still waiting on a decision */
+.bus-stop-naptan-undecided {
+  filter: drop-shadow(0 0 3px #dc3545) drop-shadow(0 0 3px #dc3545);
+}
+
+.naptan-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .3rem;
+  margin-bottom: .6rem;
+}
+
+.naptan-diff-key {
+  grid-column: 1 / -1;
+  font-family: monospace;
+  font-size: .8em;
+  word-break: break-word;
+}
+
+.naptan-diff-choice {
+  text-align: left;
+  line-height: 1.2;
+  padding: .25rem .4rem;
+}
+
+.naptan-diff-side {
+  font-size: .7em;
+  opacity: .75;
+}
+
+.naptan-diff-value {
+  font-size: .8em;
+  word-break: break-word;
+}
+
+/* a stop that exists only in the browser until upload */
+.bus-stop-new {
+  filter: drop-shadow(0 0 2px #e0a800) drop-shadow(0 0 2px #e0a800);
+}
+
+.stop-new-badge {
+  font-size: .65em;
+  vertical-align: middle;
+}
+
 #menu {
   z-index: 1000;
   position: absolute;
@@ -57,6 +205,22 @@
 
 #menu:hover {
   opacity: 1;
+}
+
+/* The full tag list puts an editable key and value on every row, which the width that
+   suits the rest of the menu leaves no room for. Never wider than the window, so it
+   stays usable on a phone. */
+#menu.menu-wide {
+  /* width, not max-width: the menu sizes to its content, so a cap alone would leave the
+     value boxes as cramped as before */
+  width: min(680px, calc(100vw - 20px));
+  max-width: none;
+}
+
+#menu.menu-wide .table-tags .key {
+  /* the keys are the short half; the value is what needs the room */
+  width: 1%;
+  white-space: nowrap;
 }
 
 #menu .title {

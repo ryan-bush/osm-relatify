@@ -1,5 +1,6 @@
 import os
 import secrets
+from pathlib import Path
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -26,20 +27,42 @@ if TEST_ENV:
 # Dedicated instance unavailable? Pick one from the public list:
 # https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances
 # Multiple comma-separated endpoints may be given; they are tried in order whenever
-# the preceding one is unreachable or overloaded. Only worldwide instances are
-# suitable here - a regional extract (overpass.osm.ch, overpass.osm.jp, ...) silently
-# answers with no data outside of its own area.
+# the preceding one is unreachable or overloaded.
+#
+# What rules an instance out, none of which looks like a failure at the time:
+#
+# - A regional extract (overpass.osm.ch, overpass.osm.jp, ...) answers with no data
+#   outside of its own area.
+# - One that has fallen behind answers from an old snapshot. overpass.kumi.systems and
+#   overpass.private.coffee both sat on 2026-06-01 through September 2026, which is
+#   what had the editor offering to recreate stops and stop areas mapped since.
+#   OVERPASS_MAX_DATA_AGE below turns that into a refusal rather than a wrong answer,
+#   whichever instances are named.
+# - One built without metadata cannot serve `out meta`, and the parent relations a way
+#   split rewrites keep the @version it returns, which OSM requires to accept a
+#   modification. This rules out the Britain and Ireland instance
+#   (overpass.atownsend.org.uk), which is also reachable over IPv6 only.
+#
+# maps.mail.ru was measured a minute behind and holding the whole world, so it stands
+# as the fallback for when the main instance is overloaded.
 OVERPASS_API_INTERPRETER = os.getenv(
     'OVERPASS_API_INTERPRETER',
     'https://overpass-api.de/api/interpreter,'
-    'https://overpass.kumi.systems/api/interpreter,'
-    'https://overpass.private.coffee/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 )
 OVERPASS_API_INTERPRETERS = tuple(u.strip() for u in OVERPASS_API_INTERPRETER.split(',') if u.strip())
 assert OVERPASS_API_INTERPRETERS, 'OVERPASS_API_INTERPRETER must contain at least one URL'
 
 # Number of attempts per endpoint before moving on to the next one
 OVERPASS_API_ATTEMPTS = int(os.getenv('OVERPASS_API_ATTEMPTS', '2'))
+
+# How far behind live OSM an instance may be before its answers are refused.
+#
+# An instance that has fallen behind does not fail: it answers every query successfully,
+# from a snapshot of whenever it last caught up. Editing from one recreates stops and
+# stop areas that already exist, and drops members added since. A healthy instance is
+# seconds to a couple of minutes behind, so an hour is generous; 0 turns the check off.
+OVERPASS_MAX_DATA_AGE = float(os.getenv('OVERPASS_MAX_DATA_AGE', '3600'))  # seconds
 
 TAG_MAX_LENGTH = 255
 
@@ -54,6 +77,37 @@ PROTECTED_TAG_KEYS = frozenset(
         'public_transport:version',
     }
 )
+
+_LIVE_OSM_URL = 'https://www.openstreetmap.org'
+_LIVE_OSM_API_URL = 'https://api.openstreetmap.org'
+
+
+def resolve_osm_urls(osm_url: str | None, osm_api_url: str | None) -> tuple[str, str]:
+    """
+    Work out the website and API hosts of the OSM instance to sign in to and upload to.
+
+    Live OSM serves its API from a separate host, but other instances (the dev server at
+    master.apis.dev.openstreetmap.org) serve both from one, so setting only the website
+    is enough there.
+    """
+    web = (osm_url or _LIVE_OSM_URL).rstrip('/')
+    if osm_api_url:
+        api = osm_api_url.rstrip('/')
+    elif web == _LIVE_OSM_URL:
+        api = _LIVE_OSM_API_URL
+    else:
+        api = web
+    return web, api
+
+
+# Map data always comes from Overpass, which only indexes live OSM. Pointing this at the
+# dev server is for testing uploads: creating relations works, but editing an existing
+# relation or way fails, as the ids Overpass returns do not exist there.
+OSM_URL, OSM_API_URL = resolve_osm_urls(os.getenv('OSM_URL'), os.getenv('OSM_API_URL'))
+OSM_IS_LIVE = OSM_URL == _LIVE_OSM_URL
+
+if not OSM_IS_LIVE:
+    print(f'[CONF] Signing in and uploading to {OSM_URL}, not live OpenStreetMap')
 
 OSM_CLIENT = os.getenv('OSM_CLIENT', None)
 OSM_SECRET = os.getenv('OSM_SECRET', None)
@@ -80,6 +134,19 @@ print(f'[CONF] {DOWNLOAD_RELATION_GRID_SIZE * 111_111 = :.0f} meters')
 print(f'[CONF] {DOWNLOAD_RELATION_GRID_CELL_EXPAND * 111_111 = :.0f} meters')
 
 BUS_COLLECTION_SEARCH_AREA = 50  # meters
+
+# How far apart the stops of one place can be, for the stop_area relation that groups
+# them. Wider than the collection radius above: the two sides of a road, or a few stands
+# at one stop, are one place even a couple of hundred metres apart. Raising it much
+# further starts joining up same-named stops that are genuinely different places.
+STOP_AREA_SEARCH_AREA = float(os.getenv('STOP_AREA_SEARCH_AREA', '150'))  # meters
+
+# Suggests bus stops that are in NaPTAN but missing from OSM, and checks route stops
+# against it. NaPTAN covers Great Britain only, and the national dataset (about 100 MB)
+# is downloaded in the background on start; set this to 0 where that is not wanted.
+NAPTAN_ENABLED = os.getenv('NAPTAN_ENABLED', '1').strip().lower() in ('1', 'true', 'yes')
+NAPTAN_DATA_DIR = Path(os.getenv('NAPTAN_DATA_DIR', 'data'))
+NAPTAN_MAX_AGE = 24 * 3600  # seconds
 
 assert DOWNLOAD_RELATION_GRID_CELL_EXPAND * 111_111 > BUS_COLLECTION_SEARCH_AREA * 2
 

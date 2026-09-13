@@ -10,15 +10,24 @@ from fastapi import HTTPException
 from sklearn.neighbors import BallTree
 from starlette import status
 
+from bus_stop_creation import NewBusStop, NewStopPosition, build_new_stop_nodes, build_stop_position_way_elements
 from config import CHANGESET_ID_PLACEHOLDER, CREATED_BY
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id, split_element_id
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute
 from models.relation_member import RelationMember
+from naptan_tags import StopTagAddition, build_tag_addition_elements
 from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
+from stop_areas import (
+    StopAreaChange,
+    build_new_stop_area_relations,
+    build_stop_area_modifications,
+    check_new_stop_areas,
+)
 from tag_editing import apply_tag_changes, normalize_tags
+from utils import ensure_list
 
 
 class SortedBusEntry(NamedTuple):
@@ -258,8 +267,9 @@ def _initialize_osm_change_structure() -> dict:
         'osmChange': {
             '@version': 0.6,
             '@generator': CREATED_BY,
-            'create': {'way': [], 'relation': []},
-            'modify': {'way': [], 'relation': []},
+            # in this order: an element must be created before anything refers to it
+            'create': {'node': [], 'way': [], 'relation': []},
+            'modify': {'node': [], 'way': [], 'relation': []},
         }
     }
 
@@ -429,6 +439,10 @@ async def build_osm_change(
     osm: OpenStreetMap,
     tags_original: dict[str, str] | None = None,
     tags_edited: dict[str, str] | None = None,
+    new_stops: Sequence[NewBusStop] = (),
+    new_stop_positions: Sequence[NewStopPosition] = (),
+    tag_additions: Sequence[StopTagAddition] = (),
+    stop_areas: Sequence[StopAreaChange] = (),
 ) -> str:
     split_ways_mutable: set[int] = set()
     native_id_element_ids_map: dict[int, dict[int, ElementId]] = defaultdict(dict)
@@ -465,6 +479,45 @@ async def build_osm_change(
         relation_task = asyncio.create_task(osm.get_relation(relation_id, json=False))
 
     result = _initialize_osm_change_structure()
+
+    # route is a protected tag, so the edited copy cannot disagree with the loaded one
+    route_type = (tags_edited or route.tags).get('route')
+
+    new_nodes = build_new_stop_nodes(new_stops, new_stop_positions, route_type, route.members)
+
+    for node in new_nodes:
+        _set_changeset_placeholder(node, include_changeset_id)
+        result['osmChange']['create']['node'].append(node)
+
+    # a stop area may group stops this very changeset is creating
+    created_node_ids = {node['@id'] for node in new_nodes}
+
+    # asked of OSM rather than of the download, which may have come from an instance that
+    # does not know about a stop area created since it last caught up
+    await check_new_stop_areas(stop_areas, osm)
+
+    for relation_data in build_new_stop_area_relations(stop_areas, created_node_ids):
+        _set_changeset_placeholder(relation_data, include_changeset_id)
+        result['osmChange']['create']['relation'].append(relation_data)
+
+    for relation_data in await build_stop_area_modifications(stop_areas, created_node_ids, osm):
+        _set_changeset_placeholder(relation_data, include_changeset_id)
+        result['osmChange']['modify']['relation'].append(relation_data)
+
+    # a split way is already rewritten below, and cannot be modified twice
+    if any(addition.type == 'way' and addition.id in split_ways for addition in tag_additions):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'NaPTAN tags cannot be added to a way the route splits')
+
+    for way_data in await build_stop_position_way_elements(new_stop_positions, split_ways, osm):
+        _set_changeset_placeholder(way_data, include_changeset_id)
+        result['osmChange']['modify']['way'].append(way_data)
+
+    for element_type, element in await build_tag_addition_elements(tag_additions, osm):
+        element.pop('@timestamp', None)
+        element.pop('@user', None)
+        element.pop('@uid', None)
+        _set_changeset_placeholder(element, include_changeset_id)
+        result['osmChange']['modify'][element_type].append(element)
 
     if split_ways:
         parents_task = asyncio.create_task(overpass.query_parents(split_ways))
@@ -538,9 +591,17 @@ async def build_osm_change(
 
             result['osmChange']['modify']['relation'].append(parent_relation)
 
+    relation_as_fetched: dict | None = None
+
     if relation_task is not None:
         relation_data = await relation_task
         relation_action = 'modify'
+
+        # what the relation looked like before any of this, to spot a no-op below
+        relation_as_fetched = {
+            'tag': _relation_tags(relation_data),
+            'member': _member_signature(relation_data.get('member')),
+        }
 
         # strip unnecessary data
         relation_data.pop('@timestamp', None)
@@ -565,6 +626,27 @@ async def build_osm_change(
         for member in route.members
     ]
 
-    result['osmChange'][relation_action]['relation'].append(relation_data)
+    # A changeset that only touches stops would otherwise carry the route relation along
+    # unchanged, giving it a new version that says nothing. Only what really changed is
+    # uploaded; a relation being created is always sent, as there is nothing to compare.
+    unchanged = relation_as_fetched is not None and (
+        relation_as_fetched['tag'] == _relation_tags(relation_data)
+        and relation_as_fetched['member'] == _member_signature(relation_data['member'])
+    )
+
+    if not unchanged:
+        result['osmChange'][relation_action]['relation'].append(relation_data)
 
     return xmltodict.unparse(result, pretty=not include_changeset_id)
+
+
+def _relation_tags(relation_data: dict) -> dict[str, str]:
+    return {tag['@k']: tag['@v'] for tag in ensure_list(relation_data.get('tag') or [])}
+
+
+def _member_signature(members) -> list[tuple[str, str, str]]:
+    """Members as plain values, so a ref fetched as text matches one built as a number."""
+    return [
+        (member['@type'], str(member['@ref']), member.get('@role') or '')
+        for member in ensure_list(members or [])
+    ]

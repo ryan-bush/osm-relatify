@@ -1,7 +1,9 @@
 import asyncio
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from itertools import chain
 from typing import NamedTuple
 
@@ -18,12 +20,15 @@ from config import (
     DOWNLOAD_RELATION_WAY_BB_EXPAND,
     OVERPASS_API_ATTEMPTS,
     OVERPASS_API_INTERPRETERS,
+    OVERPASS_MAX_DATA_AGE,
 )
 from models.bounding_box import BoundingBox
 from models.bounding_box_collection import BoundingBoxCollection
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, FetchRelationElement
+from models.stop_area import StopArea
+from stop_areas import build_stop_areas_query, parse_stop_areas
 from utils import HTTP
 from xmltodict_postprocessor import postprocessor
 
@@ -36,8 +41,73 @@ from xmltodict_postprocessor import postprocessor
 _RETRY_STATUS_CODES = frozenset((429, 502, 503, 504))
 
 
+class OverpassReplyError(Exception):
+    """Overpass answered with a 200 that carries an error rather than data."""
+
+# Every reply says how far its data has caught up: `timestamp_osm_base` in JSON,
+# `osm_base` on the meta element in XML. Both sit in the first few hundred bytes.
+_OSM_BASE_RE = re.compile(r'(?:"timestamp_osm_base"\s*:\s*"|osm_base=")([^"]+)"')
+
+
+def data_age(response: httpx.Response) -> float | None:
+    """How many seconds behind live OSM this reply's data is, or None when it does not say."""
+    match = _OSM_BASE_RE.search(response.text[:4096])
+    if match is None:
+        return None
+
+    try:
+        stamp = datetime.fromisoformat(match[1])
+    except ValueError:
+        return None
+
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+
+    return (datetime.now(UTC) - stamp).total_seconds()
+
+
+# Overpass answers some failures with 200 and an error page in place of the data, and
+# others with a note buried in an otherwise well-formed reply. Neither is data.
+_HTML_ERROR_RE = re.compile(r'<strong[^>]*>\s*Error\s*</strong>\s*:?\s*(.*?)</p>', re.DOTALL | re.IGNORECASE)
+# a remark carries quotes of its own, escaped, so the value cannot just run to the next one
+_JSON_REMARK_RE = re.compile(r'"remark"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_XML_REMARK_RE = re.compile(r'<remark>(.*?)</remark>', re.DOTALL)
+
+
+def reply_error(response: httpx.Response) -> str | None:
+    """
+    What went wrong in a reply Overpass still gave a 200 to, or None when it is data.
+
+    A query the server could not run comes back as an HTML page saying so, and one it
+    gave up part way through comes back as valid JSON with a remark and whatever it had
+    managed to collect. Passed on as data, the first fails much later on the parse and
+    the second quietly looks like an area with nothing in it.
+    """
+    if response.headers.get('content-type', '').startswith('text/html'):
+        match = _HTML_ERROR_RE.search(response.text)
+        return ' '.join(match[1].split()) if match else 'answered with a page instead of data'
+
+    match = _JSON_REMARK_RE.search(response.text) or _XML_REMARK_RE.search(response.text)
+    if match is None:
+        return None
+
+    # a remark also carries harmless notes, such as how many areas were considered
+    remark = ' '.join(match[1].split())
+    return remark if 'error' in remark.lower() else None
+
+
+def _describe_age(age: float) -> str:
+    if age >= 172_800:
+        return f'{age / 86_400:.0f} days'
+    if age >= 7200:
+        return f'{age / 3600:.0f} hours'
+    return f'{age / 60:.0f} minutes'
+
+
 async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
     last_error: Exception | None = None
+    # the least far behind of the instances that answered but are too old to use
+    stale: tuple[float, str] | None = None
 
     for url in OVERPASS_API_INTERPRETERS:
         for attempt in range(1, OVERPASS_API_ATTEMPTS + 1):
@@ -47,15 +117,41 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                 last_error = e
                 print(f'[OVERPASS] ⚠️ {url} unreachable (attempt {attempt}): {e!r}')
             else:
-                if r.status_code not in _RETRY_STATUS_CODES:
-                    r.raise_for_status()
-                    return r
+                if r.status_code in _RETRY_STATUS_CODES:
+                    last_error = httpx.HTTPStatusError(
+                        f'{url} returned {r.status_code}', request=r.request, response=r
+                    )
+                    print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
 
-                last_error = httpx.HTTPStatusError(f'{url} returned {r.status_code}', request=r.request, response=r)
-                print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
+                elif (reported := reply_error(r)) is not None:
+                    last_error = OverpassReplyError(f'{url} reported: {reported}')
+                    print(f'[OVERPASS] ⚠️ {url} answered 200 with an error (attempt {attempt}): {reported}')
+
+                else:
+                    r.raise_for_status()
+
+                    age = data_age(r)
+                    if not OVERPASS_MAX_DATA_AGE or age is None or age <= OVERPASS_MAX_DATA_AGE:
+                        return r
+
+                    # An instance this far behind answers everything successfully and
+                    # wrongly, so it is passed over for one that has caught up. Waiting
+                    # would not help, so the remaining attempts on it are skipped.
+                    print(f'[OVERPASS] ⚠️ {url} is {_describe_age(age)} behind, trying another instance')
+                    if stale is None or age < stale[0]:
+                        stale = (age, url)
+                    break
 
             if attempt < OVERPASS_API_ATTEMPTS:
                 await asyncio.sleep(2 ** (attempt - 1))
+
+    if stale is not None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f'Every Overpass instance is out of date - the closest, {stale[1]}, is '
+            f'{_describe_age(stale[0])} behind. Editing from data that old would recreate stops '
+            'that already exist, so please try again later.',
+        )
 
     raise HTTPException(
         status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -642,6 +738,17 @@ class Overpass:
         download_triggers = get_download_triggers(bbc, union_grid_cells, ways)
 
         return global_bb, download_hist, download_triggers, ways, id_map, bus_stop_collections
+
+    @cached(TTLCache(maxsize=128, ttl=60))
+    async def query_stop_areas(self, node_ids: frozenset[int], way_ids: frozenset[int]) -> list[StopArea]:
+        """The stop_area relations the given stops are already in, so none is duplicated."""
+        timeout = 30
+        query = build_stop_areas_query(node_ids, way_ids, timeout)
+        if not query:
+            return []
+
+        r = await overpass_post(query, timeout)
+        return parse_stop_areas(r.json().get('elements', ()))
 
     @cached(TTLCache(maxsize=128, ttl=60))
     async def query_parents(self, way_ids_set: frozenset[int]) -> QueryParentsResult:

@@ -141,6 +141,22 @@
       "description": "Used to determine whether the way is routable for buses/trolleybuses."
     },
     {
+      "key": "highway",
+      "value": "bus_stop",
+      "object_types": ["node"],
+      "description": "Set on bus stops added by the user."
+    },
+    {
+      "key": "shelter",
+      "object_types": ["node"],
+      "description": "Optionally set on bus stops added by the user."
+    },
+    {
+      "key": "bench",
+      "object_types": ["node"],
+      "description": "Optionally set on bus stops added by the user."
+    },
+    {
       "key": "service",
       "object_types": ["way"],
       "description": "Used to determine whether the way is routable for buses/trolleybuses."

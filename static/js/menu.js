@@ -1,4 +1,14 @@
-import { busStopData, processBusStopData } from "./busStopsLayer.js"
+import { busStopData, processBusStopData, undecidedDisagreementStops } from "./busStopsLayer.js"
+import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
+import {
+    completedStopAreaCount,
+    newStopAreaCount,
+    stopAreaCount,
+    stopAreasKnown,
+    stopAreasPayload,
+} from "./stopAreas.js"
+import { stopPositionCount, stopPositionsPayload } from "./stopPositions.js"
+import { tagAdditionsPayload, tagChangeCount } from "./naptanTagAdditions.js"
 import {
     downloadHistoryData,
     processRelationDownloadTriggers,
@@ -16,6 +26,8 @@ import {
     createElementFromHTML,
     deflateCompress,
     getBusCollectionName,
+    osmIsLive,
+    osmUrl,
 } from "./utils.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
 import {
@@ -78,7 +90,7 @@ const showRelationIdentity = () => {
 
     for (const element of relationUrlElements) {
         element.href = known
-            ? `https://www.openstreetmap.org/relation/${relationId}`
+            ? `${osmUrl}/relation/${relationId}`
             : "#"
         element.classList.toggle("d-none", !known)
     }
@@ -210,7 +222,10 @@ createRelationForm.addEventListener("submit", (e) => {
                 "info",
                 "🆕 New route started",
                 "Click the ways the route follows, then right-click one to set <b>START</b> and another to set <b>END</b>. " +
-                    "Fill in <b>name</b>, <b>ref</b>, <b>from</b> and <b>to</b> in the tag table before uploading.",
+                    "Fill in <b>name</b>, <b>ref</b>, <b>from</b> and <b>to</b> in the tag table before uploading." +
+                    (newRouteType === "bus"
+                        ? "<br><br>A stop missing from the map? Right-click where it is to add it."
+                        : ""),
             )
         })
         .catch((error) => {
@@ -247,6 +262,9 @@ export const processRouteWarnings = (data) => {
     let highestSeverityLevel = 0
 
     for (const warning of data.warnings) {
+        // the relation is untouched, but the changeset still has stop tags to add
+        if (warning.severity === 10 && (tagChangeCount() > 0 || stopAreaCount() > 0)) continue
+
         const severityLevel = warning.severity
         const severityText = {
             0: "LOW",
@@ -281,7 +299,9 @@ export const processRouteWarnings = (data) => {
             editWarnings.appendChild(child)
         } else if (
             warning.message === "Some stops are far away" ||
-            warning.message === "Some stops are not reached"
+            warning.message === "Some stops are not reached" ||
+            warning.message === "Some stops are inactive in NaPTAN" ||
+            warning.message === "Some stops serve the other direction"
         ) {
             const child = createElementFromHTML(`
             <div class="warning warning-${severityText}">
@@ -316,7 +336,53 @@ export const processRouteWarnings = (data) => {
         }
     }
 
-    editSubmitBtn.classList.toggle("mt-2", data.warnings.length > 0)
+    // A stop NaPTAN disagrees with is a decision for the mapper, not something to guess
+    // at, so it holds the upload until every one has been answered one way or the other.
+    const undecided = undecidedDisagreementStops()
+
+    if (undecided.length) {
+        highestSeverityLevel = Math.max(highestSeverityLevel, 1)
+
+        const undecidedMessage =
+            undecided.length === 1
+                ? "A stop disagrees with NaPTAN"
+                : `${undecided.length} stops disagree with NaPTAN`
+
+        const child = createElementFromHTML(`
+        <div class="warning warning-HIGH">
+            <div class="warning-message">${undecidedMessage}</div>
+            <div class="btn-group-vertical ms-2">
+                <button class="btn primary btn-primary">Show me</button>
+            </div>
+        </div>`)
+
+        child.querySelector("button.primary").onclick = () => map.setView(undecided[0].latLng, 19)
+
+        editWarnings.appendChild(child)
+    }
+
+    // Stop areas are looked up by a second Overpass query, and one that fails leaves the
+    // application unable to tell a place that has no stop area from one it simply could
+    // not ask about. It stops offering them rather than offer to create a second
+    // relation beside the one the stops are already in, and says so here.
+    const areasUnknown = busStopData !== null && !stopAreasKnown()
+
+    if (areasUnknown) {
+        editWarnings.appendChild(
+            createElementFromHTML(`
+        <div class="warning warning-LOW">
+            <div class="warning-message">
+                Overpass could not say which stop areas these stops are already in, so none are
+                offered. Reload the relation to try again.
+            </div>
+        </div>`),
+        )
+    }
+
+    editSubmitBtn.classList.toggle(
+        "mt-2",
+        data.warnings.length > 0 || undecided.length > 0 || areasUnknown,
+    )
 
     if (highestSeverityLevel === 0) editSubmitBtn.classList.remove("d-none")
 }
@@ -389,6 +455,26 @@ editReloadBtn.onclick = async () => {
 // mirrors make_comment() in main.py purely to show what will be used when the field is
 // left blank; the server generates the comment it actually uploads
 const makeDefaultComment = () => {
+    const plural = (count) => (count !== 1 ? "s" : "")
+    const stopCount = newStopCount()
+    const positionCount = stopPositionCount()
+    const taggedCount = tagChangeCount()
+    const added = stopCount ? `; added ${stopCount} bus stop${plural(stopCount)}` : ""
+    const positions = positionCount
+        ? `; added ${positionCount} stop position${plural(positionCount)}`
+        : ""
+    const newAreas = newStopAreaCount()
+    const doneAreas = completedStopAreaCount()
+    const areas =
+        (newAreas ? `; added ${newAreas} stop area${plural(newAreas)}` : "") +
+        (doneAreas ? `; completed ${doneAreas} stop area${plural(doneAreas)}` : "")
+    const tagged = taggedCount
+        ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
+        : ""
+    return makeRouteComment() + added + positions + areas + tagged
+}
+
+const makeRouteComment = () => {
     const name = (relationTags.name ?? "").trim()
     let ref = (relationTags.ref ?? "").trim()
 
@@ -425,15 +511,21 @@ export const processRouteStops = (data) => {
     for (const collection of data.busStops) {
         const isPlatform = collection.platform != null
         const isStop = collection.stop != null
+        // not in OSM until upload, so there is nothing to link to yet
+        const isNew = isNewStop(collection.platform)
 
         routeSummary.appendChild(
             createElementFromHTML(`
         <div class="route-summary-item">
             <img class="stop-icon" src="/static/img/bus_stop.webp" alt="Bus stop icon" height="28">
-            <div class="stop-name">${styleStopName(getBusCollectionName(collection))}</div>
+            <div class="stop-name">${styleStopName(getBusCollectionName(collection))}${
+                isNew ? ' <span class="badge text-bg-warning stop-new-badge">new</span>' : ""
+            }</div>
             <div class="stop-info">
                 ${
-                    isPlatform
+                    isNew
+                        ? `<span class="stop-info-platform" title="This stop is created when you upload">P</span>`
+                        : isPlatform
                         ? `<a class="stop-info-platform link-underline link-underline-opacity-0 link-underline-opacity-100-hover"
                     title="This stop has a platform"
                     href="https://www.openstreetmap.org/${collection.platform.type}/${collection.platform.id}"
@@ -496,6 +588,10 @@ submitUploadBtn.onclick = async () => {
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
             comment: submitComment.value,
+            newStops: newStopsPayload(),
+            newStopPositions: stopPositionsPayload(),
+            stopAreas: stopAreasPayload(),
+            naptanTagAdditions: tagAdditionsPayload(),
         }),
     })
         .then(async (resp) => {
@@ -525,13 +621,18 @@ submitUploadBtn.onclick = async () => {
             // OSM assigns the real id on upload; without this the new relation would
             // be created and then be unreachable from here
             const created = data.relation_id
-                ? `<br><br>Created relation <a href="https://www.openstreetmap.org/relation/${data.relation_id}" target="_blank">#${data.relation_id}</a>.`
+                ? `<br><br>Created relation <a href="${osmUrl}/relation/${data.relation_id}" target="_blank">#${data.relation_id}</a>.`
+                : ""
+
+            // the revert tool only knows about live OSM
+            const revert = osmIsLive
+                ? `<br><br><i>Something broke? Use <a href="https://revert.monicz.dev/?changesets=${data.changeset_id}" target="_blank">this tool</a> to revert it.</i>`
                 : ""
 
             showMessage(
                 "success",
                 "✅ Upload successful",
-                `The changeset <a href="https://www.openstreetmap.org/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}<br><br><i>Something broke? Use <a href="https://revert.monicz.dev/?changesets=${data.changeset_id}" target="_blank">this tool</a> to revert it.</i>`,
+                `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}${revert}`,
             )
             unload()
         })
@@ -558,6 +659,10 @@ submitDownloadBtn.onclick = async () => {
             route: routeData,
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
+            newStops: newStopsPayload(),
+            newStopPositions: stopPositionsPayload(),
+            stopAreas: stopAreasPayload(),
+            naptanTagAdditions: tagAdditionsPayload(),
         }),
     })
         .then(async (resp) => {

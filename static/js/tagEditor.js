@@ -1,3 +1,4 @@
+const menu = document.getElementById("menu")
 const editTags = document.getElementById("edit-tags")
 const editTagsToggle = document.getElementById("edit-tags-toggle")
 const editTagsAdd = document.getElementById("edit-tags-add")
@@ -181,6 +182,8 @@ const render = () => {
     editTagsToggle.textContent = showAll ? "Show fewer tags" : `Show all tags (${hiddenCount})`
     // nothing to reveal, but stay available while expanded so the view can be collapsed again
     editTagsToggle.classList.toggle("d-none", !showAll && hiddenCount === 0)
+    // the full list needs room for an editable key and value on every row
+    menu.classList.toggle("menu-wide", showAll)
 }
 
 editTagsToggle.onclick = () => {
@@ -213,4 +216,6 @@ export const unloadRelationTags = () => {
     showAll = false
 
     editTags.replaceChildren()
+    // render() is not reached from here, so the widened menu is put back by hand
+    menu.classList.remove("menu-wide")
 }

@@ -42,6 +42,9 @@
       <img src="/static/img/brands/openstreetmap.webp" height="22" alt="OpenStreetMap logo">
       Login with <b>OpenStreetMap</b>
     </button>
+    {% if not osm_is_live %}
+    <p class="small text-body-secondary mt-2">Signs in to <b>{{ osm_url | replace('https://', '') }}</b>, not live OpenStreetMap.</p>
+    {% endif %}
   </form>
 
 </div>

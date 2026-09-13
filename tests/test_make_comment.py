@@ -52,3 +52,104 @@ def test_comment_over_the_length_limit_is_rejected():
     """Rejected up front rather than silently truncated with an ellipsis at upload time."""
     with pytest.raises(ValidationError):
         make(comment='x' * (TAG_MAX_LENGTH + 1))
+
+
+def _position(id=-2, name='High Street'):
+    return {'id': id, 'lat': 51.5, 'lon': -0.12, 'wayId': 201, 'afterNode': 10, 'beforeNode': 11, 'name': name}
+
+
+def test_generated_comment_counts_stop_positions():
+    model = make({'name': 'Bus 12'}, newStopPositions=[_position()])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 stop position'
+
+
+def test_generated_comment_counts_several_stop_positions():
+    model = make({'name': 'Bus 12'}, newStopPositions=[_position(), _position(id=-3)])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 2 stop positions'
+
+
+def test_generated_comment_counts_stops_and_their_stop_positions():
+    model = make(
+        {'name': 'Bus 12'},
+        newStops=[{'id': -1, 'lat': 51.5, 'lon': -0.12, 'tags': {'name': 'High Street'}}],
+        newStopPositions=[_position()],
+    )
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 bus stop; added 1 stop position'
+
+
+def _area(id=None, name='The Station'):
+    return {'id': id, 'name': name, 'members': [{'type': 'node', 'id': 1, 'role': 'platform'},
+                                                {'type': 'node', 'id': 2, 'role': 'stop'}]}
+
+
+def test_generated_comment_counts_new_stop_areas():
+    model = make({'name': 'Bus 12'}, stopAreas=[_area()])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 stop area'
+
+
+def test_generated_comment_counts_completed_stop_areas():
+    model = make({'name': 'Bus 12'}, stopAreas=[_area(id=99)])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; completed 1 stop area'
+
+
+def test_generated_comment_tells_new_and_completed_apart():
+    model = make({'name': 'Bus 12'}, stopAreas=[_area(), _area(id=99), _area(id=98)])
+    assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 stop area; completed 2 stop areas'
+
+
+def test_a_stop_edited_by_hand_is_not_called_a_naptan_addition():
+    model = make(
+        naptanTagAdditions=[
+            {'type': 'node', 'id': 1, 'tags': {'name': 'High Street'}, 'byHand': ['name']},
+            {'type': 'node', 'id': 2, 'tags': {'naptan:Bearing': 'NE'}},
+        ]
+    )
+
+    comment = model.make_comment()
+    assert 'edited 1 bus stop' in comment
+    assert 'added NaPTAN tags to 1 bus stop' in comment
+
+
+def test_one_stop_with_both_is_counted_in_both():
+    model = make(
+        naptanTagAdditions=[
+            {'type': 'node', 'id': 1, 'tags': {'name': 'High Street', 'naptan:Bearing': 'NE'}, 'byHand': ['name']}
+        ]
+    )
+
+    comment = model.make_comment()
+    assert 'edited 1 bus stop' in comment
+    assert 'added NaPTAN tags to 1 bus stop' in comment
+
+
+def test_a_renamed_stop_area_says_so():
+    model = make(
+        stopAreas=[
+            {'id': 99, 'name': 'Market Square', 'expectedName': 'The Station', 'members': [{'type': 'node', 'id': 1, 'role': 'platform'}]},
+            {'id': 98, 'name': '', 'members': [{'type': 'node', 'id': 1, 'role': 'platform'}]},
+        ]
+    )
+
+    comment = model.make_comment()
+    assert 'renamed 1 stop area' in comment
+    assert 'completed 1 stop area' in comment
+
+
+def test_naptan_is_not_credited_for_what_the_mapper_typed():
+    model = make(
+        {'name': 'Bus 12'},
+        naptanTagAdditions=[{'type': 'node', 'id': 1, 'tags': {'name': 'High Street'}, 'byHand': ['name']}],
+    )
+
+    assert 'source' not in model.make_changeset_tags()
+
+
+def test_naptan_is_still_credited_when_it_supplied_something():
+    model = make(
+        {'name': 'Bus 12'},
+        naptanTagAdditions=[
+            {'type': 'node', 'id': 1, 'tags': {'name': 'High Street', 'naptan:Bearing': 'NE'}, 'byHand': ['name']}
+        ],
+    )
+
+    assert model.make_changeset_tags()['source'] == 'NaPTAN'

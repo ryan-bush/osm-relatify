@@ -81,6 +81,33 @@ Everything below has a working default and can be set in `.env`:
 | `OVERPASS_API_ATTEMPTS` | Attempts per endpoint before moving to the next one. |
 | `WEBSITE` | The URL recorded in changesets and the user agent. |
 | `SENTRY_DSN` | Enables error reporting, off unless set. |
+| `OSM_URL` | The OSM instance to sign in to and upload to. Defaults to live OSM. |
+| `OSM_API_URL` | Its API host, if different. Only live OSM needs this, and it is set for you. |
+| `STOP_AREA_SEARCH_AREA` | How far apart the stops of one place can be, for stop areas. Metres; defaults to 150. |
+| `NAPTAN_ENABLED` | Suggests and checks stops using NaPTAN. On by default; set to `0` to turn off. |
+| `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
+
+### Running the tests
+
+```sh
+.venv/bin/python -m pytest
+```
+
+The browser-side geometry has its own tests, which need only node:
+
+```sh
+node --test "tests/js/*.mjs"
+```
+
+### Testing uploads against the OSM dev server
+
+Set `OSM_URL=https://master.apis.dev.openstreetmap.org` and register a separate OAuth
+application on that server — it has its own accounts, so sign up there first. A badge
+next to your name shows which server you are uploading to.
+
+Map data still comes from Overpass, which only indexes live OSM. Creating a new
+relation works, but editing an existing relation, or anything that splits a way, fails:
+the ids Overpass returns do not exist on the dev server.
 
 ## What this fork adds
 
@@ -95,6 +122,13 @@ There are several additions from the Planned section, plus others that help with
 - Stop Locations & Areas
 
 For detailed guides on new features, see the wiki.
+
+## User documentation
+
+<https://wiki.openstreetmap.org/wiki/Relatify>
+
+The wiki documents the original, and everything there still applies. The additions
+this fork makes, listed above, are documented there too.
 
 ## Features
 
@@ -116,8 +150,12 @@ For detailed guides on new features, see the wiki.
 - ✅ Custom changeset comment
 - ✅ Creating new relations
 - ✅ U-turns without `highway=turning_circle`
-- ✅ Creating new bus stops
-- ✅ NaPTAN data
+- ✅ Creating new bus stops (platforms)
+- ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
+- ✅ Stop positions on the road, for new and existing stops
+- ✅ Reviewing tags NaPTAN and OSM disagree on
+- ✅ `stop_area` relations for grouped stops
+
 
 ### Planned
 
