@@ -14,7 +14,16 @@ import {
     processRelationDownloadTriggers,
 } from "./downloadTriggers.js"
 import { map } from "./map.js"
-import { processRouteMasters } from "./routeMastersView.js"
+import {
+    detachingRouteMasters,
+    pendingRouteMaster,
+    routeMasterChangeCount,
+    routeMasterPayload,
+} from "./routeMasters.js"
+import {
+    processRouteMasters,
+    setRouteMasterChangeHandler,
+} from "./routeMastersView.js"
 import { showMessage } from "./messageBox.js"
 import {
     processRelationTags,
@@ -76,6 +85,13 @@ export let newRouteType = null
 // so the dependency is registered from here instead. The call is wrapped rather than
 // passed by reference so the binding is only read once the modules have finished loading.
 setRecalcHandler(() => requestCalcBusRoute())
+
+// A route master queued or undone is a change to the changeset without being a change to
+// the route, so the warnings are rebuilt from the calculation already in hand rather than
+// asking for another one.
+setRouteMasterChangeHandler(() => {
+    if (routeData !== null) processRouteWarnings(routeData)
+})
 
 let activeView = "load"
 
@@ -264,8 +280,10 @@ export const processRouteWarnings = (data) => {
     let highestSeverityLevel = 0
 
     for (const warning of data.warnings) {
-        // the relation is untouched, but the changeset still has stop tags to add
-        if (warning.severity === 10 && (tagChangeCount() > 0 || stopAreaCount() > 0)) continue
+        // the relation is untouched, but the changeset still has stop tags to add, or a
+        // route master to put it in
+        if (warning.severity === 10 && (tagChangeCount() > 0 || stopAreaCount() > 0 || routeMasterChangeCount() > 0))
+            continue
 
         const severityLevel = warning.severity
         const severityText = {
@@ -474,7 +492,17 @@ const makeDefaultComment = () => {
     const tagged = taggedCount
         ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
         : ""
-    return makeRouteComment() + added + positions + areas + tagged
+    const pendingMaster = pendingRouteMaster()
+    const master = !pendingMaster
+        ? ""
+        : pendingMaster.id === null
+          ? "; created route master"
+          : `; added to route master #${pendingMaster.id}`
+    const detachedCount = detachingRouteMasters().length
+    const detached = detachedCount
+        ? `; removed from ${detachedCount} route master${plural(detachedCount)}`
+        : ""
+    return makeRouteComment() + added + positions + areas + tagged + master + detached
 }
 
 const makeRouteComment = () => {
@@ -595,6 +623,7 @@ submitUploadBtn.onclick = async () => {
             newStopPositions: stopPositionsPayload(),
             stopAreas: stopAreasPayload(),
             naptanTagAdditions: tagAdditionsPayload(),
+            ...routeMasterPayload(),
         }),
     })
         .then(async (resp) => {
@@ -666,6 +695,7 @@ submitDownloadBtn.onclick = async () => {
             newStopPositions: stopPositionsPayload(),
             stopAreas: stopAreasPayload(),
             naptanTagAdditions: tagAdditionsPayload(),
+            ...routeMasterPayload(),
         }),
     })
         .then(async (resp) => {

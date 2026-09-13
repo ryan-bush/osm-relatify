@@ -36,12 +36,21 @@ def validate_tag(key: str, value: str) -> None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f'Tag {key!r} contains control characters')
 
 
-def apply_tag_changes(relation_data: dict, original: dict[str, str], edited: dict[str, str]) -> bool:
+def apply_tag_changes(
+    relation_data: dict,
+    original: dict[str, str],
+    edited: dict[str, str],
+    protected_keys: frozenset[str] = PROTECTED_TAG_KEYS,
+) -> bool:
     """
     Merge the user's tag edits into a freshly fetched relation.
 
     Only the keys the user actually changed are touched; every other tag keeps the value
     currently on the server, so concurrent edits to unrelated tags are not clobbered.
+
+    `protected_keys` are the ones this kind of relation is loaded and interpreted by, and
+    so cannot be edited here; a route master is held together by different tags than a
+    route is.
 
     Returns True if any tag was modified.
     """
@@ -53,7 +62,7 @@ def apply_tag_changes(relation_data: dict, original: dict[str, str], edited: dic
     if not changed_keys and not removed_keys:
         return False
 
-    protected = sorted((changed_keys | removed_keys) & PROTECTED_TAG_KEYS)
+    protected = sorted((changed_keys | removed_keys) & protected_keys)
     if protected:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f'These tags cannot be edited here: {", ".join(protected)}')
 

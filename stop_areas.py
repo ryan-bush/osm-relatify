@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 
 from models.stop_area import StopArea
+from placeholder_ids import RelationPlaceholders
 from tag_editing import validate_tag
 from utils import ensure_list
 
@@ -83,10 +84,6 @@ class StopAreaChange(BaseModel):
     members: list[StopAreaMember] = Field(min_length=1)
 
 
-# the route relation being created takes -1, so stop areas start below it
-FIRST_STOP_AREA_PLACEHOLDER_ID = -2
-
-
 def _check_members(changes: Sequence[StopAreaChange], created_node_ids: Container[int]) -> None:
     for change in changes:
         seen: set[str] = set()
@@ -147,12 +144,12 @@ async def check_new_stop_areas(changes: Sequence[StopAreaChange], osm) -> None:
 def build_new_stop_area_relations(
     changes: Sequence[StopAreaChange],
     created_node_ids: Container[int],
+    placeholders: RelationPlaceholders,
 ) -> list[dict]:
     """The stop_area relations to create, each with its own placeholder id."""
     _check_members(changes, created_node_ids)
 
     result = []
-    next_id = FIRST_STOP_AREA_PLACEHOLDER_ID
 
     for change in changes:
         if change.id is not None:
@@ -166,14 +163,13 @@ def build_new_stop_area_relations(
 
         result.append(
             {
-                '@id': next_id,
+                '@id': placeholders.take(),
                 'tag': [{'@k': k, '@v': v} for k, v in tags.items()],
                 'member': [
                     {'@type': m.type, '@ref': m.id, '@role': m.role} for m in change.members
                 ],
             }
         )
-        next_id -= 1
 
     return result
 

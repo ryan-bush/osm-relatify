@@ -120,6 +120,7 @@ There are several additions from the Planned section, plus others that help with
 - Improved overpass resilience
 - NaPTAN support in UK
 - Stop Locations & Areas
+- Route masters
 
 For detailed guides on new features, see the wiki.
 
@@ -155,7 +156,7 @@ this fork makes, listed above, are documented there too.
 - ✅ Stop positions on the road, for new and existing stops
 - ✅ Reviewing tags NaPTAN and OSM disagree on
 - ✅ `stop_area` relations for grouped stops
-- ✅ Showing the `route_master` a route belongs to
+- ✅ `route_master` relations: viewing, linking and editing
 
 
 ### Planned

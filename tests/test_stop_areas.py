@@ -5,6 +5,7 @@ import xmltodict
 from fastapi import HTTPException
 
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection
+from placeholder_ids import RelationPlaceholders
 from models.final_route import FinalRoute
 from relation_builder import build_osm_change
 from stop_areas import (
@@ -104,7 +105,7 @@ class TestParse:
 
 class TestBuildNewStopAreaRelations:
     def test_creates_the_relation_with_its_tags_and_members(self):
-        [relation] = build_new_stop_area_relations([_change()], created_node_ids=set())
+        [relation] = build_new_stop_area_relations([_change()], set(), RelationPlaceholders())
 
         assert relation['@id'] == -2, 'below the route relation, which takes -1'
         assert {t['@k']: t['@v'] for t in relation['tag']} == {
@@ -118,35 +119,35 @@ class TestBuildNewStopAreaRelations:
         ]
 
     def test_each_new_area_gets_its_own_placeholder(self):
-        relations = build_new_stop_area_relations([_change(), _change(name='Market Square')], set())
+        relations = build_new_stop_area_relations([_change(), _change(name='Market Square')], set(), RelationPlaceholders())
         assert [r['@id'] for r in relations] == [-2, -3]
 
     def test_an_existing_area_is_not_created_again(self):
-        assert build_new_stop_area_relations([_change(id=99)], set()) == []
+        assert build_new_stop_area_relations([_change(id=99)], set(), RelationPlaceholders()) == []
 
     def test_a_new_area_needs_a_name(self):
         with pytest.raises(HTTPException) as e:
-            build_new_stop_area_relations([_change(name='  ')], set())
+            build_new_stop_area_relations([_change(name='  ')], set(), RelationPlaceholders())
 
         assert e.value.status_code == 400
         assert 'needs a name' in e.value.detail
 
     def test_it_may_group_a_stop_this_changeset_creates(self):
         change = _change(members=[_member(id=-3), _member(id=-4, role='stop')])
-        [relation] = build_new_stop_area_relations([change], created_node_ids={-3, -4})
+        [relation] = build_new_stop_area_relations([change], {-3, -4}, RelationPlaceholders())
 
         assert [m['@ref'] for m in relation['member']] == [-3, -4]
 
     def test_a_placeholder_nothing_creates_is_rejected(self):
         with pytest.raises(HTTPException) as e:
-            build_new_stop_area_relations([_change(members=[_member(id=-9)])], created_node_ids=set())
+            build_new_stop_area_relations([_change(members=[_member(id=-9)])], set(), RelationPlaceholders())
 
         assert e.value.status_code == 400
         assert 'not being created' in e.value.detail
 
     def test_the_same_stop_twice_is_rejected(self):
         with pytest.raises(HTTPException) as e:
-            build_new_stop_area_relations([_change(members=[_member(id=1), _member(id=1)])], set())
+            build_new_stop_area_relations([_change(members=[_member(id=1), _member(id=1)])], set(), RelationPlaceholders())
 
         assert e.value.status_code == 400
         assert 'twice' in e.value.detail

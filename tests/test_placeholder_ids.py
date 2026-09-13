@@ -1,0 +1,135 @@
+import asyncio
+
+import pytest
+import xmltodict
+
+from bus_stop_creation import NewBusStop
+from models.element_id import ElementId
+from models.final_route import FinalRoute
+from models.relation_member import RelationMember
+from placeholder_ids import RelationPlaceholders
+from relation_builder import build_osm_change
+from route_masters import RouteMasterChange
+from stop_areas import StopAreaChange, StopAreaMember
+
+NEW_TAGS = {
+    'type': 'route',
+    'route': 'bus',
+    'public_transport:version': '2',
+    'ref': 'C6',
+    'name': 'Bus C6: College => Town',
+}
+
+
+def test_ids_are_handed_out_below_the_route_and_never_twice():
+    placeholders = RelationPlaceholders()
+
+    assert RelationPlaceholders.ROUTE == -1
+    taken = [placeholders.take() for _ in range(3)]
+
+    assert taken == [-2, -3, -4]
+    assert RelationPlaceholders.ROUTE not in taken
+
+
+def test_each_allocator_starts_afresh():
+    assert RelationPlaceholders().take() == RelationPlaceholders().take()
+
+
+@pytest.fixture
+def route():
+    return FinalRoute(
+        ways=(),
+        latLngs=(),
+        busStops=(),
+        tags=NEW_TAGS,
+        extraWaysToUpdate=(),
+        members=(RelationMember(id=ElementId('201'), type='way', role=''),),
+        warnings=(),
+    )
+
+
+class FakeOsm:
+    """Nothing here is in OSM yet, so nothing is ever fetched back."""
+
+    async def get_parent_relations(self, element_type, element_id):  # noqa: ARG002
+        return []
+
+
+def _build_everything_at_once(route):
+    """A changeset that creates a route, the stops it serves, their stop areas and its master."""
+    return asyncio.run(
+        build_osm_change(
+            None,
+            route,
+            include_changeset_id=False,
+            overpass=None,
+            osm=FakeOsm(),
+            tags_original=None,
+            tags_edited=NEW_TAGS,
+            new_stops=[
+                NewBusStop(id=-1, lat=51.0, lon=0.0, tags={'name': 'College'}),
+                NewBusStop(id=-2, lat=51.1, lon=0.1, tags={'name': 'Town'}),
+            ],
+            stop_areas=[
+                StopAreaChange(name='College', members=[StopAreaMember(type='node', id=-1, role='platform')]),
+                StopAreaChange(name='Town', members=[StopAreaMember(type='node', id=-2, role='platform')]),
+            ],
+            route_master=RouteMasterChange(tags={'ref': 'C6', 'name': 'Bus C6'}),
+        )
+    )
+
+
+def _created(osm_change, element_type):
+    created = osm_change['create'].get(element_type) or []
+    return created if isinstance(created, list) else [created]
+
+
+# A member pointing at a placeholder nothing creates is refused by the API outright, and a
+# placeholder handed out twice is not refused at all: the change simply lands wrong.
+def test_everything_created_at_once_gets_an_id_of_its_own(route):
+    osm_change = xmltodict.parse(_build_everything_at_once(route))['osmChange']
+
+    relation_ids = [int(r['@id']) for r in _created(osm_change, 'relation')]
+
+    assert len(relation_ids) == 4, 'the route, two stop areas and the route master'
+    assert len(set(relation_ids)) == len(relation_ids)
+    assert RelationPlaceholders.ROUTE in relation_ids
+
+
+def test_every_reference_to_a_created_relation_resolves(route):
+    osm_change = xmltodict.parse(_build_everything_at_once(route))['osmChange']
+
+    created_relations = {int(r['@id']) for r in _created(osm_change, 'relation')}
+    created_nodes = {int(n['@id']) for n in _created(osm_change, 'node')}
+
+    for relation in _created(osm_change, 'relation'):
+        members = relation.get('member') or []
+        for member in members if isinstance(members, list) else [members]:
+            ref = int(member['@ref'])
+            if ref >= 0:
+                continue
+
+            created = created_relations if member['@type'] == 'relation' else created_nodes
+            assert ref in created, f'relation {relation["@id"]} refers to {member["@type"]} {ref}, which nothing creates'
+
+
+def test_the_master_holds_the_route_being_created(route):
+    osm_change = xmltodict.parse(_build_everything_at_once(route))['osmChange']
+
+    master = next(
+        r for r in _created(osm_change, 'relation')
+        if any(tag['@k'] == 'type' and tag['@v'] == 'route_master' for tag in r['tag'])
+    )
+
+    assert [(m['@type'], int(m['@ref'])) for m in [master['member']]] == [('relation', RelationPlaceholders.ROUTE)]
+
+
+def test_the_stop_areas_hold_the_stops_being_created(route):
+    osm_change = xmltodict.parse(_build_everything_at_once(route))['osmChange']
+
+    areas = [
+        r for r in _created(osm_change, 'relation')
+        if any(tag['@k'] == 'public_transport' and tag['@v'] == 'stop_area' for tag in r['tag'])
+    ]
+
+    assert [int(area['member']['@ref']) for area in areas] == [-1, -2]
