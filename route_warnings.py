@@ -1,7 +1,7 @@
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from itertools import pairwise, zip_longest
-from math import atan2, cos, degrees, hypot, radians
+from math import atan2, cos, degrees, hypot, radians, sqrt
 
 from sentry_sdk import trace
 
@@ -20,6 +20,8 @@ _OPPOSITE_HEADING_ANGLE = 120  # degrees
 _PASSING_TOLERANCE = 20  # meters
 # a stop further than this from the route is reported as far away instead
 _PASSING_MAX_DISTANCE = 120  # meters
+# a platform mapped nearer than this to the carriageway could be standing at either kerb
+_KERB_OFFSET = 2  # meters
 
 
 @trace
@@ -99,14 +101,26 @@ def _naptan_bearing(collection: FetchRelationBusStopCollection) -> int | None:
     return None
 
 
-def _headings_passing(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[float, float]]) -> list[float]:
-    """The route's headings where it passes a point, in degrees clockwise from north."""
+@dataclass(frozen=True, slots=True)
+class _RoutePass:
+    """One place the route comes close to a stop."""
+
+    distance: float
+    # degrees clockwise from north
+    heading: float
+    # signed meters from the route, positive when the stop stands to the left of travel,
+    # which is the kerb a bus pulls in at wherever NaPTAN applies
+    offset: float
+
+
+def _route_passes(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[float, float]]) -> list[_RoutePass]:
+    """Where the route passes a point, nearest first."""
     lat0, lon0 = lat_lng
     # flat enough over the few hundred metres that matter
     x_scale = 111_320 * cos(radians(lat0))
     y_scale = 110_540
 
-    passes: list[tuple[float, float]] = []
+    passes: list[_RoutePass] = []
 
     for (lat_a, lon_a), (lat_b, lon_b) in pairwise(route_lat_lngs):
         ax, ay = (lon_a - lon0) * x_scale, (lat_a - lat0) * y_scale
@@ -118,16 +132,25 @@ def _headings_passing(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tup
 
         # the closest point of the segment to the stop, which sits at the origin
         t = max(0.0, min(1.0, -(ax * dx + ay * dy) / length_sq))
-        passes.append((hypot(ax + t * dx, ay + t * dy), degrees(atan2(dx, dy)) % 360))
+        passes.append(
+            _RoutePass(
+                distance=hypot(ax + t * dx, ay + t * dy),
+                heading=degrees(atan2(dx, dy)) % 360,
+                # the travel direction crossed with the way to the stop
+                offset=(dy * ax - dx * ay) / sqrt(length_sq),
+            )
+        )
 
     if not passes:
         return []
 
-    nearest = min(distance for distance, _ in passes)
-    if nearest > _PASSING_MAX_DISTANCE:
+    passes.sort(key=lambda route_pass: route_pass.distance)
+
+    if passes[0].distance > _PASSING_MAX_DISTANCE:
         return []
 
-    return [heading for distance, heading in passes if distance <= nearest + _PASSING_TOLERANCE]
+    limit = passes[0].distance + _PASSING_TOLERANCE
+    return [route_pass for route_pass in passes if route_pass.distance <= limit]
 
 
 def _angle_between(a: float, b: float) -> float:
@@ -137,7 +160,11 @@ def _angle_between(a: float, b: float) -> float:
 
 @trace
 def _check_for_bus_stop_serving_other_direction(route: FinalRoute) -> FinalRouteWarning | None:
-    """Catches the stop across the road being picked, using the bearing NaPTAN gives it."""
+    """Catches the stop across the road being picked.
+
+    A stop is only reported when both the bearing NaPTAN gives it and the kerb it stands
+    at say the route runs the other way.
+    """
     other_direction = []
 
     for collection in route.busStops:
@@ -145,10 +172,21 @@ def _check_for_bus_stop_serving_other_direction(route: FinalRoute) -> FinalRoute
         if bearing is None:
             continue
 
-        headings = _headings_passing(collection.best.latLng, route.latLngs)
+        passes = _route_passes(collection.best.latLng, route.latLngs)
+        if not passes:
+            continue
 
-        if headings and all(_angle_between(bearing, heading) > _OPPOSITE_HEADING_ANGLE for heading in headings):
-            other_direction.append(collection.best.id)
+        if not all(_angle_between(bearing, route_pass.heading) > _OPPOSITE_HEADING_ANGLE for route_pass in passes):
+            continue
+
+        # The bearing of one stop of a pair gets copied onto the other often enough that
+        # it cannot convict on its own. A platform standing at the near kerb is the
+        # better evidence, so let it clear the stop; one out on the carriageway, which
+        # names no side, leaves the bearing to decide as before.
+        if passes[0].offset > _KERB_OFFSET:
+            continue
+
+        other_direction.append(collection.best.id)
 
     if other_direction:
         return FinalRouteWarning(
