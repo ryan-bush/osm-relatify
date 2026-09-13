@@ -71,12 +71,15 @@ class StopAreaMember(BaseModel):
 
 
 class StopAreaChange(BaseModel):
-    """A stop area to create, or members to add to one that is already in OSM."""
+    """A stop area to create, or members and a name for one that is already in OSM."""
 
     # absent for a new one, which this changeset creates
     id: int | None = Field(default=None, gt=0)
-    # only used when creating; an existing relation keeps the name it has
     name: str = ''
+    # An existing relation keeps the name it has unless this says what that name was, in
+    # which case the mapper renamed the stop it is named after and asked it to follow.
+    # One that says something else by now is a conflict rather than an overwrite.
+    expectedName: str | None = Field(default=None)  # noqa: N815
     members: list[StopAreaMember] = Field(min_length=1)
 
 
@@ -175,6 +178,32 @@ def build_new_stop_area_relations(
     return result
 
 
+def _rename_of(change: StopAreaChange, tags: dict[str, str], relation_id: int) -> str | None:
+    """The new name for an existing stop area, or None when it is not being renamed."""
+    if change.expectedName is None:
+        return None
+
+    name = change.name.strip()
+    if not name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f'Stop area {relation_id} cannot be renamed to nothing')
+
+    current = tags.get('name', '').strip()
+    if current == name:
+        return None
+
+    # someone else renamed it while this was being edited, so the mapper never saw what
+    # they would be replacing
+    if current != change.expectedName.strip():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f'Conflict: stop area {relation_id} is now called {current!r}. '
+            'Go back and click the relation reload button.',
+        )
+
+    validate_tag('name', name)
+    return name
+
+
 async def build_stop_area_modifications(
     changes: Sequence[StopAreaChange],
     created_node_ids: Container[int],
@@ -203,12 +232,20 @@ async def build_stop_area_modifications(
                 'Go back and click the relation reload button.',
             )
 
+        change = by_id[relation_id]
+
         members = ensure_list(relation.get('member') or [])
         present = {f'{m["@type"]}/{m["@ref"]}' for m in members}
-        added = [m for m in by_id[relation_id].members if m.key not in present]
+        added = [m for m in change.members if m.key not in present]
 
-        if not added:
+        renamed = _rename_of(change, tags, relation_id)
+
+        if not added and not renamed:
             continue
+
+        if renamed:
+            tags['name'] = renamed
+            relation['tag'] = [{'@k': k, '@v': v} for k, v in tags.items()]
 
         relation.pop('@timestamp', None)
         relation.pop('@user', None)

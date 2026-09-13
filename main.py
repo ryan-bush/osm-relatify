@@ -442,11 +442,19 @@ class PostDownloadOsmChangeModel(BaseModel):
         if created := sum(1 for area in self.stopAreas if area.id is None):
             comment += f'; added {created} stop area{"s" if created != 1 else ""}'
 
-        if completed := sum(1 for area in self.stopAreas if area.id is not None):
+        if renamed := sum(1 for area in self.stopAreas if area.id is not None and area.expectedName is not None):
+            comment += f'; renamed {renamed} stop area{"s" if renamed != 1 else ""}'
+
+        completed = sum(1 for area in self.stopAreas if area.id is not None and area.expectedName is None)
+        if completed:
             comment += f'; completed {completed} stop area{"s" if completed != 1 else ""}'
 
-        if tagged_count := len(self.naptanTagAdditions):
-            comment += f'; added NaPTAN tags to {tagged_count} bus stop{"s" if tagged_count != 1 else ""}'
+        # one stop can carry both, and the two are not the same thing to say
+        if edited := sum(1 for addition in self.naptanTagAdditions if addition.byHand):
+            comment += f'; edited {edited} bus stop{"s" if edited != 1 else ""}'
+
+        if tagged := sum(1 for addition in self.naptanTagAdditions if addition.from_naptan()):
+            comment += f'; added NaPTAN tags to {tagged} bus stop{"s" if tagged != 1 else ""}'
 
         return comment
 
@@ -457,8 +465,11 @@ class PostDownloadOsmChangeModel(BaseModel):
             'host': WEBSITE,
         }
 
-        # credits NaPTAN, as its licence requires, when a stop was made or tagged from it
-        if self.naptanTagAdditions or any('naptan:AtcoCode' in stop.tags for stop in self.newStops):
+        # Credits NaPTAN, as its licence requires, when a stop was made or tagged from it.
+        # What the mapper typed themselves is not from NaPTAN and does not credit it.
+        if any(addition.from_naptan() for addition in self.naptanTagAdditions) or any(
+            'naptan:AtcoCode' in stop.tags for stop in self.newStops
+        ):
             tags['source'] = 'NaPTAN'
 
         return tags

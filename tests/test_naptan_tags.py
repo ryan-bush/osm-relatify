@@ -460,3 +460,88 @@ def test_a_replacement_the_stop_has_since_changed_is_a_conflict():
         _build_elements([addition], osm)
 
     assert e.value.status_code == 409
+
+
+class TestEditedByHand:
+    """
+    What the mapper types into the stop form, as against what NaPTAN offers them.
+
+    The two write different things and arrive by the same route, so the payload says
+    which it is. Everything the mapper writes is still checked against the value the
+    form was showing them.
+    """
+
+    def _addition(self, tags, expected=None):
+        return StopTagAddition(type='node', id=42, tags=tags, expected=expected or {}, byHand=set(tags))
+
+    def _element(self, tags):
+        return {'tag': [{'@k': k, '@v': v} for k, v in tags.items()]}
+
+    def _tags(self, element):
+        return {tag['@k']: tag['@v'] for tag in element['tag']}
+
+    def test_the_form_fields_can_be_written(self):
+        addition = self._addition({'name': 'High Street', 'shelter': 'yes', 'bench': 'no', 'local_ref': 'A'})
+
+        assert addition.writable_keys() == {'name', 'shelter', 'bench', 'local_ref'}
+
+    def test_a_name_can_be_filled_in_by_hand(self):
+        # unlike NaPTAN, which never fills an empty name in
+        assert self._addition({'name': 'High Street'}).writable_keys() == {'name'}
+
+    def test_nothing_outside_the_form_can_be_written(self):
+        assert self._addition({'highway': 'crossing', 'naptan:Bearing': 'NE'}).writable_keys() == set()
+
+    def test_a_tag_outside_the_form_is_refused(self):
+        osm = FakeOpenStreetMap(nodes=[_element({}, '1')])
+
+        with pytest.raises(HTTPException) as e:
+            _build_elements(
+                [StopTagAddition(type='node', id=1, tags={'highway': 'bus_stop'}, byHand={'highway'})], osm
+            )
+
+        assert e.value.status_code == 400
+        assert 'highway' in e.value.detail
+
+    def test_one_stop_can_carry_a_hand_edit_and_a_naptan_fill_at_once(self):
+        addition = StopTagAddition(
+            type='node',
+            id=42,
+            tags={'name': 'High Street', 'naptan:Bearing': 'NE'},
+            byHand={'name'},
+        )
+
+        assert addition.writable_keys() == {'name', 'naptan:Bearing'}
+
+    def test_a_naptan_key_the_mapper_did_not_type_keeps_its_own_rule(self):
+        # marked as NaPTAN's, so an empty name is still not its to fill in
+        addition = StopTagAddition(type='node', id=42, tags={'name': 'High Street'}, byHand=set())
+
+        assert addition.writable_keys() == set()
+
+    def test_an_emptied_field_takes_the_tag_away(self):
+        element = self._element({'name': 'High Street', 'shelter': 'yes'})
+
+        assert apply_stop_tags(element, 'node/42', {'shelter': ''}, {'shelter': 'yes'})
+        assert self._tags(element) == {'name': 'High Street'}
+
+    def test_emptying_a_tag_that_is_already_gone_changes_nothing(self):
+        element = self._element({'name': 'High Street'})
+
+        assert not apply_stop_tags(element, 'node/42', {'shelter': ''}, {})
+        assert self._tags(element) == {'name': 'High Street'}
+
+    def test_taking_away_a_value_that_changed_since_is_a_conflict(self):
+        element = self._element({'shelter': 'no'})
+
+        with pytest.raises(HTTPException) as e:
+            apply_stop_tags(element, 'node/42', {'shelter': ''}, {'shelter': 'yes'})
+
+        assert e.value.status_code == 409
+        assert 'shelter' in e.value.detail
+
+    def test_a_write_and_a_removal_travel_together(self):
+        element = self._element({'name': 'High St', 'bench': 'yes'})
+
+        assert apply_stop_tags(element, 'node/42', {'name': 'High Street', 'bench': ''}, {'name': 'High St', 'bench': 'yes'})
+        assert self._tags(element) == {'name': 'High Street'}

@@ -2,6 +2,7 @@ import {
     clearBusStopsPopup,
     showAllTagsForm,
     showContextMenu,
+    showEditStopForm,
     showNaptanDifferencesForm,
     showNaptanTagsForm,
     showNewStopForm,
@@ -21,11 +22,15 @@ import { map } from "./map.js"
 import {
     addTagAddition,
     clearTagAdditions,
+    editedTags,
     getDecision,
+    getStopEdit,
     getTagAddition,
     hasUndecided,
+    removeStopEdit,
     removeTagAddition,
     setDecision,
+    setStopEdit,
     undecidedKeys,
 } from "./naptanTagAdditions.js"
 import {
@@ -38,9 +43,11 @@ import {
     reconcileStopAreas,
     removeStopArea,
     renameStopArea,
+    renameExistingStopArea,
     setExistingStopAreas,
     stopAreaSignature,
     stopAreasKnown,
+    unrenameStopArea,
 } from "./stopAreas.js"
 import {
     getStopPositionNode,
@@ -295,6 +302,7 @@ function addBusStopToLayer(i, stop, name, role) {
             stopPositionAction(e, busStopData[i]),
             naptanDifferencesAction(e, stop, suggestion),
             stopAreaAction(e, busStopData[i]),
+            editStopAction(e, busStopData[i]),
         ),
     )
 
@@ -344,13 +352,98 @@ function stopPositionAction(e, collection) {
     }
 }
 
+// Lets the mapper change the few fields of a stop that are theirs to change. Only for a
+// stop already in OSM: one placed in this session is edited through its own form, which
+// can still move and delete it.
+function editStopAction(e, collection) {
+    const platform = collection.platform
+    if (!platform || isNewStop(platform)) return null
+
+    const edit = getStopEdit(platform)
+
+    return {
+        label: edit ? "Edit ✓" : "Edit",
+        edited: Boolean(edit),
+        onClick: () =>
+            showEditStopForm(e.latlng, {
+                tags: editedTags(platform),
+                edited: Boolean(edit),
+                rename: {
+                    follows: (name) => renameFollowers(collection, name).map((f) => f.label),
+                },
+                onSave: (tags, alsoRename) => {
+                    setStopEdit(platform, tags)
+                    // worked out afresh each time, so a rename queued by an earlier save
+                    // does not outlive the name it was following
+                    unfollowRename(collection)
+                    if (alsoRename) for (const follower of renameFollowers(collection, tags.name)) follower.apply()
+                    onStopEditsChanged()
+                },
+                onRevert: () => {
+                    removeStopEdit(platform)
+                    unfollowRename(collection)
+                    onStopEditsChanged()
+                },
+            }),
+    }
+}
+
+// What else carries this stop's name and would be left saying the old one: the stop
+// position on the road, and the stop area grouping the place. A pending one renames
+// itself from the stop, so only what is already in OSM is offered here.
+function renameFollowers(collection, name) {
+    const followers = []
+    name = (name ?? "").trim()
+    if (!name) return followers
+
+    const stop = collection.stop
+    if (stop && !isNewStop(stop) && (stop.tags?.name ?? "").trim() && (stop.tags.name ?? "").trim() !== name) {
+        followers.push({
+            label: "the stop position",
+            apply: () => setStopEdit(stop, { name: name }),
+        })
+    }
+
+    const members = groupMembers(collectionsInGroup(collection))
+    const area = members.length >= 2 && stopAreasKnown() ? existingAreaFor(members) : null
+
+    if (area && area.name && area.name !== name) {
+        followers.push({
+            label: "the stop area",
+            apply: () => renameExistingStopArea(members, area, name),
+        })
+    }
+
+    return followers
+}
+
+// Drops a stop area rename that was following this stop, leaving a relation it is still
+// missing members from queued for those alone.
+function unfollowRename(collection) {
+    if (!stopAreasKnown()) return
+
+    const members = groupMembers(collectionsInGroup(collection))
+    if (members.length < 2) return
+
+    unrenameStopArea(members, existingAreaFor(members))
+}
+
+function onStopEditsChanged() {
+    clearBusStopsPopup()
+    refreshDerivedNames()
+    updateBusStopsVisibility()
+    // a tag-only change still has something to upload when the route itself is unchanged
+    requestCalcBusRoute()
+}
+
 // the name a stop is going to have, once any NaPTAN rename accepted here is uploaded
 function nameOf(stop) {
     if (!stop) return ""
 
     const naptanName = naptanTagSuggestions.get(stopKey(stop))?.differing?.name
+    const edited = getStopEdit(stop)?.tags?.name
 
-    return effectiveName(stop, naptanName, naptanName && getDecision(stop, "name", naptanName))
+    return effectiveName(stop, naptanName, naptanName && getDecision(stop, "name", naptanName), edited)
 }
 
 // Which way along the road the buses calling here travel, as the wiki wants it on a stop
