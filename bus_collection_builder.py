@@ -169,18 +169,15 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 )
 
             if platforms_explicit:
-                for platform, stop in zip(platforms_explicit, _assign(platforms_explicit, stops), strict=True):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
+                collections.extend(_collect(platforms_explicit, stops))
                 continue
 
             if stops_explicit:
-                for stop, platform in zip(stops_explicit, _assign(stops_explicit, platforms), strict=True):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
+                collections.extend(_collect(platforms, stops_explicit))
                 continue
 
             if platforms_implicit and stops_implicit:
-                for platform, stop in zip(platforms_implicit, _assign(platforms_implicit, stops), strict=True):
-                    collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
+                collections.extend(_collect(platforms_implicit, stops))
                 continue
 
             if platforms_implicit:  # and not stops_implicit
@@ -199,6 +196,34 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
     return _pair_by_distance_within_places(assign_stop_area_groups(collections))
 
 
+def _collect(
+    platforms: Sequence[FetchRelationBusStop],
+    stops: Sequence[FetchRelationBusStop],
+) -> list[FetchRelationBusStopCollection]:
+    """
+    Pair the platforms of one name group with its stop positions, keeping every one.
+
+    Whichever side is in the majority has some left over once the pairs are made, and
+    those go into collections of their own rather than being dropped. A stop position
+    that fell out here was gone from the map, gone from the route on the next upload, and
+    invisible to the place it belongs to — which then offered to create a second one on
+    top of it. At the High Street terminus that would have put a new node 0.5 m from
+    node/14177644556.
+    """
+    assigned = _assign(platforms, stops)
+    paired = {id(stop) for stop in assigned if stop is not None}
+
+    result = [
+        FetchRelationBusStopCollection(platform=platform, stop=stop)
+        for platform, stop in zip(platforms, assigned, strict=True)
+    ]
+    result.extend(
+        FetchRelationBusStopCollection(platform=None, stop=stop) for stop in stops if id(stop) not in paired
+    )
+
+    return result
+
+
 def _pair_by_distance_within_places(
     collections: list[FetchRelationBusStopCollection],
 ) -> list[FetchRelationBusStopCollection]:
@@ -210,44 +235,68 @@ def _pair_by_distance_within_places(
     no ref therefore matches the stop position exactly and takes it, whichever side of
     the road each of them is actually on: at Bladen Close that paired the stop position
     with a platform 20 m away over the one 5 m away, and left the near side looking as
-    though it had no stop position to add.
+    though it had no stop position to add. A stop position no name group had a platform
+    for stands alone for the same reason, beside a platform that would gladly take it.
 
     The stops of one place are already worked out for stop areas, which goes by the name
     on the sign and so reaches across those groups. Settling the pairs again over that
     wider group is what puts each one back on its own side.
     """
-    by_group: dict[int, list[int]] = defaultdict(list)
+    slots: dict[int, list[int]] = defaultdict(list)  # collections a stop position can go to
+    lone: dict[int, list[int]] = defaultdict(list)  # stop positions standing on their own
 
     for i, collection in enumerate(collections):
-        # a stop position of its own is nobody's to move; only platforms take one
-        if collection.groupId >= 0 and collection.platform is not None:
-            by_group[collection.groupId].append(i)
+        if collection.groupId < 0:
+            continue
+        if collection.platform is not None:
+            slots[collection.groupId].append(i)
+        elif collection.stop is not None:
+            lone[collection.groupId].append(i)
 
     result = list(collections)
+    emptied: set[int] = set()
 
-    for indices in by_group.values():
-        if len(indices) < 2:
+    for group, indices in slots.items():
+        loners = lone.get(group, ())
+
+        # one platform and nothing loose beside it is already the only pairing there is
+        if len(indices) < 2 and not loners:
             continue
 
-        stops = [result[i].stop for i in indices if result[i].stop is not None]
-        if not stops:
+        # where each one is now, so it can be put back if the assignment does not want it
+        sources = [(i, result[i].stop) for i in indices if result[i].stop is not None]
+        sources += [(i, result[i].stop) for i in loners]
+        if not sources:
             continue
 
         platforms = [result[i].platform for i in indices]
 
-        distance_matrix = np.zeros((len(platforms), len(stops)))
+        distance_matrix = np.zeros((len(platforms), len(sources)))
         for i, platform in enumerate(platforms):
-            for j, stop in enumerate(stops):
+            for j, (_, stop) in enumerate(sources):
                 distance_matrix[i, j] = haversine_distance(platform.latLng, stop.latLng)
 
-        # never more stops than platforms, one each at most, so every stop keeps a place
         row_ind, col_ind = linear_sum_assignment(distance_matrix)
-        assigned = {indices[i]: stops[j] for i, j in zip(row_ind, col_ind, strict=False)}
+        taken = {indices[i]: sources[j][1] for i, j in zip(row_ind, col_ind, strict=False)}
+        # the stops are not hashable, and two of them are never the same node anyway
+        moved = {id(stop) for stop in taken.values()}
 
         for i in indices:
-            result[i] = replace(result[i], stop=assigned.get(i))
+            result[i] = replace(result[i], stop=taken.get(i))
 
-    return result
+        # a lone one the assignment took now lives on its platform, and the collection it
+        # came from has nothing left in it
+        for i in loners:
+            if id(result[i].stop) in moved:
+                emptied.add(i)
+
+        # more stop positions than platforms to hold them: the ones left over keep
+        # standing on their own rather than falling out here
+        for i, stop in sources:
+            if id(stop) not in moved and i not in loners:
+                result.append(FetchRelationBusStopCollection(platform=None, stop=stop, groupId=group))
+
+    return [collection for i, collection in enumerate(result) if i not in emptied]
 
 
 def _pick_best(
