@@ -506,7 +506,12 @@ export function showNaptanDifferencesForm(latlng, { rows, onDecide }) {
                 shown.textContent = value
                 button.append(shown)
 
-                button.onclick = () => {
+                // The redraw below takes this button out of the document while its own
+                // click is still travelling; Leaflet then walks a parent chain that no
+                // longer reaches the popup, decides the click was on the map after all,
+                // and closes the popup. Stopping it here keeps that from ever arising.
+                button.onclick = (event) => {
+                    L.DomEvent.stopPropagation(event)
                     row.decision = side
                     onDecide(row.tagKey, row.naptanValue, side)
                     render()
@@ -520,11 +525,6 @@ export function showNaptanDifferencesForm(latlng, { rows, onDecide }) {
     }
 
     render()
-
-    // Leaflet closes the open popup on any click that reaches the map, which a button in
-    // here does. Every other popup closes itself on use, so this only bites the one that
-    // is meant to stay up while it is worked through.
-    L.DomEvent.disableClickPropagation(content)
 
     popup = L.popup(latlng, {
         content: content,
