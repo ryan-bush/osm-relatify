@@ -375,8 +375,20 @@ again.
 
 `OVERPASS_API_INTERPRETER` accepts several comma-separated endpoints. Each is retried,
 then the next is tried, so a single overloaded instance no longer fails the download.
-Only worldwide instances work — a regional extract silently returns nothing outside
-its own area.
+
+Three ways an instance answers wrongly without failing are caught rather than trusted:
+
+- **A regional extract** silently returns nothing outside its own area, so only
+  worldwide instances work.
+- **An instance that has fallen behind** answers from an old snapshot, which is enough
+  to make the editor offer to recreate stops and stop areas mapped since. Anything
+  further behind than `OVERPASS_MAX_DATA_AGE` (an hour by default, `0` to disable) is
+  passed over for an instance that has caught up, and if none has, the download says so.
+- **A 200 carrying an error** — an HTML page saying the server is busy, or a remark on a
+  query that gave up part way through — is treated as a failure and retried elsewhere.
+
+Only `overpass-api.de` is configured by default: `overpass.kumi.systems` and
+`overpass.private.coffee` both stood months out of date through September 2026.
 
 ## User documentation
 

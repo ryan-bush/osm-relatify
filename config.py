@@ -27,14 +27,18 @@ if TEST_ENV:
 # Dedicated instance unavailable? Pick one from the public list:
 # https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances
 # Multiple comma-separated endpoints may be given; they are tried in order whenever
-# the preceding one is unreachable or overloaded. Only worldwide instances are
-# suitable here - a regional extract (overpass.osm.ch, overpass.osm.jp, ...) silently
-# answers with no data outside of its own area.
+# the preceding one is unreachable or overloaded.
+#
+# Two things make an instance unsuitable, and neither of them looks like a failure.
+# A regional extract (overpass.osm.ch, overpass.osm.jp, ...) answers with no data
+# outside of its own area. An instance that has fallen behind answers from an old
+# snapshot: overpass.kumi.systems and overpass.private.coffee both stood months out
+# of date through September 2026, offering to recreate stops and stop areas mapped
+# since, so they are no longer listed here. OVERPASS_MAX_DATA_AGE below turns that
+# into a refusal rather than a silent wrong answer, whichever instances are used.
 OVERPASS_API_INTERPRETER = os.getenv(
     'OVERPASS_API_INTERPRETER',
-    'https://overpass-api.de/api/interpreter,'
-    'https://overpass.kumi.systems/api/interpreter,'
-    'https://overpass.private.coffee/api/interpreter',
+    'https://overpass-api.de/api/interpreter',
 )
 OVERPASS_API_INTERPRETERS = tuple(u.strip() for u in OVERPASS_API_INTERPRETER.split(',') if u.strip())
 assert OVERPASS_API_INTERPRETERS, 'OVERPASS_API_INTERPRETER must contain at least one URL'
