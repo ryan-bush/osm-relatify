@@ -57,11 +57,15 @@ const pending = new Map()
 
 export const getPendingStopArea = (members) => pending.get(signatureOf(members)) ?? null
 
-export function addStopArea(members, name, existingArea) {
+// `automatic` marks one the application queued by itself, following a stop position into
+// the area its stop already belongs to, rather than one the mapper asked for. Only the
+// mapper's own survives the group changing again under it.
+export function addStopArea(members, name, existingArea, { automatic = false } = {}) {
     pending.set(signatureOf(members), {
         id: existingArea?.id ?? null,
         name: existingArea?.name || name,
         members: members,
+        automatic: automatic,
     })
 }
 

@@ -88,7 +88,7 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 expand_key_n = extract_numbers(expand_key)
                 expand_group = name_groups[expand_key]
                 expand_group_public_transports = {bus_stop.public_transport for bus_stop in expand_group}
-                expanded = False
+                targets = []
 
                 for target_key, name_score, _ in target_data:
                     if target_key == expand_key:
@@ -112,15 +112,34 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                     if expand_group_public_transports.intersection(target_group_public_transports):
                         continue
 
+                    # where the group stands now, so a stop moved into it does not decide
+                    # where the next one goes
+                    targets.append((target_key, name_score, target_group, tuple(s.latLng for s in target_group)))
+
+                if not targets:
+                    continue
+
+                # Several groups can match the same short name: the two sides of a road
+                # are each named for the stop standing on them, and the stop position
+                # between them carries the bare name. Putting the whole group into every
+                # one of them would tell both sides the bus halts in the same spot, and
+                # would leave the far side looking as though it already had a stop
+                # position of its own, so each stop goes to the nearest group instead.
+                for bus_stop in expand_group:
+                    target_key, name_score, target_group, _ = min(
+                        targets,
+                        key=lambda t, bus_stop=bus_stop: min(
+                            haversine_distance(bus_stop.latLng, latLng) for latLng in t[3]
+                        ),
+                    )
+
                     print(
                         f'[COLL] [{name_score:5.1f}] Expanded {expand_key!r} to {target_key!r}, '
-                        f'ID={expand_group[0].nice_id!r}'
+                        f'ID={bus_stop.nice_id!r}'
                     )
-                    target_group.extend(expand_group)
-                    expanded = True
+                    target_group.append(bus_stop)
 
-                if expanded:
-                    name_groups.pop(expand_key)
+                name_groups.pop(expand_key)
 
         # for each named group, pick best platform and best stop
         for name_key, name_group in name_groups.items():
@@ -150,23 +169,17 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 )
 
             if platforms_explicit:
-                for platform, stop in zip(
-                    platforms_explicit, _assign(platforms_explicit, stops, allow_element_reuse=True)
-                ):
+                for platform, stop in zip(platforms_explicit, _assign(platforms_explicit, stops), strict=True):
                     collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
                 continue
 
             if stops_explicit:
-                for stop, platform in zip(
-                    stops_explicit, _assign(stops_explicit, platforms, allow_element_reuse=False)
-                ):
+                for stop, platform in zip(stops_explicit, _assign(stops_explicit, platforms), strict=True):
                     collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
                 continue
 
             if platforms_implicit and stops_implicit:
-                for platform, stop in zip(
-                    platforms_implicit, _assign(platforms_implicit, stops, allow_element_reuse=True)
-                ):
+                for platform, stop in zip(platforms_implicit, _assign(platforms_implicit, stops), strict=True):
                     collections.append(FetchRelationBusStopCollection(platform=platform, stop=stop))
                 continue
 
@@ -200,47 +213,34 @@ def _pick_best(
 def _assign(
     primary: Sequence[FetchRelationBusStop],
     elements: Sequence[FetchRelationBusStop],
-    *,
-    allow_element_reuse: bool,
-) -> list[FetchRelationBusStop] | list[None]:
-    if len(elements) >= 2:
-        # find the closest stop to each platform
-        if len(elements) < len(primary):
-            # disallow reuse of elements
-            if not allow_element_reuse:
-                return [None] * len(primary)
+) -> list[FetchRelationBusStop | None]:
+    """
+    Pair each of `primary` with the element that goes with it, closest pairs first.
 
-            tree = BallTree(tuple(radians_tuple(e.latLng) for e in elements), metric='haversine')
-            query_indices = tree.query(
-                tuple(radians_tuple(p.latLng) for p in primary),
-                k=1,
-                return_distance=False,
-                sort_results=False,
-            )
-            return [elements[i] for i in query_indices[:, 0]]
-
-        # minimize the total distance between each platform and stop
-        else:
-            distance_matrix = np.zeros((len(primary), len(elements)))
-            # compute the haversine distance between each platform and stop
-            for i, p in enumerate(primary):
-                for j, e in enumerate(elements):
-                    distance_matrix[i, j] = haversine_distance(p.latLng, e.latLng)
-            # use the Hungarian algorithm to find the optimal assignment
-            row_ind, col_ind = linear_sum_assignment(distance_matrix)
-            # ensure the assignments are sorted by platform indices
-            assignments = sorted(zip(row_ind, col_ind, strict=False))
-            # get the assigned stop for each platform
-            return [elements[j] for _, j in assignments]
-
-    elif len(elements) == 1:
-        # disallow reuse of elements
-        if not allow_element_reuse and len(primary) > 1:
-            return [None] * len(primary)
-
-        return [elements[0]] * len(primary)
-    else:
+    No element is ever given to two of them. A stop position sits on one side of a road
+    and serves the platform on that side, so handing the one node to both platforms of a
+    place would say the buses in each direction halt in the same spot - and would leave
+    the platform that has no stop position of its own looking as though it already had
+    one. Whichever of `primary` the assignment cannot pair off gets None instead, which
+    is what offers the mapper a stop position to add.
+    """
+    if not elements:
         return [None] * len(primary)
+
+    distance_matrix = np.zeros((len(primary), len(elements)))
+    for i, p in enumerate(primary):
+        for j, e in enumerate(elements):
+            distance_matrix[i, j] = haversine_distance(p.latLng, e.latLng)
+
+    # the Hungarian algorithm, which pairs off as many as it can for the least total
+    # distance; on a lopsided matrix it simply leaves the extras unpaired
+    row_ind, col_ind = linear_sum_assignment(distance_matrix)
+
+    result: list[FetchRelationBusStop | None] = [None] * len(primary)
+    for i, j in zip(row_ind, col_ind, strict=False):
+        result[i] = elements[j]
+
+    return result
 
 
 def _stop_area_key(collection: FetchRelationBusStopCollection) -> str:

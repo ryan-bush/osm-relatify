@@ -145,9 +145,13 @@ function onBusStopDataChanged() {
     requestCalcBusRoute()
 }
 
-function syncNewStops() {
+function refreshNewStops() {
     busStopData = busStopData.filter((entry) => !isNewStop(entry.platform)).concat(newStopCollections())
     applyPendingStopPositions()
+}
+
+function syncNewStops() {
+    refreshNewStops()
     onBusStopDataChanged()
 }
 
@@ -157,25 +161,31 @@ function applyPendingStopPositions() {
     for (const entry of busStopData) {
         if (!entry.platform || isNewStop(entry.platform)) continue
 
-        const node = getStopPositionNode(entry.platform)
-        if (!node) continue
-
-        // OSM has gained one since, so ours is not needed after all
-        if (entry.stop && !isNewStop(entry.stop)) {
-            removeStopPosition(entry.platform)
+        if (keepsItsPendingStopPosition(entry)) {
+            // the platform decides whether the route calls here; the two never disagree
+            const node = getStopPositionNode(entry.platform)
+            node.member = true
+            entry.stop = node
             continue
         }
 
-        // the stop is no longer in the route, so neither is its stop position
-        if (!entry.platform.member) {
-            removeStopPosition(entry.platform)
-            continue
-        }
+        removeStopPosition(entry.platform)
 
-        // the platform decides whether the route calls here; the two never disagree
-        node.member = entry.platform.member !== false
-        entry.stop = node
+        // nothing is creating the node any more, so the collection stops carrying it;
+        // otherwise it would still be drawn, and still sent as a member of the route
+        if (isNewStop(entry.stop)) entry.stop = null
     }
+}
+
+// Whether the stop position put on the road for `entry` is still one to create.
+function keepsItsPendingStopPosition(entry) {
+    if (!getStopPositionNode(entry.platform)) return false
+
+    // OSM has gained one since, so ours is not needed after all
+    if (entry.stop && !isNewStop(entry.stop)) return false
+
+    // the stop is no longer in the route, so neither is its stop position
+    return Boolean(entry.platform.member)
 }
 
 export function updateBusStopsVisibility() {
@@ -319,12 +329,14 @@ function stopPositionAction(e, collection) {
                 distance: placement?.distance,
                 tags: stopPositionTagsFor(platform, direction),
                 onAdd: () => {
+                    const before = groupMembers(collectionsInGroup(collection))
                     setStopPosition(platform, placement, nameOf(platform), direction)
-                    onStopPositionsChanged()
+                    onStopPositionsChanged(collection, before)
                 },
                 onRemove: () => {
+                    const before = groupMembers(collectionsInGroup(collection))
                     removeStopPosition(platform)
-                    onStopPositionsChanged()
+                    onStopPositionsChanged(collection, before)
                 },
             }),
     }
@@ -404,9 +416,49 @@ export function refreshStopPositionDirections() {
     }
 }
 
-function onStopPositionsChanged() {
+function onStopPositionsChanged(collection, previousMembers) {
     clearBusStopsPopup()
-    syncNewStops()
+    // before the redraw, so the stop area is settled by the time the menu offers it again
+    refreshNewStops()
+    followStopAreaMembers(collection, previousMembers)
+    onBusStopDataChanged()
+}
+
+// A stop position added to a stop that is already grouped belongs in that group's stop
+// area as well, so it is queued here rather than left for the mapper to ask for a second
+// time. A queued area is keyed by exactly the stops it covers, so one that was waiting
+// has to be moved over to the group the new node has joined, or it would be dropped.
+function followStopAreaMembers(collection, previousMembers) {
+    const collections = collectionsInGroup(collection)
+    const members = groupMembers(collections)
+    const queued = getPendingStopArea(previousMembers)
+
+    if (queued) removeStopArea(previousMembers)
+
+    // a single element is not a group, as in stopAreaAction
+    if (members.length < 2) return
+
+    const existing = existingAreaFor(members)
+    const missing = existing ? members.filter((member) => !existing.members.includes(member.key)) : members
+
+    // the relation would have nothing to add, and an upload has no use for that
+    if (!missing.length) return
+
+    // one the mapper asked for follows the group it was queued against
+    if (queued && !queued.automatic) {
+        addStopArea(members, queued.name, existing)
+        return
+    }
+
+    // Only a stop this change brought into the group is queued on its own account: a
+    // group with no area at all is a relation to create, which is the mapper's call, and
+    // stops left out of an existing one before now are not this change's doing. Taking
+    // the stop position back again therefore leaves nothing behind, as what was queued
+    // automatically is worked out afresh rather than carried over.
+    if (!existing) return
+    if (!missing.some((member) => !previousMembers.some((was) => was.key === member.key))) return
+
+    addStopArea(members, groupName(collections), existing, { automatic: true })
 }
 
 // the platform and the stop position are separate elements, each with its own tags
