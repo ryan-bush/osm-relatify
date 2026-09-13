@@ -66,3 +66,29 @@ def test_a_bare_named_stop_position_joins_only_the_side_it_stands_on():
     )
 
     assert sorted(pairs) == [('1', None), ('2', '3')]
+
+
+def test_the_platform_without_a_ref_does_not_take_a_stop_position_off_the_far_side():
+    """
+    A stop position carries the bare name of its place, so the platform whose name has no
+    ref matches it exactly and would take it whichever side of the road it stands on.
+    """
+    pairs = _pairs(
+        [
+            _stop(
+                1,
+                {'name': 'Bladen Close', 'public_transport': 'platform', 'highway': 'bus_stop'},
+                lat=51.5274661,
+                lon=-1.8007128,
+            ),
+            _stop(
+                2,
+                {'name': 'Bladen Close', 'ref': 'swiapwm', 'public_transport': 'platform', 'highway': 'bus_stop'},
+                lat=51.5272639,
+                lon=-1.8006972,
+            ),
+            _position(3, 'Bladen Close', lat=51.5272912, lon=-1.8006336),
+        ]
+    )
+
+    assert sorted(pairs) == [('1', None), ('2', '3')]
