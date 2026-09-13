@@ -280,8 +280,14 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
     )
 
 
-async def _query_stop_areas(bus_stop_collections) -> list[StopArea]:
-    """The stop areas the downloaded stops already belong to, or none if Overpass fails."""
+async def _query_stop_areas(bus_stop_collections) -> list[StopArea] | None:
+    """
+    The stop areas the downloaded stops already belong to.
+
+    None when Overpass could not say, which is not the same as there being none: an empty
+    list is what invites the mapper to create one, and doing that unknowingly would put a
+    second relation beside the one the stops are already in.
+    """
     node_ids: set[int] = set()
     way_ids: set[int] = set()
 
@@ -295,9 +301,9 @@ async def _query_stop_areas(bus_stop_collections) -> list[StopArea]:
     try:
         return await _OVERPASS.query_stop_areas(frozenset(node_ids), frozenset(way_ids))
     except Exception as e:
-        # knowing about existing stop areas is a nicety; the download still works without
+        # the download still works without them, and the client stops offering stop areas
         print(f'🚧 Warning: Could not look up stop areas: {e!r}')
-        return []
+        return None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

@@ -39,6 +39,7 @@ import {
     renameStopArea,
     setExistingStopAreas,
     stopAreaSignature,
+    stopAreasKnown,
 } from "./stopAreas.js"
 import {
     getStopPositionNode,
@@ -119,7 +120,7 @@ export function processBusStopData(fetchData) {
         applyPendingStopPositions()
 
         // worked out afresh for the whole downloaded area, so replaced rather than merged
-        setExistingStopAreas(fetchData.stopAreas)
+        setExistingStopAreas(fetchData.stopAreas ?? null)
         reconcileGroups()
         naptanStops = fetchData.naptanStops ?? []
         naptanTagSuggestions = new Map((fetchData.naptanTags ?? []).map((suggestion) => [stopKey(suggestion), suggestion]))
@@ -571,6 +572,10 @@ function groupName(collections) {
 // Offers a stop area for the stops of one place, or takes back one not yet uploaded.
 function stopAreaAction(e, collection) {
     if (!busStopData || !collection) return null
+
+    // without knowing which stop areas are already out there, the only thing on offer
+    // would be creating one that may well exist already
+    if (!stopAreasKnown()) return null
 
     const collections = collectionsInGroup(collection)
     const members = groupMembers(collections)
