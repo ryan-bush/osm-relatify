@@ -87,6 +87,23 @@ export function addStopArea(members, name, existingArea, { automatic = false } =
 
 export const removeStopArea = (members) => pending.delete(signatureOf(members))
 
+// Renames a stop area that is already in OSM, to follow the stop it is named after. The
+// members ride along as they always do, so a rename and a completion are one change to
+// one relation; `expectedName` is what it was called when the mapper was shown it, so a
+// name changed since is a conflict rather than an overwrite.
+export function renameExistingStopArea(members, existingArea, name) {
+    const key = signatureOf(members)
+    const queued = pending.get(key)
+
+    pending.set(key, {
+        id: existingArea.id,
+        name: name,
+        expectedName: existingArea.name,
+        members: members,
+        automatic: queued?.automatic ?? true,
+    })
+}
+
 // As for a stop position: a stop renamed after the area was queued renames the area too.
 // One that already exists in OSM keeps the name it has there.
 export function renameStopArea(members, name) {
@@ -118,9 +135,31 @@ export function reconcileStopAreas(signatures) {
 
 export const stopAreaSignature = signatureOf
 
+// Takes back a rename that was following a stop's name, when the stop no longer has that
+// name to follow. Anything else queued against the same relation is left alone: members
+// it is still missing are a change of their own.
+export function unrenameStopArea(members, existingArea) {
+    const key = signatureOf(members)
+    const queued = pending.get(key)
+    if (!queued?.expectedName) return false
+
+    const missing = existingArea ? members.filter((member) => !existingArea.members.includes(member.key)) : members
+
+    if (!missing.length) {
+        pending.delete(key)
+        return true
+    }
+
+    pending.set(key, { ...queued, name: existingArea.name, expectedName: null })
+    return true
+}
+
 export const stopAreasPayload = () =>
     Array.from(pending.values(), (area) => ({
         id: area.id,
         name: area.name,
+        // only sent for one already in OSM, where it says the name may be replaced; a new
+        // relation has no name to disagree with
+        expectedName: area.id !== null ? (area.expectedName ?? null) : null,
         members: area.members.map((member) => ({ type: member.type, id: member.id, role: member.role })),
     }))

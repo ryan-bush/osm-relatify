@@ -14,9 +14,11 @@ import {
     reconcileStopAreas,
     removeStopArea,
     renameStopArea,
+    renameExistingStopArea,
     setExistingStopAreas,
     stopAreaSignature,
     stopAreasPayload,
+    unrenameStopArea,
 } from "../../static/js/stopAreas.js"
 
 const stop = (id, name, over = {}) => ({ type: "node", id: `${id}`, name: name, tags: { name: name }, ...over })
@@ -167,4 +169,52 @@ test("no single area is claimed when the place is grouped twice over", () => {
 
     // which of them should hold the rest is not ours to guess at
     assert.equal(existingAreaFor(groupMembers([northbound, southbound])), null)
+})
+
+const AREA = { id: 99, name: "The Station", members: ["node/1", "node/2", "node/3", "node/4"] }
+
+test("a rename follows the stop it is named after", () => {
+    setExistingStopAreas([AREA])
+    const members = groupMembers([northbound, southbound])
+    renameExistingStopArea(members, AREA, "Market Square")
+
+    assert.deepEqual(stopAreasPayload(), [
+        {
+            id: 99,
+            name: "Market Square",
+            expectedName: "The Station",
+            members: members.map((m) => ({ type: m.type, id: m.id, role: m.role })),
+        },
+    ])
+})
+
+test("taking the rename back leaves nothing to upload", () => {
+    setExistingStopAreas([AREA])
+    const members = groupMembers([northbound, southbound])
+    renameExistingStopArea(members, AREA, "Market Square")
+
+    assert.equal(unrenameStopArea(members, AREA), true)
+    assert.deepEqual(stopAreasPayload(), [])
+})
+
+test("taking the rename back keeps the members the area is still missing", () => {
+    const partial = { id: 99, name: "The Station", members: ["node/1"] }
+    setExistingStopAreas([partial])
+    const members = groupMembers([northbound, southbound])
+    renameExistingStopArea(members, partial, "Market Square")
+
+    assert.equal(unrenameStopArea(members, partial), true)
+
+    const [queued] = stopAreasPayload()
+    assert.equal(queued.id, 99)
+    assert.equal(queued.name, "The Station", "back to the name it has in OSM")
+    assert.equal(queued.expectedName, null, "no longer a rename")
+    assert.equal(queued.members.length, 4)
+})
+
+test("a new area never carries a name to replace", () => {
+    setExistingStopAreas([])
+    addStopArea(groupMembers([northbound, southbound]), "The Station", null)
+
+    assert.equal(stopAreasPayload()[0].expectedName, null)
 })

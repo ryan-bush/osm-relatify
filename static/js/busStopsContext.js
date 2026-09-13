@@ -43,6 +43,13 @@ const ROAD_ICON = `
         <path d="M12 13v3"/>
     </svg>`
 
+const EDIT_ICON = `
+    <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 20h9"/>
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>
+    </svg>`
+
 const LIST_ICON = `
     <svg class="mb-1" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -58,7 +65,8 @@ const LIST_ICON = `
 // { label, onClick }: filling in NaPTAN tags, putting a stop position on the road, and
 // deciding between NaPTAN and the stop where they disagree. The last also carries
 // `undecided`, which marks the button as still needing an answer.
-// `onViewTags`, when given, opens the stop's full tag list.
+// `onViewTags`, when given, opens the stop's full tag list, and `editStop` the form for
+// changing the few fields that are the mapper's to change.
 export function showContextMenu(
     e,
     stop,
@@ -67,6 +75,7 @@ export function showContextMenu(
     stopPosition = null,
     naptanDifferences = null,
     stopArea = null,
+    editStop = null,
 ) {
     clearBusStopsPopup()
 
@@ -106,6 +115,14 @@ export function showContextMenu(
            </button>`
         : ""
 
+    const editButton = editStop
+        ? `<button class="btn btn-sm ${editStop.edited ? "btn-info" : "btn-light"}
+                       d-flex flex-column align-items-center" id="bs-edit-stop">
+               ${EDIT_ICON}
+               <div>${editStop.label}</div>
+           </button>`
+        : ""
+
     popup = L.popup(e.latlng, {
         content: `
             <div class="btn-group text-center">
@@ -113,6 +130,7 @@ export function showContextMenu(
                 ${naptanTagsButton}
                 ${stopPositionButton}
                 ${stopAreaButton}
+                ${editButton}
                 ${viewTagsButton}
                 <button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-open-osm">
                     <img class="mb-1" src="/static/img/brands/openstreetmap.webp" width="24" alt="OpenStreetMap logo">
@@ -136,6 +154,8 @@ export function showContextMenu(
     if (stopPosition) popup.getElement().querySelector("#bs-stop-position").onclick = stopPosition.onClick
 
     if (stopArea) popup.getElement().querySelector("#bs-stop-area").onclick = stopArea.onClick
+
+    if (editStop) popup.getElement().querySelector("#bs-edit-stop").onclick = editStop.onClick
 
     if (onViewTags) popup.getElement().querySelector("#bs-view-tags").onclick = onViewTags
 
@@ -345,6 +365,92 @@ export function showNewStopForm(
         className: "popup-form",
         minWidth: 240,
         maxWidth: 260,
+    }).openOn(map)
+
+    form.elements.name.focus()
+}
+
+// The fields of a stop already in OSM, to change by hand. Only these four: the rest of
+// what a stop carries is either NaPTAN's to offer or nothing this editor should touch.
+// `rename`, when given, is what else says the old name — the stop position on the road
+// and the stop area the place is in — offered to follow the new one.
+export function showEditStopForm(latlng, { tags, edited, rename = null, onSave, onRevert }) {
+    clearBusStopsPopup()
+
+    const form = document.createElement("form")
+    form.className = "new-stop-form"
+    form.innerHTML = `
+        <div class="new-stop-title">Edit this stop</div>
+        <label>Name
+            <input class="form-control form-control-sm" name="name" maxlength="255">
+        </label>
+        <label>Local ref <span class="text-body-secondary">(stop letter or stand)</span>
+            <input class="form-control form-control-sm" name="local_ref" maxlength="255">
+        </label>
+        <div class="d-flex gap-2">
+            <label class="flex-fill">Shelter
+                <select class="form-select form-select-sm" name="shelter">${yesNoOptions}</select>
+            </label>
+            <label class="flex-fill">Bench
+                <select class="form-select form-select-sm" name="bench">${yesNoOptions}</select>
+            </label>
+        </div>
+        <label class="new-stop-check rename-check d-none">
+            <input type="checkbox" name="rename" checked>
+            <span></span>
+        </label>
+        <div class="new-stop-naptan rename-note d-none"></div>
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-sm btn-primary flex-fill">Save</button>
+            <button type="button" class="btn btn-sm btn-outline-danger new-stop-revert d-none">Undo</button>
+        </div>`
+
+    // set through the DOM rather than the template, so nothing from OSM is parsed as HTML
+    for (const key of FORM_KEYS) form.elements[key].value = tags[key] ?? ""
+
+    const revert = form.querySelector(".new-stop-revert")
+    revert.classList.toggle("d-none", !edited)
+
+    const renameCheck = form.elements.rename
+    const renameLabel = renameCheck.nextElementSibling
+
+    function refreshRename() {
+        const name = form.elements.name.value.trim()
+        const follows = rename?.follows(name) ?? []
+
+        form.querySelector(".rename-check").classList.toggle("d-none", !follows.length)
+        if (!follows.length) return
+
+        renameLabel.textContent = `Rename ${follows.join(" and ")} to match`
+    }
+
+    refreshRename()
+    form.addEventListener("input", refreshRename)
+
+    // Leaflet pans and zooms the map on arrow and +/- keys, which would swallow them here
+    L.DomEvent.on(form, "keydown", L.DomEvent.stopPropagation)
+
+    form.onsubmit = (e) => {
+        e.preventDefault()
+
+        const collected = {}
+        for (const key of FORM_KEYS) collected[key] = form.elements[key].value.trim()
+
+        popup.close()
+        onSave(collected, !form.querySelector(".rename-check").classList.contains("d-none") && renameCheck.checked)
+    }
+
+    revert.onclick = () => {
+        popup.close()
+        onRevert()
+    }
+
+    popup = L.popup(latlng, {
+        content: form,
+        closeButton: false,
+        className: "popup-form",
+        minWidth: 240,
+        maxWidth: 280,
     }).openOn(map)
 
     form.elements.name.focus()

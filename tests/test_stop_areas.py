@@ -314,3 +314,57 @@ class TestCheckNewStopAreas:
             _build([_change()], osm)
 
         assert e.value.status_code == 409
+
+
+class TestRenamingAnExistingArea:
+    """
+    A stop area is named after the place, so renaming the stop should carry it along
+    rather than leave the relation saying what the stop used to be called.
+    """
+
+    def _change(self, name='Market Square', expected='The Station'):
+        return StopAreaChange(
+            id=99, name=name, expectedName=expected, members=[_member(id=1), _member(id=2, role='stop')]
+        )
+
+    def test_the_relation_takes_the_new_name(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform'), ('node', 2, 'stop')])})
+        [relation] = _modifications([self._change()], osm)
+
+        assert {t['@k']: t['@v'] for t in relation['tag']}['name'] == 'Market Square'
+
+    def test_a_rename_and_a_missing_member_are_one_change(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform')])})
+        [relation] = _modifications([self._change()], osm)
+
+        assert {t['@k']: t['@v'] for t in relation['tag']}['name'] == 'Market Square'
+        assert [m['@ref'] for m in relation['member']] == ['1', 2]
+
+    def test_nothing_is_sent_when_it_already_says_that(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform'), ('node', 2, 'stop')])})
+
+        assert _modifications([self._change(name='The Station', expected='The Station')], osm) == []
+
+    def test_a_name_changed_since_is_a_conflict(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform'), ('node', 2, 'stop')])})
+
+        with pytest.raises(HTTPException) as e:
+            _modifications([self._change(expected='Something else')], osm)
+
+        assert e.value.status_code == 409
+        assert 'The Station' in e.value.detail
+
+    def test_it_cannot_be_renamed_to_nothing(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform')])})
+
+        with pytest.raises(HTTPException) as e:
+            _modifications([self._change(name='   ')], osm)
+
+        assert e.value.status_code == 400
+
+    def test_an_area_not_being_renamed_keeps_the_name_it_has(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform')])})
+        # no expectedName: the mapper only asked for the missing member
+        [relation] = _modifications([_change(id=99, name='Market Square')], osm)
+
+        assert {t['@k']: t['@v'] for t in relation['tag']}['name'] == 'The Station'

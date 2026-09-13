@@ -22,6 +22,67 @@ export const removeTagAddition = (stop) => additions.delete(additionKey(stop))
 
 export const tagAdditionCount = () => additions.size
 
+// Tags the mapper typed into the stop form for a stop already in OSM, against what it
+// was showing them at the time. Kept apart from the NaPTAN fills above because the two
+// are allowed to write different things: a name is the mapper's to set and never
+// NaPTAN's to fill in.
+const edits = new Map()
+
+export const getStopEdit = (stop) => edits.get(additionKey(stop))
+
+// `tags` is every field the form offers, an empty value meaning the tag should go.
+// Anything that already says what the stop says is dropped, so a form saved untouched
+// leaves nothing behind.
+export function setStopEdit(stop, tags) {
+    const key = additionKey(stop)
+    const current = stop.tags ?? {}
+
+    const changed = {}
+    const expected = {}
+
+    for (const [tagKey, value] of Object.entries(tags)) {
+        const was = (current[tagKey] ?? "").trim()
+        if (value.trim() === was) continue
+
+        changed[tagKey] = value
+        // absent from `expected` would mean "believed to have no such tag", which is
+        // only true when it really has none
+        if (was) expected[tagKey] = was
+    }
+
+    if (!Object.keys(changed).length) {
+        edits.delete(key)
+        return false
+    }
+
+    edits.set(key, {
+        type: stop.type,
+        id: Number.parseInt(stop.id, 10),
+        tags: changed,
+        expected: expected,
+    })
+    return true
+}
+
+export const removeStopEdit = (stop) => edits.delete(additionKey(stop))
+
+export const stopEditCount = () => edits.size
+
+// what the stop will say once everything queued against it is uploaded
+export function editedTags(stop) {
+    const edit = getStopEdit(stop)
+    if (!edit) return stop.tags ?? {}
+
+    const result = { ...(stop.tags ?? {}) }
+
+    for (const [key, value] of Object.entries(edit.tags)) {
+        if (value.trim()) result[key] = value
+        else delete result[key]
+    }
+
+    return result
+}
+
 // stops with any NaPTAN change to write, a fill or an accepted replacement
 export const tagChangeCount = () => tagAdditionsPayload().length
 
@@ -63,6 +124,7 @@ export const acceptedCount = () => acceptedDecisions().length
 export function clearTagAdditions() {
     additions.clear()
     decisions.clear()
+    edits.clear()
 }
 
 // Fills and accepted replacements for the same stop travel together, as one change to
@@ -77,15 +139,44 @@ export function tagAdditionsPayload() {
             id: addition.id,
             tags: { ...addition.tags },
             expected: {},
+            byHand: [],
         })
     }
 
     for (const entry of acceptedDecisions()) {
         const key = `${entry.type},${entry.id}`
-        const stop = byStop.get(key) ?? { type: entry.type, id: entry.id, tags: {}, expected: {} }
+        const stop = byStop.get(key) ?? {
+            type: entry.type,
+            id: entry.id,
+            tags: {},
+            expected: {},
+            byHand: [],
+        }
 
         stop.tags[entry.tagKey] = entry.naptanValue
         stop.expected[entry.tagKey] = entry.osmValue
+        byStop.set(key, stop)
+    }
+
+    // last, so a value the mapper typed wins over the one NaPTAN offered for the same key
+    for (const edit of edits.values()) {
+        const key = `${edit.type},${edit.id}`
+        const stop = byStop.get(key) ?? {
+            type: edit.type,
+            id: edit.id,
+            tags: {},
+            expected: {},
+            byHand: [],
+        }
+
+        for (const [tagKey, value] of Object.entries(edit.tags)) {
+            stop.tags[tagKey] = value
+            stop.byHand.push(tagKey)
+
+            if (edit.expected[tagKey]) stop.expected[tagKey] = edit.expected[tagKey]
+            else delete stop.expected[tagKey]
+        }
+
         byStop.set(key, stop)
     }
 

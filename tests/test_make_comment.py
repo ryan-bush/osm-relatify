@@ -95,3 +95,61 @@ def test_generated_comment_counts_completed_stop_areas():
 def test_generated_comment_tells_new_and_completed_apart():
     model = make({'name': 'Bus 12'}, stopAreas=[_area(), _area(id=99), _area(id=98)])
     assert model.make_comment() == 'Updated route: Bus 12, #7; added 1 stop area; completed 2 stop areas'
+
+
+def test_a_stop_edited_by_hand_is_not_called_a_naptan_addition():
+    model = make(
+        naptanTagAdditions=[
+            {'type': 'node', 'id': 1, 'tags': {'name': 'High Street'}, 'byHand': ['name']},
+            {'type': 'node', 'id': 2, 'tags': {'naptan:Bearing': 'NE'}},
+        ]
+    )
+
+    comment = model.make_comment()
+    assert 'edited 1 bus stop' in comment
+    assert 'added NaPTAN tags to 1 bus stop' in comment
+
+
+def test_one_stop_with_both_is_counted_in_both():
+    model = make(
+        naptanTagAdditions=[
+            {'type': 'node', 'id': 1, 'tags': {'name': 'High Street', 'naptan:Bearing': 'NE'}, 'byHand': ['name']}
+        ]
+    )
+
+    comment = model.make_comment()
+    assert 'edited 1 bus stop' in comment
+    assert 'added NaPTAN tags to 1 bus stop' in comment
+
+
+def test_a_renamed_stop_area_says_so():
+    model = make(
+        stopAreas=[
+            {'id': 99, 'name': 'Market Square', 'expectedName': 'The Station', 'members': [{'type': 'node', 'id': 1, 'role': 'platform'}]},
+            {'id': 98, 'name': '', 'members': [{'type': 'node', 'id': 1, 'role': 'platform'}]},
+        ]
+    )
+
+    comment = model.make_comment()
+    assert 'renamed 1 stop area' in comment
+    assert 'completed 1 stop area' in comment
+
+
+def test_naptan_is_not_credited_for_what_the_mapper_typed():
+    model = make(
+        {'name': 'Bus 12'},
+        naptanTagAdditions=[{'type': 'node', 'id': 1, 'tags': {'name': 'High Street'}, 'byHand': ['name']}],
+    )
+
+    assert 'source' not in model.make_changeset_tags()
+
+
+def test_naptan_is_still_credited_when_it_supplied_something():
+    model = make(
+        {'name': 'Bus 12'},
+        naptanTagAdditions=[
+            {'type': 'node', 'id': 1, 'tags': {'name': 'High Street', 'naptan:Bearing': 'NE'}, 'byHand': ['name']}
+        ],
+    )
+
+    assert model.make_changeset_tags()['source'] == 'NaPTAN'
