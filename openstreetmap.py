@@ -94,6 +94,12 @@ class OpenStreetMap:
         else:
             return ensure_list(xmltodict.parse(r.text)['osm'][elements_type[:-1]])
 
+    async def get_parent_relations(self, element_type: Literal['node', 'way'], element_id: int) -> list[dict]:
+        """The relations this element belongs to, straight from OSM rather than Overpass."""
+        r = await self._http.get(f'/0.6/{element_type}/{element_id}/relations.json')
+        r.raise_for_status()
+        return r.json()['elements']
+
     async def get_authorized_user(self) -> dict:
         r = await self._http.get('/0.6/user/details.json')
         r.raise_for_status()
