@@ -42,6 +42,14 @@ assert OVERPASS_API_INTERPRETERS, 'OVERPASS_API_INTERPRETER must contain at leas
 # Number of attempts per endpoint before moving on to the next one
 OVERPASS_API_ATTEMPTS = int(os.getenv('OVERPASS_API_ATTEMPTS', '2'))
 
+# How far behind live OSM an instance may be before its answers are refused.
+#
+# An instance that has fallen behind does not fail: it answers every query successfully,
+# from a snapshot of whenever it last caught up. Editing from one recreates stops and
+# stop areas that already exist, and drops members added since. A healthy instance is
+# seconds to a couple of minutes behind, so an hour is generous; 0 turns the check off.
+OVERPASS_MAX_DATA_AGE = float(os.getenv('OVERPASS_MAX_DATA_AGE', '3600'))  # seconds
+
 TAG_MAX_LENGTH = 255
 
 # Tags the application interprets when loading a relation; editing them would change
