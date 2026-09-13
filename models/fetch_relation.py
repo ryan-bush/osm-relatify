@@ -254,8 +254,8 @@ def assign_none_members(
     for member in relation['members']:
         typed_id = (member['type'], element_id(member['ref']))
 
-        # != 1 because platforms should not be reused by multiple collections
-        # see bus_collection_builder: element_reuse
+        # != 1 because a platform standing for two collections says nothing about which
+        # of them the relation calls at; build_bus_stop_collections should never make one
         if collection_platform_use_counter[typed_id] != 1:
             continue
 
