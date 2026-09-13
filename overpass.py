@@ -40,6 +40,10 @@ from xmltodict_postprocessor import postprocessor
 # other configured instances instead of failing the whole request.
 _RETRY_STATUS_CODES = frozenset((429, 502, 503, 504))
 
+
+class OverpassReplyError(Exception):
+    """Overpass answered with a 200 that carries an error rather than data."""
+
 # Every reply says how far its data has caught up: `timestamp_osm_base` in JSON,
 # `osm_base` on the meta element in XML. Both sit in the first few hundred bytes.
 _OSM_BASE_RE = re.compile(r'(?:"timestamp_osm_base"\s*:\s*"|osm_base=")([^"]+)"')
@@ -60,6 +64,36 @@ def data_age(response: httpx.Response) -> float | None:
         stamp = stamp.replace(tzinfo=UTC)
 
     return (datetime.now(UTC) - stamp).total_seconds()
+
+
+# Overpass answers some failures with 200 and an error page in place of the data, and
+# others with a note buried in an otherwise well-formed reply. Neither is data.
+_HTML_ERROR_RE = re.compile(r'<strong[^>]*>\s*Error\s*</strong>\s*:?\s*(.*?)</p>', re.DOTALL | re.IGNORECASE)
+# a remark carries quotes of its own, escaped, so the value cannot just run to the next one
+_JSON_REMARK_RE = re.compile(r'"remark"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_XML_REMARK_RE = re.compile(r'<remark>(.*?)</remark>', re.DOTALL)
+
+
+def reply_error(response: httpx.Response) -> str | None:
+    """
+    What went wrong in a reply Overpass still gave a 200 to, or None when it is data.
+
+    A query the server could not run comes back as an HTML page saying so, and one it
+    gave up part way through comes back as valid JSON with a remark and whatever it had
+    managed to collect. Passed on as data, the first fails much later on the parse and
+    the second quietly looks like an area with nothing in it.
+    """
+    if response.headers.get('content-type', '').startswith('text/html'):
+        match = _HTML_ERROR_RE.search(response.text)
+        return ' '.join(match[1].split()) if match else 'answered with a page instead of data'
+
+    match = _JSON_REMARK_RE.search(response.text) or _XML_REMARK_RE.search(response.text)
+    if match is None:
+        return None
+
+    # a remark also carries harmless notes, such as how many areas were considered
+    remark = ' '.join(match[1].split())
+    return remark if 'error' in remark.lower() else None
 
 
 def _describe_age(age: float) -> str:
@@ -83,7 +117,17 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                 last_error = e
                 print(f'[OVERPASS] ⚠️ {url} unreachable (attempt {attempt}): {e!r}')
             else:
-                if r.status_code not in _RETRY_STATUS_CODES:
+                if r.status_code in _RETRY_STATUS_CODES:
+                    last_error = httpx.HTTPStatusError(
+                        f'{url} returned {r.status_code}', request=r.request, response=r
+                    )
+                    print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
+
+                elif (reported := reply_error(r)) is not None:
+                    last_error = OverpassReplyError(f'{url} reported: {reported}')
+                    print(f'[OVERPASS] ⚠️ {url} answered 200 with an error (attempt {attempt}): {reported}')
+
+                else:
                     r.raise_for_status()
 
                     age = data_age(r)
@@ -97,9 +141,6 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                     if stale is None or age < stale[0]:
                         stale = (age, url)
                     break
-
-                last_error = httpx.HTTPStatusError(f'{url} returned {r.status_code}', request=r.request, response=r)
-                print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
 
             if attempt < OVERPASS_API_ATTEMPTS:
                 await asyncio.sleep(2 ** (attempt - 1))
