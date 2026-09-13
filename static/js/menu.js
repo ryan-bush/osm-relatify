@@ -22,7 +22,7 @@ import {
     relationTagsOriginal,
     setRecalcHandler,
     unloadRelationTags,
-} from "./tagEditor.js"
+} from "./relationTagEditor.js"
 import {
     createElementFromHTML,
     deflateCompress,
@@ -72,7 +72,7 @@ export let isCreating = false
 // is on every /query, not just the first
 export let newRouteType = null
 
-// tagEditor.js cannot import the route module directly without closing an import cycle,
+// relationTagEditor.js cannot import the route module directly without closing an import cycle,
 // so the dependency is registered from here instead. The call is wrapped rather than
 // passed by reference so the binding is only read once the modules have finished loading.
 setRecalcHandler(() => requestCalcBusRoute())
