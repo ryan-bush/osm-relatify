@@ -13,6 +13,13 @@ import {
     downloadHistoryData,
     processRelationDownloadTriggers,
 } from "./downloadTriggers.js"
+import {
+    markRouteUploaded,
+    renderMasterPicker,
+    routeMasterViewId,
+    setRouteEditHandler,
+    setRouteMasterView,
+} from "./masterPicker.js"
 import { map } from "./map.js"
 import {
     detachingRouteMasters,
@@ -24,6 +31,7 @@ import {
     noteRouteTags,
     processRouteMasters,
     setRouteMasterChangeHandler,
+    setRouteNavigationHandlers,
 } from "./routeMastersView.js"
 import { showMessage } from "./messageBox.js"
 import {
@@ -95,6 +103,13 @@ setRecalcHandler(() => requestCalcBusRoute())
 // the old one no longer an answer; looking again is the mapper's to ask for
 setTagsChangedHandler((tags) => noteRouteTags(tags))
 
+// a variant listed beside the route being edited is as often the next thing to edit as
+// it is something to go and look at
+setRouteNavigationHandlers({
+    editRoute: (id) => editRoute(id),
+    showMaster: (id) => showMaster(id),
+})
+
 setRouteMasterChangeHandler(() => {
     if (routeData !== null) processRouteWarnings(routeData)
 })
@@ -137,22 +152,16 @@ relationIdInput.addEventListener("input", (e) => {
     e.target.value = match !== null ? match[0] : ""
 })
 
-loadRelationForm.addEventListener("submit", (e) => {
-    e.preventDefault()
-
-    if (loadRelationBtn.classList.contains("is-loading")) return
-
-    relationId = Number.parseInt(relationIdInput.value)
-    relationIdInput.disabled = true
-    loadRelationBtn.classList.add("btn-secondary")
-    loadRelationBtn.classList.add("is-loading")
-    loadRelationBtn.innerHTML = busAnimationElement.innerHTML
-
+// Loads a relation by id. A route is opened for editing; a route master is not the thing
+// that gets edited, so its variants are listed for one to be picked instead.
+const loadRelation = (id, setBusy) => {
+    relationId = id
     isCreating = false
     newRouteType = null
     showRelationIdentity()
+    setBusy(true)
 
-    fetch("/query", {
+    return fetch("/query", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -176,19 +185,77 @@ loadRelationForm.addEventListener("submit", (e) => {
         .then((data) => {
             if (!data) return
 
+            if (data.kind === "route_master") {
+                // nothing is loaded for a master itself, so the id it was given is not
+                // the relation being edited
+                relationId = null
+                showRelationIdentity()
+                setRouteMasterView(data)
+                showMasterPicker()
+                return
+            }
+
             processFetchRelationData(data)
         })
         .catch((error) => {
             console.error(error)
             showMessage("danger", "❌ Relation load failed", error)
         })
-        .finally(() => {
-            relationIdInput.disabled = false
-            loadRelationBtn.classList.remove("btn-secondary")
-            loadRelationBtn.classList.remove("is-loading")
-            loadRelationBtn.innerHTML = "Load"
-        })
+        .finally(() => setBusy(false))
+}
+
+const setLoadButtonBusy = (busy) => {
+    relationIdInput.disabled = busy
+    loadRelationBtn.classList.toggle("btn-secondary", busy)
+    loadRelationBtn.classList.toggle("is-loading", busy)
+    loadRelationBtn.innerHTML = busy ? busAnimationElement.innerHTML : "Load"
+}
+
+loadRelationForm.addEventListener("submit", (e) => {
+    e.preventDefault()
+
+    if (loadRelationBtn.classList.contains("is-loading")) return
+
+    loadRelation(Number.parseInt(relationIdInput.value), setLoadButtonBusy)
 })
+
+const showMasterPicker = () => {
+    renderMasterPicker()
+    switchView("master")
+}
+
+// Everything queued for the route being edited, which leaving it would throw away. The
+// picker makes hopping between variants easy, and losing an afternoon's work to a stray
+// click with it.
+const hasPendingChanges = () =>
+    newStopCount() > 0 ||
+    stopPositionCount() > 0 ||
+    tagChangeCount() > 0 ||
+    stopAreaCount() > 0 ||
+    routeMasterChangeCount() > 0 ||
+    relationTagsEdited() ||
+    routeMembersEdited()
+
+const relationTagsEdited = () => {
+    if (relationTags === null || relationTagsOriginal === null) return false
+
+    const keys = new Set([...Object.keys(relationTags), ...Object.keys(relationTagsOriginal)])
+    return [...keys].some((key) => (relationTags[key] ?? "") !== (relationTagsOriginal[key] ?? ""))
+}
+
+// The calculation says so itself: a route whose members match the relation warns that
+// nothing about it changed, and one that has been edited does not.
+const routeMembersEdited = () => {
+    if (routeData === null) return false
+    if (isCreating) return true
+
+    return !routeData.warnings.some((warning) => warning.severity === 10)
+}
+
+const confirmLeavingRoute = () =>
+    !hasPendingChanges() ||
+    window.confirm("This route has changes that have not been uploaded. Leave and lose them?")
+
 
 createRelationForm.addEventListener("submit", (e) => {
     e.preventDefault()
@@ -413,9 +480,9 @@ export const processRouteWarnings = (data) => {
     if (highestSeverityLevel === 0) editSubmitBtn.classList.remove("d-none")
 }
 
-const unload = () => {
-    switchView("load")
-
+// Everything belonging to the route being edited. The master it was picked from is not
+// part of that: going back to the list is not leaving it.
+const unloadRoute = () => {
     processRelationEndpointData(null)
     processRelationWaysData(null)
     processRelationDownloadTriggers(null)
@@ -429,7 +496,66 @@ const unload = () => {
     newRouteType = null
 }
 
-editBackBtn.onclick = unload
+const unload = () => {
+    unloadRoute()
+    setRouteMasterView(null)
+    switchView("load")
+}
+
+editBackBtn.onclick = () => {
+    if (!confirmLeavingRoute()) return
+
+    // back where the route was picked, when it was picked rather than typed in
+    if (routeMasterViewId() !== null) {
+        unloadRoute()
+        showMasterPicker()
+        return
+    }
+
+    unload()
+}
+
+const masterBackBtn = document.querySelector("#view-master .btn-master-back")
+const masterReloadBtn = document.querySelector("#view-master .btn-master-reload")
+
+masterBackBtn.onclick = () => {
+    setRouteMasterView(null)
+    unload()
+}
+
+masterReloadBtn.onclick = () => {
+    const id = routeMasterViewId()
+    if (id === null) return
+
+    loadRelation(id, (busy) => {
+        masterBackBtn.disabled = busy
+        masterReloadBtn.disabled = busy
+        masterReloadBtn.innerText = busy ? "Reloading..." : "↻ Reload"
+    })
+}
+
+// picking a variant loads it the way any route is loaded
+setRouteEditHandler((id) => editRoute(id))
+
+// Loading one relation in place of another, from wherever it was named: a variant picked
+// out of the master's list, one listed beside the route being edited, or the master of
+// the route being edited.
+function editRoute(id) {
+    if (!confirmLeavingRoute()) return
+
+    loadRelation(id, (busy) => {
+        for (const button of document.querySelectorAll("#master-routes button, .route-master-routes button"))
+            button.disabled = busy
+    })
+}
+
+function showMaster(id) {
+    if (!confirmLeavingRoute()) return
+
+    loadRelation(id, (busy) => {
+        for (const button of document.querySelectorAll(".route-master-actions button")) button.disabled = busy
+    })
+}
 
 editReloadBtn.onclick = async () => {
     editBackBtn.disabled = true
@@ -672,6 +798,15 @@ submitUploadBtn.onclick = async () => {
                 "✅ Upload successful",
                 `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}${revert}`,
             )
+
+            // back to the variants, with this one marked, so the next is one click away
+            if (routeMasterViewId() !== null) {
+                if (relationId !== null) markRouteUploaded(relationId)
+                unloadRoute()
+                showMasterPicker()
+                return
+            }
+
             unload()
         })
         .catch((error) => {

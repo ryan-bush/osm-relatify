@@ -55,10 +55,13 @@ from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
 from relation_builder import build_osm_change, get_relation_members, sort_and_upgrade_members
+from route_types import get_route_type, get_route_value
 from route_masters import (
     MAX_DESCRIBED_ROUTES,
     RouteMasterChange,
+    build_route_master_view,
     describe_members,
+    is_route_master,
     member_route_ids,
     parse_route_masters,
     parse_routes,
@@ -175,30 +178,6 @@ def logout():
     return response
 
 
-def get_route_type(tags: dict[str, str]) -> str | None:
-    if tags.get('public_transport:version') != '2':
-        return None
-    type = tags.get('type')
-    if type not in {'route', 'disused:route', 'was:route'}:
-        return None
-    type_specifier = tags.get(type)
-    if type_specifier == 'trolleybus':
-        return 'bus'
-    if type_specifier not in {'bus', 'tram'}:
-        return None
-    return type_specifier
-
-
-def get_route_value(tags: dict[str, str]) -> str:
-    """
-    The kind of route as it is actually tagged: bus, tram or trolleybus.
-
-    get_route_type() reads a trolleybus route as a bus one, which is right for routing but
-    wrong for finding its siblings: a trolleybus route's master holds trolleybus routes.
-    """
-    return tags.get(tags.get('type', ''), '')
-
-
 # a full viewport at low zoom is far too much to download in one go; panning grows
 # the area from a sensible starting point instead
 NEW_RELATION_MAX_CELLS = 256
@@ -275,6 +254,13 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
                 raise
 
             relation_tags = relation.get('tags', {})
+
+            # A route master is a perfectly good relation to be handed; it is simply not
+            # the thing that gets edited. Its variants are listed instead, and the one
+            # picked is loaded the way any route is — so nothing is downloaded here.
+            if is_route_master(relation_tags):
+                return await _build_route_master_view(relation)
+
             route_type = get_route_type(relation_tags)
             if route_type is None:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Relation must be a PTv2 bus/tram/trolleybus route')
@@ -352,6 +338,16 @@ async def _query_stop_areas(bus_stop_collections) -> list[StopArea] | None:
         # the download still works without them, and the client stops offering stop areas
         print(f'🚧 Warning: Could not look up stop areas: {e!r}')
         return None
+
+
+async def _build_route_master_view(relation: dict):
+    """The variants of a route master, for choosing which one to edit."""
+    print(f'🚏 Listing route master ({relation["id"]})')
+
+    [master] = parse_route_masters([relation])
+    routes = await _describe_route_master_members([master])
+
+    return build_route_master_view(master, routes)
 
 
 async def _query_route_masters(

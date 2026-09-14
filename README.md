@@ -157,6 +157,7 @@ this fork makes, listed above, are documented there too.
 - ✅ Reviewing tags NaPTAN and OSM disagree on
 - ✅ `stop_area` relations for grouped stops
 - ✅ `route_master` relations: viewing, linking and editing
+- ✅ Working through every variant of a line from its `route_master`
 
 
 ### Planned

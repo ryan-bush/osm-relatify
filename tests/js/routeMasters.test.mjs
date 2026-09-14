@@ -114,6 +114,15 @@ test("a variant is named by its ref and name together", () => {
     assert.equal(describeRoute({ id: 1, ref: "", name: "" }), "Relation 1")
 })
 
+// the changeset comment leaves a ref out of the same sentence for the same reason
+test("a ref the name already carries is not said twice", () => {
+    assert.equal(
+        describeRoute({ id: 1, ref: "9", name: "Bus 9: Town Centre => Wroughton" }),
+        "Bus 9: Town Centre => Wroughton",
+    )
+})
+
+
 // the type tag names the tag carrying the kind, so a disused route reads its own
 test("a route's kind is read from the tag its type names", () => {
     assert.equal(routeValue({ type: "route", route: "bus" }), "bus")
