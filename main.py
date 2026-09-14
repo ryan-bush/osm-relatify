@@ -54,7 +54,12 @@ from naptan import NAPTAN
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
-from relation_builder import build_osm_change, get_relation_members, sort_and_upgrade_members
+from relation_builder import (
+    build_osm_change,
+    build_route_master_only_change,
+    get_relation_members,
+    sort_and_upgrade_members,
+)
 from route_types import get_route_type, get_route_value
 from route_masters import (
     MAX_DESCRIBED_ROUTES,
@@ -653,6 +658,66 @@ class PostDownloadOsmChangeModel(BaseModel):
         if described:
             return f'{verb} route: {described}, #{self.relationId}'
         return f'{verb} route #{self.relationId}'
+
+
+class PostRouteMasterOnlyModel(BaseModel):
+    """Edits to a route master's own tags, made from the list of a line's variants."""
+
+    id: int = Field(gt=0)
+    tags: dict[str, str]
+    # its tags exactly as the client loaded them, the baseline the edits are diffed against
+    tagsOriginal: dict[str, str]
+    comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
+
+    def to_change(self) -> RouteMasterChange:
+        return RouteMasterChange(id=self.id, tags=self.tags, tagsOriginal=self.tagsOriginal)
+
+    def make_comment(self) -> str:
+        if self.comment is not None and (comment := self.comment.strip()):
+            return comment
+
+        described = self.tags.get('name', '').strip() or self.tags.get('ref', '').strip()
+        if described:
+            return f'Updated route master: {described}, #{self.id}'
+        return f'Updated route master #{self.id}'
+
+    def make_changeset_tags(self) -> dict[str, str]:
+        return {'comment': self.make_comment(), 'created_by': CREATED_BY, 'host': WEBSITE}
+
+
+@app.post('/download_route_master_change')
+async def post_download_route_master_change(model: PostRouteMasterOnlyModel, _=Depends(require_user_details)):
+    print(f'💾 Downloading route master change ({model.id})')
+
+    with print_run_time('Building OSM change'):
+        osm_change = await build_route_master_only_change(model.to_change(), False, _OSM)
+
+    return Response(content=osm_change, media_type='text/xml; charset=utf-8')
+
+
+@app.post('/upload_route_master')
+async def post_upload_route_master(
+    model: PostRouteMasterOnlyModel,
+    access_token: str = Depends(require_user_access_token),
+):
+    print(f'🌐 Uploading route master change ({model.id})')
+
+    with print_run_time('Building OSM change'):
+        osm_change = await build_route_master_only_change(model.to_change(), True, _OSM)
+
+    async with OpenStreetMap(access_token=access_token) as osm:
+        osm_user = await osm.get_authorized_user()
+        upload_result = await osm.upload_osm_change(
+            osm_change,
+            {'changesets_count': osm_user['changesets']['count'] + 1, **model.make_changeset_tags()},
+        )
+
+    if upload_result.ok:
+        print(f'✅ Changeset upload success: #{upload_result.changeset_id}')
+    else:
+        print(f'🚩 Changeset upload failure: {upload_result}')
+
+    return upload_result
 
 
 @app.post('/download_osm_change')

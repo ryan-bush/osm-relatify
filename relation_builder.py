@@ -437,6 +437,26 @@ def _update_relations_after_split(
 NEW_RELATION_PLACEHOLDER_ID = RelationPlaceholders.ROUTE
 
 
+async def build_route_master_only_change(
+    change: RouteMasterChange,
+    include_changeset_id: bool,
+    osm: OpenStreetMap,
+) -> str:
+    """
+    A changeset that edits a route master's own tags and nothing else.
+
+    What the master holds is not in question here: this is the tags of one relation, asked
+    for from the list of a line's variants rather than from inside one of them.
+    """
+    result = _initialize_osm_change_structure()
+
+    for relation_data in await build_route_master_modifications(change, (), None, osm):
+        _set_changeset_placeholder(relation_data, include_changeset_id)
+        result['osmChange']['modify']['relation'].append(relation_data)
+
+    return xmltodict.unparse(result, pretty=not include_changeset_id)
+
+
 async def build_osm_change(
     relation_id: int | None,
     route: FinalRoute,

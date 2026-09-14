@@ -2,11 +2,18 @@
 // id, this lists them and lets one be picked, so editing a line means loading the master
 // once rather than copying each variant's id out of OSM in turn.
 
+import { routeMasterIssues } from "./routeMasterChecks.js"
 import { describeRoute } from "./routeMasters.js"
+import { createTagEditor } from "./tagEditor.js"
 import { osmUrl } from "./utils.js"
 
 const summary = document.getElementById("master-summary")
 const list = document.getElementById("master-routes")
+const issueList = document.getElementById("master-issues")
+const tagsTable = document.getElementById("master-tags-table")
+const tagsControls = document.getElementById("master-tags-controls")
+const tagsActions = document.getElementById("master-tags-actions")
+const editTagsBtn = document.createElement("button")
 const idElements = document.querySelectorAll(".view .master-id")
 const urlElements = document.querySelectorAll(".view .master-url")
 
@@ -22,6 +29,54 @@ export const setRouteEditHandler = (handler) => {
     onEdit = handler
 }
 
+// the master's own tags, edited here rather than from inside one of its variants. They go
+// up as a changeset of their own: there is no route being edited to carry them along.
+let editedTags = null
+let editing = false
+
+const tagEditor = createTagEditor({
+    tableBody: document.getElementById("master-tags"),
+    toggleButton: document.getElementById("master-tags-toggle"),
+    addButton: document.getElementById("master-tags-add"),
+    featuredKeys: ["name", "ref", "network", "operator", "colour"],
+    // what makes it a master, and what the application reads it back by
+    lockedKeys: new Set(["type", "route_master"]),
+    wideElement: document.getElementById("menu"),
+    onChange: (tags) => {
+        editedTags = tags
+    },
+})
+
+export const routeMasterTagsPayload = () =>
+    view === null || !editing
+        ? null
+        : { id: view.id, tags: editedTags ?? {}, tagsOriginal: view.tags }
+
+export const routeMasterTagsEdited = () => {
+    if (!editing || editedTags === null) return false
+
+    const keys = new Set([
+        ...Object.keys(editedTags),
+        ...Object.keys(view.tags),
+    ])
+    return [...keys].some(
+        (key) => (editedTags[key] ?? "") !== (view.tags[key] ?? ""),
+    )
+}
+
+const setEditing = (next) => {
+    editing = next
+
+    tagsTable.classList.toggle("d-none", !editing)
+    tagsControls.classList.toggle("d-none", !editing)
+    tagsActions.classList.toggle("d-none", !editing)
+
+    if (editing) tagEditor.load(view.tags)
+    else tagEditor.unload()
+
+    editTagsBtn.textContent = editing ? "Stop editing tags" : "Edit its tags"
+}
+
 export const routeMasterView = () => view
 export const routeMasterViewId = () => view?.id ?? null
 export const markRouteUploaded = (id) => done.add(id)
@@ -29,6 +84,8 @@ export const markRouteUploaded = (id) => done.add(id)
 export function setRouteMasterView(data) {
     view = data
     if (data === null) done.clear()
+    // a fresh answer is not the one the open edits were made against
+    setEditing(false)
 }
 
 const makeNote = (text) => {
@@ -119,6 +176,31 @@ export function renderMasterPicker() {
             ),
         )
 
+    editTagsBtn.type = "button"
+    editTagsBtn.className = "btn btn-link btn-sm p-0"
+    editTagsBtn.textContent = editing ? "Stop editing tags" : "Edit its tags"
+    editTagsBtn.onclick = () => {
+        setEditing(!editing)
+        renderMasterPicker()
+    }
+    children.push(editTagsBtn)
+
     summary.replaceChildren(...children)
+    renderIssues()
     list.replaceChildren(...view.routes.map(makeRouteRow))
+}
+
+// Everything the variants say about themselves, read side by side. A master with one
+// variant carrying a different operator is the thing this list exists to surface.
+const renderIssues = () => {
+    const issues = routeMasterIssues(view.tags, view.routes)
+
+    issueList.replaceChildren(
+        ...issues.map((issue) => {
+            const div = document.createElement("div")
+            div.className = "route-master-note warning-LOW"
+            div.textContent = issue.message
+            return div
+        }),
+    )
 }
