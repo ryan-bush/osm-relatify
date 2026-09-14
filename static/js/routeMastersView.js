@@ -10,6 +10,7 @@ import {
     describeRoute,
     detachRouteMaster,
     editRouteMasterTags,
+    followRouteTags,
     invalidateRouteMasterCandidates,
     isDetaching,
     linkRouteMaster,
@@ -313,7 +314,7 @@ const makeCandidateChooser = () => {
 // otherwise; loading it afresh each time keeps it from showing another master's tags.
 let editingKey = null
 
-const syncTagEditor = () => {
+const syncTagEditor = (reload = false) => {
     const pending = pendingRouteMaster()
     const editable =
         pending !== null &&
@@ -322,14 +323,14 @@ const syncTagEditor = () => {
 
     tagsWrap.classList.toggle("d-none", !editable)
 
-    if (key === editingKey) return
+    if (key === editingKey && !reload) return
     editingKey = key
 
     if (editable) tagEditor.load(pending.tags)
     else tagEditor.unload()
 }
 
-const render = () => {
+const render = ({ reloadTags = false } = {}) => {
     const heading = document.createElement("div")
     heading.className = "route-master-title"
     heading.textContent = "Route master"
@@ -381,7 +382,7 @@ const render = () => {
     container.replaceChildren(...children)
     container.classList.remove("d-none")
 
-    syncTagEditor()
+    syncTagEditor(reloadTags)
 }
 
 export const processRouteMasters = (data, options = {}) => {
@@ -419,11 +420,19 @@ let searching = false
 export const noteRouteTags = (tags) => {
     routeTags = tags ?? {}
 
-    if (searchedKey === null || siblingKey(routeTags) === searchedKey) return
+    // a master queued for creation was named after the route, and goes on being named
+    // after it until the mapper says otherwise
+    const followed = followRouteTags(routeTags)
+    const stale = searchedKey !== null && siblingKey(routeTags) !== searchedKey
 
-    searchedKey = null
-    invalidateRouteMasterCandidates()
-    render()
+    if (stale) {
+        searchedKey = null
+        invalidateRouteMasterCandidates()
+    }
+
+    // the tag table is showing what just changed, so it is loaded again rather than left
+    // saying what the master used to be called
+    if (followed || stale) render({ reloadTags: followed })
 }
 
 const searchRouteMasters = () => {

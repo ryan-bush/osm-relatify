@@ -8,13 +8,14 @@ import {
     defaultMasterTags,
     describeMaster,
     describeRoute,
-    detachRouteMaster,
     detachingRouteMasters,
+    detachRouteMaster,
     editRouteMasterTags,
+    followRouteTags,
+    invalidateRouteMasterCandidates,
     isDetaching,
     linkRouteMaster,
     mismatchesOf,
-    invalidateRouteMasterCandidates,
     pendingRouteMaster,
     refreshRouteMasters,
     routeMasterCandidates,
@@ -24,8 +25,8 @@ import {
     routeValue,
     setPendingRouteMasterTags,
     setRouteMasters,
-    undetachRouteMaster,
     undescribedMemberCount,
+    undetachRouteMaster,
 } from "../../static/js/routeMasters.js"
 
 const master = (over = {}) => ({
@@ -186,9 +187,18 @@ test("members that were not described are counted, not invented", () => {
 
 // --- queueing a change -------------------------------------------------------
 
-const fullRouteTags = { ...routeTags, network: "Oxfordshire", operator: "Stagecoach" }
+const fullRouteTags = {
+    ...routeTags,
+    network: "Oxfordshire",
+    operator: "Stagecoach",
+}
 
-const download = (over = {}) => ({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [], ...over })
+const download = (over = {}) => ({
+    tags: fullRouteTags,
+    routeMasters: [],
+    routeMasterCandidates: [],
+    ...over,
+})
 
 test("nothing is queued until something is asked for", () => {
     setRouteMasters(download({ routeMasters: [master()] }))
@@ -222,8 +232,15 @@ test("creating queues a master with no id and tags from the route", () => {
 })
 
 test("a new master is named for the kind of route it holds", () => {
-    assert.equal(defaultMasterTags({ type: "route", route: "tram", ref: "3" }).name, "Tram 3")
-    assert.equal(defaultMasterTags({ type: "route", route: "trolleybus", ref: "3" }).name, "Trolleybus 3")
+    assert.equal(
+        defaultMasterTags({ type: "route", route: "tram", ref: "3" }).name,
+        "Tram 3",
+    )
+    assert.equal(
+        defaultMasterTags({ type: "route", route: "trolleybus", ref: "3" })
+            .name,
+        "Trolleybus 3",
+    )
 })
 
 test("a route with no ref gives a master no ref to be named after", () => {
@@ -235,7 +252,12 @@ test("a route with no ref gives a master no ref to be named after", () => {
 })
 
 test("only the tags the route actually has are copied to a new master", () => {
-    const tags = defaultMasterTags({ type: "route", route: "bus", ref: "71", operator: "  " })
+    const tags = defaultMasterTags({
+        type: "route",
+        route: "bus",
+        ref: "71",
+        operator: "  ",
+    })
 
     assert.equal("operator" in tags, false)
     assert.equal("colour" in tags, false)
@@ -291,13 +313,25 @@ test("every queued change counts toward the changeset having something to say", 
 test("a payload with nothing queued asks for nothing", () => {
     setRouteMasters(download())
 
-    assert.deepEqual(routeMasterPayload(), { routeMaster: null, routeMasterDetach: [] })
+    assert.deepEqual(routeMasterPayload(), {
+        routeMaster: null,
+        routeMasterDetach: [],
+    })
 })
 
 // --- linking without being asked ---------------------------------------------
 
 const candidate = (over = {}) =>
-    master({ id: 101, tags: { type: "route_master", route_master: "bus", ref: "71", network: "Oxfordshire" }, ...over })
+    master({
+        id: 101,
+        tags: {
+            type: "route_master",
+            route_master: "bus",
+            ref: "71",
+            network: "Oxfordshire",
+        },
+        ...over,
+    })
 
 test("the one candidate matching ref and network is queued by itself", () => {
     setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
@@ -307,7 +341,14 @@ test("the one candidate matching ref and network is queued by itself", () => {
 })
 
 test("a candidate whose network differs is left for the mapper", () => {
-    const elsewhere = candidate({ tags: { type: "route_master", route_master: "bus", ref: "71", network: "Kent" } })
+    const elsewhere = candidate({
+        tags: {
+            type: "route_master",
+            route_master: "bus",
+            ref: "71",
+            network: "Kent",
+        },
+    })
 
     setRouteMasters(download({ routeMasterCandidates: [elsewhere] }))
 
@@ -315,31 +356,50 @@ test("a candidate whose network differs is left for the mapper", () => {
 })
 
 test("two candidates that both match are not chosen between", () => {
-    setRouteMasters(download({ routeMasterCandidates: [candidate(), candidate({ id: 102 })] }))
+    setRouteMasters(
+        download({
+            routeMasterCandidates: [candidate(), candidate({ id: 102 })],
+        }),
+    )
 
     assert.equal(pendingRouteMaster(), null)
 })
 
 test("a route already in a master is not queued into another", () => {
-    setRouteMasters(download({ routeMasters: [master()], routeMasterCandidates: [candidate()] }))
+    setRouteMasters(
+        download({
+            routeMasters: [master()],
+            routeMasterCandidates: [candidate()],
+        }),
+    )
 
     assert.equal(pendingRouteMaster(), null)
 })
 
 test("nothing is queued when the lookup could not answer", () => {
-    setRouteMasters({ tags: fullRouteTags, routeMasters: null, routeMasterCandidates: null })
+    setRouteMasters({
+        tags: fullRouteTags,
+        routeMasters: null,
+        routeMasterCandidates: null,
+    })
 
     assert.equal(pendingRouteMaster(), null)
 })
 
 test("a route with no ref matches nothing", () => {
-    setRouteMasters({ tags: { type: "route", route: "bus" }, routeMasters: [], routeMasterCandidates: [candidate()] })
+    setRouteMasters({
+        tags: { type: "route", route: "bus" },
+        routeMasters: [],
+        routeMasterCandidates: [candidate()],
+    })
 
     assert.equal(pendingRouteMaster(), null)
 })
 
 test("a candidate matches when neither it nor the route names a network", () => {
-    const plain = candidate({ tags: { type: "route_master", route_master: "bus", ref: "71" } })
+    const plain = candidate({
+        tags: { type: "route_master", route_master: "bus", ref: "71" },
+    })
 
     setRouteMasters({
         tags: { type: "route", route: "bus", ref: "71" },
@@ -379,7 +439,11 @@ test("a later answer replaces what the download found", () => {
     setRouteMasters(download())
     assert.equal(pendingRouteMaster(), null)
 
-    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [candidate()] })
+    refreshRouteMasters({
+        tags: fullRouteTags,
+        routeMasters: [],
+        routeMasterCandidates: [candidate()],
+    })
 
     assert.equal(pendingRouteMaster().id, 101)
     assert.equal(pendingRouteMaster().automatic, true)
@@ -390,7 +454,11 @@ test("a choice made by hand survives a later answer", () => {
     setRouteMasters(download())
     linkRouteMaster(master({ id: 999 }))
 
-    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [candidate()] })
+    refreshRouteMasters({
+        tags: fullRouteTags,
+        routeMasters: [],
+        routeMasterCandidates: [candidate()],
+    })
 
     assert.equal(pendingRouteMaster().id, 999)
 })
@@ -400,7 +468,11 @@ test("a choice made automatically is reconsidered", () => {
     setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
     assert.equal(pendingRouteMaster().id, 101)
 
-    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [candidate({ id: 102 })] })
+    refreshRouteMasters({
+        tags: fullRouteTags,
+        routeMasters: [],
+        routeMasterCandidates: [candidate({ id: 102 })],
+    })
 
     assert.equal(pendingRouteMaster().id, 102)
 })
@@ -408,7 +480,11 @@ test("a choice made automatically is reconsidered", () => {
 test("an answer with nothing to join drops an automatic choice", () => {
     setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
 
-    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [] })
+    refreshRouteMasters({
+        tags: fullRouteTags,
+        routeMasters: [],
+        routeMasterCandidates: [],
+    })
 
     assert.equal(pendingRouteMaster(), null)
 })
@@ -417,7 +493,11 @@ test("asking again does not forget which masters are being left", () => {
     setRouteMasters(download({ routeMasters: [master()] }))
     detachRouteMaster(100)
 
-    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [master()], routeMasterCandidates: [] })
+    refreshRouteMasters({
+        tags: fullRouteTags,
+        routeMasters: [master()],
+        routeMasterCandidates: [],
+    })
 
     assert.deepEqual(detachingRouteMasters(), [100])
 })
@@ -425,7 +505,11 @@ test("asking again does not forget which masters are being left", () => {
 // --- the ref changing under an answer ----------------------------------------
 
 test("what was found for the old ref is no longer offered", () => {
-    setRouteMasters(download({ routeMasterCandidates: [candidate(), candidate({ id: 102 })] }))
+    setRouteMasters(
+        download({
+            routeMasterCandidates: [candidate(), candidate({ id: 102 })],
+        }),
+    )
 
     invalidateRouteMasterCandidates()
 
@@ -467,4 +551,142 @@ test("masters being left are not forgotten when the ref changes", () => {
     invalidateRouteMasterCandidates()
 
     assert.deepEqual(detachingRouteMasters(), [100])
+})
+
+// --- a master being created follows the route ---------------------------------
+
+const created = () => pendingRouteMaster().tags
+
+test("a new master follows a ref corrected before uploading", () => {
+    setRouteMasters(download())
+    createRouteMaster({ type: "route", route: "bus", ref: "9" })
+    assert.deepEqual(created(), {
+        type: "route_master",
+        route_master: "bus",
+        ref: "9",
+        name: "Bus 9",
+    })
+
+    assert.equal(
+        followRouteTags({ type: "route", route: "bus", ref: "92" }),
+        true,
+    )
+
+    assert.equal(created().ref, "92")
+    assert.equal(created().name, "Bus 92")
+})
+
+test("it follows the other tags it was seeded from too", () => {
+    setRouteMasters(download())
+    createRouteMaster({
+        type: "route",
+        route: "bus",
+        ref: "9",
+        operator: "Alpha",
+    })
+
+    followRouteTags({
+        type: "route",
+        route: "bus",
+        ref: "9",
+        operator: "Beta",
+        colour: "red",
+    })
+
+    assert.equal(created().operator, "Beta")
+    assert.equal(created().colour, "red")
+})
+
+// what the mapper typed into the master is theirs; only what was seeded follows
+test("a name the mapper typed is not overwritten", () => {
+    setRouteMasters(download())
+    createRouteMaster({ type: "route", route: "bus", ref: "9" })
+    setPendingRouteMasterTags({ ...created(), name: "Bus 9 (Wroughton)" })
+
+    followRouteTags({ type: "route", route: "bus", ref: "92" })
+
+    assert.equal(created().name, "Bus 9 (Wroughton)", "theirs")
+    assert.equal(
+        created().ref,
+        "92",
+        "and the ref, which they did not touch, still follows",
+    )
+})
+
+test("a tag the mapper added of their own is left alone", () => {
+    setRouteMasters(download())
+    createRouteMaster({ type: "route", route: "bus", ref: "9" })
+    setPendingRouteMasterTags({ ...created(), wikidata: "Q1" })
+
+    followRouteTags({ type: "route", route: "bus", ref: "92" })
+
+    assert.equal(created().wikidata, "Q1")
+})
+
+test("clearing the route's ref takes the ref and name with it", () => {
+    setRouteMasters(download())
+    createRouteMaster({ type: "route", route: "bus", ref: "9" })
+
+    followRouteTags({ type: "route", route: "bus" })
+
+    assert.equal("ref" in created(), false)
+    assert.equal("name" in created(), false)
+    assert.equal(created().route_master, "bus")
+})
+
+test("an edit that changes nothing about the master is not a change", () => {
+    setRouteMasters(download())
+    createRouteMaster({ type: "route", route: "bus", ref: "9" })
+
+    assert.equal(
+        followRouteTags({
+            type: "route",
+            route: "bus",
+            ref: "9",
+            from: "High Street",
+        }),
+        false,
+    )
+})
+
+// a master already in OSM is not named after this route, and is not ours to rename
+test("a master being joined does not follow the route", () => {
+    setRouteMasters(download())
+    linkRouteMaster(master({ id: 101 }))
+
+    assert.equal(
+        followRouteTags({ type: "route", route: "bus", ref: "92" }),
+        false,
+    )
+    assert.deepEqual(pendingRouteMaster().tags, master().tags)
+})
+
+test("a master whose tags are being edited does not follow the route", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+    editRouteMasterTags(master())
+
+    assert.equal(
+        followRouteTags({ type: "route", route: "bus", ref: "92" }),
+        false,
+    )
+    assert.equal(pendingRouteMaster().tags.name, "Bus 71")
+})
+
+test("nothing queued is nothing to follow", () => {
+    setRouteMasters(download())
+
+    assert.equal(
+        followRouteTags({ type: "route", route: "bus", ref: "92" }),
+        false,
+    )
+})
+
+test("following twice keeps up rather than sticking to the first ref", () => {
+    setRouteMasters(download())
+    createRouteMaster({ type: "route", route: "bus", ref: "9" })
+
+    followRouteTags({ type: "route", route: "bus", ref: "92" })
+    followRouteTags({ type: "route", route: "bus", ref: "93" })
+
+    assert.equal(created().name, "Bus 93")
 })
