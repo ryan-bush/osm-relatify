@@ -23,7 +23,10 @@ test("featured keys are always offered, in the order given", () => {
 })
 
 test("the rest follow the featured ones, sorted", () => {
-    const entries = buildEntries({ type: "route", ref: "71", colour: "red" }, FEATURED)
+    const entries = buildEntries(
+        { type: "route", ref: "71", colour: "red" },
+        FEATURED,
+    )
 
     assert.deepEqual(
         entries.map((entry) => entry.key),
@@ -49,7 +52,13 @@ test("the working copy is what the rows amount to, trimmed", () => {
 
 // an emptied-out field is how the editor says "delete this tag"
 test("a row with no value is not a tag", () => {
-    assert.deepEqual(tagsFromEntries([{ key: "name", value: "" }, { key: "ref", value: "  " }]), {})
+    assert.deepEqual(
+        tagsFromEntries([
+            { key: "name", value: "" },
+            { key: "ref", value: "  " },
+        ]),
+        {},
+    )
 })
 
 test("a row with no key yet is not a tag", () => {
@@ -62,7 +71,10 @@ test("a value differing from what was loaded is modified", () => {
     assert.equal(isModified({ key: "name", value: "Bus 72" }, original), true)
     assert.equal(isModified({ key: "name", value: "Bus 71" }, original), false)
     // whitespace alone is not an edit, being trimmed before it is submitted
-    assert.equal(isModified({ key: "name", value: " Bus 71 " }, original), false)
+    assert.equal(
+        isModified({ key: "name", value: " Bus 71 " }, original),
+        false,
+    )
 })
 
 test("filling in a key the relation never had is modified", () => {
@@ -71,7 +83,10 @@ test("filling in a key the relation never had is modified", () => {
 })
 
 test("clearing a value the relation had is modified", () => {
-    assert.equal(isModified({ key: "name", value: "" }, { name: "Bus 71" }), true)
+    assert.equal(
+        isModified({ key: "name", value: "" }, { name: "Bus 71" }),
+        true,
+    )
 })
 
 // a row whose key is still being typed has nothing to compare against
@@ -119,4 +134,14 @@ test("only the featured rows are shown until every tag is asked for", () => {
         ["name", "ref", "roundtrip"],
     )
     assert.equal(visibleEntries(entries, FEATURED, true).length, 4)
+})
+
+// buildEntries is what setTag looks a key up in, so a featured key is always there to
+// find even when the relation does not have it
+test("a featured key is present to be set even when the relation lacks it", () => {
+    const entries = buildEntries({ name: "Bus 9" }, FEATURED)
+
+    assert.ok(
+        entries.some((entry) => entry.key === "ref" && entry.value === ""),
+    )
 })

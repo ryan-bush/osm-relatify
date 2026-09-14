@@ -66,7 +66,9 @@ export function createTagEditor({
             select.className = "form-select form-select-sm"
 
             // never silently drop a value we do not recognize
-            const shown = options.includes(entry.value) ? options : [...options, entry.value]
+            const shown = options.includes(entry.value)
+                ? options
+                : [...options, entry.value]
 
             for (const option of shown) {
                 const el = document.createElement("option")
@@ -160,7 +162,9 @@ export function createTagEditor({
 
         rows = shown.map((entry) => ({ tr: makeRow(entry), entry }))
         tableBody.replaceChildren(...rows.map(({ tr }) => tr))
-        toggleButton.textContent = showAll ? "Show fewer tags" : `Show all tags (${hiddenCount})`
+        toggleButton.textContent = showAll
+            ? "Show fewer tags"
+            : `Show all tags (${hiddenCount})`
         // nothing to reveal, but stay available while expanded so the view can be collapsed again
         toggleButton.classList.toggle("d-none", !showAll && hiddenCount === 0)
         wideElement?.classList.toggle("menu-wide", showAll)
@@ -188,6 +192,51 @@ export function createTagEditor({
 
             syncWorkingCopy()
             render()
+        },
+
+        /**
+         * Sets one tag from outside the table, as an edit made here would.
+         *
+         * `load` is not the way to do this: it would take the new tags for the ones the
+         * relation was loaded with, and the baseline the edits are diffed against server
+         * side would go with them.
+         *
+         * Returns whether anything changed.
+         */
+        setTag(key, value) {
+            if (tagsOriginal === null) return false
+
+            const entry = entries.find(
+                (candidate) => candidate.key.trim() === key,
+            )
+
+            if (entry === undefined) {
+                entries.push({ key, value })
+                syncWorkingCopy()
+                render()
+                return true
+            }
+
+            if (entry.value === value) return false
+            entry.value = value
+            syncWorkingCopy()
+
+            const row = rows.find((candidate) => candidate.entry === entry)
+
+            if (row === undefined) {
+                // not on screen: there is no field to keep in step, and the row may need
+                // to appear at all
+                render()
+            } else {
+                // Written where it stands rather than rebuilt. A table redrawn under a
+                // field being typed in replaces that field, and the caret goes with it —
+                // which is a tag that can only be given one character at a time.
+                const input = row.tr.querySelector("input, select")
+                if (input) input.value = value
+                markRow(row.tr, entry)
+            }
+
+            return true
         },
 
         unload() {

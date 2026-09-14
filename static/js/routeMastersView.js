@@ -2,6 +2,7 @@
 // about to change: the master it will join or be created in, and the ones it will leave.
 
 import { showMessage } from "./messageBox.js"
+import { setRelationTag } from "./relationTagEditor.js"
 import {
     clearPendingRouteMaster,
     createRouteMaster,
@@ -54,8 +55,34 @@ const tagEditor = createTagEditor({
     // what makes it a master, and what the application reads it back by
     lockedKeys: new Set(["type", "route_master"]),
     wideElement: document.getElementById("menu"),
-    onChange: setPendingRouteMasterTags,
+    onChange: (tags) => {
+        setPendingRouteMasterTags(tags)
+        followMasterRef(tags)
+    },
 })
+
+/**
+ * Corrects the route's ref from the master's, which is the same correction made the other
+ * way round.
+ *
+ * Only for a master being created: one already in OSM holds other routes as well, and its
+ * ref is not this route's to be renamed by. Clearing the master's ref does not clear the
+ * route's — a field being emptied to be retyped is not an instruction to throw away the
+ * ref of the relation being edited.
+ *
+ * This is also what stops the two from chasing each other: when the master's ref changed
+ * only because it followed the route, the two already agree and there is nothing to send
+ * back.
+ */
+const followMasterRef = (tags) => {
+    const pending = pendingRouteMaster()
+    if (tags === null || pending === null || pending.id !== null) return
+
+    const ref = tags.ref?.trim() ?? ""
+    if (!ref || ref === (routeTags.ref?.trim() ?? "")) return
+
+    setRelationTag("ref", ref)
+}
 
 const changed = () => {
     render()
@@ -314,7 +341,7 @@ const makeCandidateChooser = () => {
 // otherwise; loading it afresh each time keeps it from showing another master's tags.
 let editingKey = null
 
-const syncTagEditor = (reload = false) => {
+const syncTagEditor = () => {
     const pending = pendingRouteMaster()
     const editable =
         pending !== null &&
@@ -323,14 +350,16 @@ const syncTagEditor = (reload = false) => {
 
     tagsWrap.classList.toggle("d-none", !editable)
 
-    if (key === editingKey && !reload) return
+    if (key === editingKey) return
     editingKey = key
 
     if (editable) tagEditor.load(pending.tags)
     else tagEditor.unload()
 }
 
-const render = ({ reloadTags = false } = {}) => {
+const render = () => {
+    shownKey = siblingKey(routeTags)
+
     const heading = document.createElement("div")
     heading.className = "route-master-title"
     heading.textContent = "Route master"
@@ -382,7 +411,7 @@ const render = ({ reloadTags = false } = {}) => {
     container.replaceChildren(...children)
     container.classList.remove("d-none")
 
-    syncTagEditor(reloadTags)
+    syncTagEditor()
 }
 
 export const processRouteMasters = (data, options = {}) => {
@@ -411,6 +440,9 @@ const siblingKey = (tags) =>
 
 // The tags the candidate list is an answer to, or null when it is an answer to nothing.
 let searchedKey = null
+// the tags the section was last drawn for, so a ref typed a character at a time is not
+// left showing the first character
+let shownKey = null
 let searching = false
 
 // The route's tags changed under the answer that is being shown. Nothing is looked up
@@ -423,16 +455,21 @@ export const noteRouteTags = (tags) => {
     // a master queued for creation was named after the route, and goes on being named
     // after it until the mapper says otherwise
     const followed = followRouteTags(routeTags)
-    const stale = searchedKey !== null && siblingKey(routeTags) !== searchedKey
+    for (const key of followed)
+        tagEditor.setTag(key, pendingRouteMaster().tags[key] ?? "")
 
-    if (stale) {
+    const key = siblingKey(routeTags)
+
+    if (searchedKey !== null && key !== searchedKey) {
         searchedKey = null
         invalidateRouteMasterCandidates()
     }
 
-    // the tag table is showing what just changed, so it is loaded again rather than left
-    // saying what the master used to be called
-    if (followed || stale) render({ reloadTags: followed })
+    // What is shown names the ref, so it is drawn again for every ref it names and not
+    // only for the keystroke that first made the answer stale.
+    if (key === shownKey) return
+
+    render()
 }
 
 const searchRouteMasters = () => {

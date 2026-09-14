@@ -10,9 +10,25 @@ export let relationTagsOriginal = null
 export let relationTags = null
 
 // always offered, in this order; an empty field means the tag is absent
-const FEATURED_KEYS = ["name", "ref", "from", "via", "to", "network", "operator", "colour", "roundtrip"]
+const FEATURED_KEYS = [
+    "name",
+    "ref",
+    "from",
+    "via",
+    "to",
+    "network",
+    "operator",
+    "colour",
+    "roundtrip",
+]
 // interpreted server-side when loading the relation, so they are shown but not editable
-const LOCKED_KEYS = new Set(["type", "route", "disused:route", "was:route", "public_transport:version"])
+const LOCKED_KEYS = new Set([
+    "type",
+    "route",
+    "disused:route",
+    "was:route",
+    "public_transport:version",
+])
 // changing these changes the calculated route, not just the tags that get uploaded
 const RECALC_KEYS = new Set(["roundtrip"])
 // roundtrip is effectively an enum; a free-text field invites typos that change routing
@@ -55,6 +71,10 @@ export const processRelationTags = (data) => {
     editor.load(data.tags)
     relationTagsOriginal = editor.tagsOriginal
 }
+
+// Sets one of the route's tags from outside the table — the ref, when the mapper has
+// corrected it on the route master being created for it instead.
+export const setRelationTag = (key, value) => editor.setTag(key, value)
 
 export const unloadRelationTags = () => {
     editor.unload()

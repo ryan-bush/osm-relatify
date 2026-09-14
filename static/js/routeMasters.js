@@ -134,15 +134,15 @@ export function createRouteMaster(routeTags) {
  * leave the master carrying the old one. Only what the mapper has not touched follows
  * along; anything they typed into it is theirs to keep.
  *
- * Returns whether anything changed.
+ * Returns the keys that changed, so the tag table can be told what to show.
  */
 export function followRouteTags(routeTags) {
     if (pending === null || pending.id !== null || seededTags === null)
-        return false
+        return []
 
     const next = defaultMasterTags(routeTags)
     const tags = { ...pending.tags }
-    let changed = false
+    const changed = []
 
     for (const key of new Set([
         ...Object.keys(seededTags),
@@ -154,20 +154,19 @@ export function followRouteTags(routeTags) {
         if (next[key] === undefined) {
             if (key in tags) {
                 delete tags[key]
-                changed = true
+                changed.push(key)
             }
         } else if (tags[key] !== next[key]) {
             tags[key] = next[key]
-            changed = true
+            changed.push(key)
         }
     }
 
     seededTags = next
 
-    if (!changed) return false
+    if (changed.length) pending.tags = tags
 
-    pending.tags = tags
-    return true
+    return changed
 }
 
 // Opens an existing master's tags for editing. What it is called now becomes the baseline
