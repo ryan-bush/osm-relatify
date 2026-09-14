@@ -14,6 +14,7 @@ import {
     isDetaching,
     linkRouteMaster,
     mismatchesOf,
+    invalidateRouteMasterCandidates,
     pendingRouteMaster,
     refreshRouteMasters,
     routeMasterCandidates,
@@ -417,6 +418,53 @@ test("asking again does not forget which masters are being left", () => {
     detachRouteMaster(100)
 
     refreshRouteMasters({ tags: fullRouteTags, routeMasters: [master()], routeMasterCandidates: [] })
+
+    assert.deepEqual(detachingRouteMasters(), [100])
+})
+
+// --- the ref changing under an answer ----------------------------------------
+
+test("what was found for the old ref is no longer offered", () => {
+    setRouteMasters(download({ routeMasterCandidates: [candidate(), candidate({ id: 102 })] }))
+
+    invalidateRouteMasterCandidates()
+
+    assert.deepEqual(routeMasterCandidates(), [])
+})
+
+// it came from the ref, and goes with it
+test("a link made automatically goes when the ref it came from does", () => {
+    setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
+    assert.equal(pendingRouteMaster().id, 101)
+
+    invalidateRouteMasterCandidates()
+
+    assert.equal(pendingRouteMaster(), null)
+})
+
+test("a link the mapper made by hand is still theirs", () => {
+    setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
+    linkRouteMaster(master({ id: 999 }))
+
+    invalidateRouteMasterCandidates()
+
+    assert.equal(pendingRouteMaster().id, 999)
+})
+
+test("a master the mapper chose to create is still theirs", () => {
+    setRouteMasters(download())
+    createRouteMaster(fullRouteTags)
+
+    invalidateRouteMasterCandidates()
+
+    assert.equal(pendingRouteMaster().id, null)
+})
+
+test("masters being left are not forgotten when the ref changes", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+    detachRouteMaster(100)
+
+    invalidateRouteMasterCandidates()
 
     assert.deepEqual(detachingRouteMasters(), [100])
 })

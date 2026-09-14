@@ -197,6 +197,14 @@ export function unambiguousCandidate(candidates, routeTags) {
     return matches.length === 1 ? matches[0] : null
 }
 
+// The ref changed, so what was found for the old one is not an answer about the new one.
+// A choice the mapper made by hand is still theirs; one made for them came from the ref,
+// and goes with it.
+export function invalidateRouteMasterCandidates() {
+    candidateMasters = []
+    if (pending?.automatic) pending = null
+}
+
 export const routeMasterPayload = () => ({
     routeMaster: pending && {
         id: pending.id,
