@@ -16,6 +16,8 @@ import {
 import {
     markRouteUploaded,
     renderMasterPicker,
+    routeMasterTagsEdited,
+    routeMasterTagsPayload,
     routeMasterViewId,
     setRouteEditHandler,
     setRouteMasterView,
@@ -519,9 +521,79 @@ const masterBackBtn = document.querySelector("#view-master .btn-master-back")
 const masterReloadBtn = document.querySelector("#view-master .btn-master-reload")
 
 masterBackBtn.onclick = () => {
+    if (!confirmLeavingMaster()) return
+
     setRouteMasterView(null)
     unload()
 }
+
+const masterComment = document.getElementById("master-comment")
+const masterUploadBtn = document.getElementById("master-upload")
+const masterDownloadBtn = document.getElementById("master-download")
+
+const confirmLeavingMaster = () =>
+    !routeMasterTagsEdited() ||
+    window.confirm("This route master has tag changes that have not been uploaded. Leave and lose them?")
+
+// The master's own tags go up as a changeset of their own: edited from the list of a
+// line's variants, there is no route being edited to carry them along.
+const sendRouteMasterTags = (path, onDone) => {
+    const payload = routeMasterTagsPayload()
+    if (payload === null) return
+
+    masterUploadBtn.disabled = true
+    masterDownloadBtn.disabled = true
+
+    fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, comment: masterComment.value }),
+    })
+        .then(async (resp) => {
+            if (!resp.ok) {
+                showMessage("danger", `❌ Upload failed - ${resp.status}`, await resp.text())
+                return
+            }
+
+            return onDone(resp)
+        })
+        .catch((error) => {
+            console.error(error)
+            showMessage("danger", "❌ Upload failed", error)
+        })
+        .finally(() => {
+            masterUploadBtn.disabled = false
+            masterDownloadBtn.disabled = false
+        })
+}
+
+masterUploadBtn.onclick = () =>
+    sendRouteMasterTags("/upload_route_master", async (resp) => {
+        const data = await resp.json()
+
+        if (!data.ok) {
+            showMessage("danger", `❌ Upload failed - ${data.error_code}`, data.error_message)
+            return
+        }
+
+        showMessage(
+            "success",
+            "✅ Upload successful",
+            `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.`,
+        )
+
+        // loaded again so the list shows what was just uploaded, not what it replaced
+        masterComment.value = ""
+        masterReloadBtn.click()
+    })
+
+masterDownloadBtn.onclick = () =>
+    sendRouteMasterTags("/download_route_master_change", async (resp) => {
+        const a = document.createElement("a")
+        a.href = URL.createObjectURL(await resp.blob())
+        a.download = `relatify_master_${routeMasterViewId()}_${new Date().toISOString().replace(/:/g, "_")}.osc`
+        a.click()
+    })
 
 masterReloadBtn.onclick = () => {
     const id = routeMasterViewId()
@@ -541,7 +613,7 @@ setRouteEditHandler((id) => editRoute(id))
 // out of the master's list, one listed beside the route being edited, or the master of
 // the route being edited.
 function editRoute(id) {
-    if (!confirmLeavingRoute()) return
+    if (!confirmLeavingRoute() || !confirmLeavingMaster()) return
 
     loadRelation(id, (busy) => {
         for (const button of document.querySelectorAll("#master-routes button, .route-master-routes button"))
