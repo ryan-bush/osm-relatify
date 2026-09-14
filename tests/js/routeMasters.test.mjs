@@ -15,6 +15,7 @@ import {
     linkRouteMaster,
     mismatchesOf,
     pendingRouteMaster,
+    refreshRouteMasters,
     routeMasterCandidates,
     routeMasterChangeCount,
     routeMasterPayload,
@@ -369,4 +370,53 @@ test("putting the tag table away is not an edit to what is queued", () => {
     setPendingRouteMasterTags(null)
 
     assert.deepEqual(pendingRouteMaster().tags, master().tags)
+})
+
+// --- asking again once the mapper has typed a ref -----------------------------
+
+test("a later answer replaces what the download found", () => {
+    setRouteMasters(download())
+    assert.equal(pendingRouteMaster(), null)
+
+    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [candidate()] })
+
+    assert.equal(pendingRouteMaster().id, 101)
+    assert.equal(pendingRouteMaster().automatic, true)
+})
+
+// the mapper chose; a ref typed afterwards is no reason to undo it for them
+test("a choice made by hand survives a later answer", () => {
+    setRouteMasters(download())
+    linkRouteMaster(master({ id: 999 }))
+
+    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [candidate()] })
+
+    assert.equal(pendingRouteMaster().id, 999)
+})
+
+// it was derived from the old ref, so it is derived again from the new one
+test("a choice made automatically is reconsidered", () => {
+    setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
+    assert.equal(pendingRouteMaster().id, 101)
+
+    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [candidate({ id: 102 })] })
+
+    assert.equal(pendingRouteMaster().id, 102)
+})
+
+test("an answer with nothing to join drops an automatic choice", () => {
+    setRouteMasters(download({ routeMasterCandidates: [candidate()] }))
+
+    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [], routeMasterCandidates: [] })
+
+    assert.equal(pendingRouteMaster(), null)
+})
+
+test("asking again does not forget which masters are being left", () => {
+    setRouteMasters(download({ routeMasters: [master()] }))
+    detachRouteMaster(100)
+
+    refreshRouteMasters({ tags: fullRouteTags, routeMasters: [master()], routeMasterCandidates: [] })
+
+    assert.deepEqual(detachingRouteMasters(), [100])
 })

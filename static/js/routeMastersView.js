@@ -13,8 +13,10 @@ import {
     linkRouteMaster,
     mismatchesOf,
     pendingRouteMaster,
+    refreshRouteMasters,
     routeMasterCandidates,
     routeMastersKnown,
+    routeValue,
     setPendingRouteMasterTags,
     setRouteMasters,
     undescribedMemberCount,
@@ -26,10 +28,12 @@ import { osmUrl } from "./utils.js"
 const container = document.getElementById("edit-route-master")
 const tagsWrap = document.getElementById("edit-route-master-tags-wrap")
 
-// what the route looked like when it was downloaded, for seeding a new master
+// the route's tags as they stand, for seeding a new master and for finding its siblings
 let routeTags = {}
 let relationId = null
 let isCreating = false
+// the downloaded area the siblings are looked for in
+let bounds = null
 // set by menu.js, which owns the button that goes on to the summary
 let onChanged = () => {}
 
@@ -355,8 +359,11 @@ export const processRouteMasters = (data, options = {}) => {
     routeTags = data?.tags ?? {}
     relationId = options.relationId ?? null
     isCreating = options.isCreating ?? false
+    bounds = data?.bounds ?? null
+    lastQueried = siblingKey(routeTags)
 
     if (data === null) {
+        clearTimeout(refreshTimer)
         container.replaceChildren()
         container.classList.add("d-none")
         syncTagEditor()
@@ -364,4 +371,65 @@ export const processRouteMasters = (data, options = {}) => {
     }
 
     render()
+}
+
+// What the lookup is made of. A relation being created is downloaded before it has any of
+// it, which is why the first answer is always that there are no siblings.
+const siblingKey = (tags) => `${tags?.ref?.trim() ?? ""}|${tags?.network?.trim() ?? ""}|${routeValue(tags).trim()}`
+
+let lastQueried = null
+let refreshTimer = null
+let refreshing = false
+
+// Asks again with the tags the mapper has typed since the download. Debounced, because
+// this runs on every keystroke in the tag table and each call is an Overpass query.
+export const refreshForRouteTags = (tags) => {
+    routeTags = tags ?? {}
+
+    if (bounds === null) return
+
+    const key = siblingKey(routeTags)
+    if (key === lastQueried) return
+    lastQueried = key
+
+    clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(queryRouteMasters, 600)
+}
+
+const queryRouteMasters = () => {
+    // one is already in flight: ask again when it is done, rather than alongside it
+    if (refreshing) {
+        refreshTimer = setTimeout(queryRouteMasters, 600)
+        return
+    }
+
+    const key = lastQueried
+    refreshing = true
+
+    fetch("/query_route_masters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            relationId: relationId,
+            tags: routeTags,
+            bounds: [bounds.minlat, bounds.minlon, bounds.maxlat, bounds.maxlon],
+        }),
+    })
+        .then((resp) => (resp.ok ? resp.json() : null))
+        .then((data) => {
+            // the tags moved on while this was in flight, and a later one is on its way
+            if (data === null || key !== lastQueried) return
+
+            refreshRouteMasters({ ...data, tags: routeTags })
+            render()
+        })
+        .catch((error) => {
+            // what is already shown is left alone, and the next edit asks again rather
+            // than taking the failure for an answer
+            lastQueried = null
+            console.error(error)
+        })
+        .finally(() => {
+            refreshing = false
+        })
 }

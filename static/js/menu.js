@@ -22,6 +22,7 @@ import {
 } from "./routeMasters.js"
 import {
     processRouteMasters,
+    refreshForRouteTags,
     setRouteMasterChangeHandler,
 } from "./routeMastersView.js"
 import { showMessage } from "./messageBox.js"
@@ -30,6 +31,7 @@ import {
     relationTags,
     relationTagsOriginal,
     setRecalcHandler,
+    setTagsChangedHandler,
     unloadRelationTags,
 } from "./relationTagEditor.js"
 import {
@@ -89,6 +91,10 @@ setRecalcHandler(() => requestCalcBusRoute())
 // A route master queued or undone is a change to the changeset without being a change to
 // the route, so the warnings are rebuilt from the calculation already in hand rather than
 // asking for another one.
+// the ref typed into the tag table is what a route's siblings are found by, and it is
+// usually typed after the download that went looking for them
+setTagsChangedHandler((tags) => refreshForRouteTags(tags))
+
 setRouteMasterChangeHandler(() => {
     if (routeData !== null) processRouteWarnings(routeData)
 })

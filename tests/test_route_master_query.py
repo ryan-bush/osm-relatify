@@ -48,7 +48,13 @@ class FakeOverpass:
         self.called_with = (ref, route_value, bounds)
         if self._fail:
             raise RuntimeError('Overpass is down')
-        from route_masters import parse_route_masters
+
+        from route_masters import build_route_master_candidates_query, parse_route_masters
+
+        # as the real one does: with nothing to match on there is no query to send, and
+        # so nothing comes back
+        if not build_route_master_candidates_query(ref, route_value, BOUNDS, 30):
+            return []
 
         return parse_route_masters(self._candidates)
 
@@ -145,3 +151,29 @@ def test_an_implausibly_large_master_is_not_expanded(monkeypatch):
 
     assert osm.requested_relations is None
     assert current[0].routes == []
+
+
+# A relation being created is downloaded before the mapper has typed anything into it, so
+# the tags it is looked up by are only the three that make it a route. A ref is the whole
+# of what siblings are found by, which is why the answer then is always that there are
+# none — and why it has to be asked again once there is a ref to ask with.
+def test_a_relation_being_created_has_no_ref_to_find_siblings_by():
+    from main import make_new_relation_tags
+
+    overpass = FakeOverpass(candidates=[_master()])
+
+    current, candidates = _query(
+        FakeOsm(), overpass, relation_id=None, tags=make_new_relation_tags('bus')
+    )
+
+    assert current == []
+    assert candidates == []
+    assert overpass.called_with == ('', 'bus', BOUNDS), 'asked with no ref, which matches nothing'
+
+
+def test_asking_again_with_a_ref_finds_the_siblings():
+    typed = {**ROUTE_TAGS, 'ref': '9'}
+
+    _, candidates = _query(FakeOsm(), FakeOverpass(candidates=[_master()]), relation_id=None, tags=typed)
+
+    assert [master.id for master in candidates] == [100]
