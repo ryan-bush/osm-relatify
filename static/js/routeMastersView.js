@@ -45,6 +45,16 @@ export const setRouteMasterChangeHandler = (handler) => {
     onChanged = handler
 }
 
+// also menu.js, which owns loading a relation: a sibling to edit next, or the master
+// itself to see every variant at once
+let onEditRoute = () => {}
+let onShowMaster = () => {}
+
+export const setRouteNavigationHandlers = ({ editRoute, showMaster }) => {
+    onEditRoute = editRoute
+    onShowMaster = showMaster
+}
+
 // A master's tags are edited by an editor of its own, the route's being a separate one.
 // Nothing about it is route-specific beyond the keys worth offering first.
 const tagEditor = createTagEditor({
@@ -138,7 +148,16 @@ const makeRouteList = (master) => {
             item.className = "route-master-route-current"
             item.textContent = `${describeRoute(route)} (this route)`
         } else {
-            item.appendChild(relationLink(route.id, describeRoute(route)))
+            // the sibling is the next thing to edit as often as it is something to go and
+            // look at, so it loads here rather than only opening on osm.org
+            const open = document.createElement("button")
+            open.type = "button"
+            open.className = "btn btn-link btn-sm p-0 align-baseline"
+            open.textContent = describeRoute(route)
+            open.onclick = () => onEditRoute(route.id)
+            item.appendChild(open)
+            item.append(" ")
+            item.appendChild(relationLink(route.id, "🔗"))
         }
 
         list.appendChild(item)
@@ -199,6 +218,7 @@ const makeMasterBlock = (master) => {
 
     block.appendChild(
         makeActions(
+            makeButton("Show all variants", () => onShowMaster(master.id)),
             makeButton(editing ? "Stop editing tags" : "Edit tags", () => {
                 if (editing) clearPendingRouteMaster()
                 else editRouteMasterTags(master)

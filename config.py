@@ -67,7 +67,7 @@ OVERPASS_MAX_DATA_AGE = float(os.getenv('OVERPASS_MAX_DATA_AGE', '3600'))  # sec
 TAG_MAX_LENGTH = 255
 
 # Tags the application interprets when loading a relation; editing them would change
-# whether the relation can be loaded at all. See get_route_type() in main.py.
+# whether the relation can be loaded at all. See get_route_type() in route_types.py.
 PROTECTED_TAG_KEYS = frozenset(
     {
         'type',

@@ -4,8 +4,9 @@ from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 
 from models.bounding_box import BoundingBox
-from models.route_master import RouteMaster, RouteMasterRoute
+from models.route_master import RouteMaster, RouteMasterRoute, RouteMasterView
 from placeholder_ids import RelationPlaceholders
+from route_types import get_route_type
 from tag_editing import apply_tag_changes, normalize_tags, validate_tag
 from utils import ensure_list
 
@@ -108,9 +109,35 @@ def parse_routes(elements: Iterable[dict]) -> dict[int, RouteMasterRoute]:
             id=element['id'],
             ref=tags.get('ref', '').strip(),
             name=tags.get('name', '').strip(),
+            tags=tags,
+            editable=get_route_type(tags) is not None,
         )
 
     return result
+
+
+def build_route_master_view(master: RouteMaster, routes: dict[int, RouteMasterRoute]) -> RouteMasterView:
+    """
+    A master and its variants, in the order the master holds them.
+
+    A member that could not be looked up, or that is not a relation at all, is still
+    counted rather than quietly dropped: a master holding something odd is worth seeing.
+    """
+    listed = []
+    others = []
+
+    for member in master.members:
+        type, _, id = member.partition('/')
+
+        if type != 'relation':
+            others.append(member)
+            continue
+
+        route = routes.get(int(id))
+        # in the master, but OSM did not describe it; named by its id so it is not lost
+        listed.append(route if route is not None else RouteMasterRoute(id=int(id), ref='', name=''))
+
+    return RouteMasterView(id=master.id, tags=master.tags, routes=listed, otherMembers=others)
 
 
 def describe_members(

@@ -54,12 +54,17 @@ export const describeMaster = (master) => {
     return ref ? `Route master ${ref}` : "Unnamed route master"
 }
 
-// What to call one of its variants, which is how a mapper tells the directions apart.
-export const describeRoute = (route) =>
-    [route.ref, route.name]
-        .map((part) => part?.trim())
-        .filter(Boolean)
-        .join(" ") || `Relation ${route.id}`
+// What to call one of its variants, which is how a mapper tells the directions apart. A
+// ref the name already carries is left out, the same as the changeset comment does: "9
+// Bus 9: Town Centre => Wroughton" says the number twice.
+export function describeRoute(route) {
+    const ref = route.ref?.trim() ?? ""
+    const name = route.name?.trim() ?? ""
+
+    if (ref && name) return name.includes(ref) ? name : `${ref} ${name}`
+
+    return name || ref || `Relation ${route.id}`
+}
 
 // The route's own kind as tagged: the type tag names the tag that carries it, so a
 // disused:route reads its kind from disused:route rather than from route.

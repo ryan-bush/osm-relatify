@@ -4,6 +4,7 @@ from models.bounding_box import BoundingBox
 from models.route_master import RouteMaster, RouteMasterRoute
 from route_masters import (
     build_route_master_candidates_query,
+    build_route_master_view,
     describe_members,
     escape_overpass_value,
     is_route_master,
@@ -130,7 +131,9 @@ def test_describe_members_leaves_out_members_it_could_not_look_up():
 
     described = describe_members(masters, parse_routes([_route(id=1)]))[0]
 
-    assert described.routes == [RouteMasterRoute(id=1, ref='71', name='Bus 71: A => B')]
+    assert described.routes == [
+        RouteMasterRoute(id=1, ref='71', name='Bus 71: A => B', tags={'ref': '71', 'name': 'Bus 71: A => B'})
+    ]
 
 
 def test_describe_members_without_any_lookups_leaves_the_variants_empty():
@@ -142,8 +145,8 @@ def test_describe_members_without_any_lookups_leaves_the_variants_empty():
 def test_parse_routes_trims_and_defaults_missing_tags():
     routes = parse_routes([_route(id=1, tags={'name': '  Bus 71  '}), _route(id=2, tags={})])
 
-    assert routes[1] == RouteMasterRoute(id=1, ref='', name='Bus 71')
-    assert routes[2] == RouteMasterRoute(id=2, ref='', name='')
+    assert routes[1] == RouteMasterRoute(id=1, ref='', name='Bus 71', tags={'name': '  Bus 71  '})
+    assert routes[2] == RouteMasterRoute(id=2, ref='', name='', tags={})
 
 
 def test_parse_routes_ignores_elements_that_are_not_relations():
@@ -155,3 +158,58 @@ def test_route_master_defaults_are_not_shared():
     first.members.append('relation/2')
 
     assert RouteMaster(id=2, tags={}).members == []
+
+
+PTV2 = {'type': 'route', 'route': 'bus', 'public_transport:version': '2'}
+
+
+class TestBuildRouteMasterView:
+    def _view(self, members=(('relation', 1), ('relation', 2)), elements=None):
+        [master] = parse_route_masters([_master(members=members)])
+        routes = parse_routes(elements if elements is not None else [_route(id=1), _route(id=2)])
+        return build_route_master_view(master, routes)
+
+    def test_it_lists_the_variants_in_the_order_the_master_holds_them(self):
+        view = self._view(members=(('relation', 2), ('relation', 1)))
+
+        assert view.kind == 'route_master'
+        assert view.id == 100
+        assert view.tags['ref'] == '71'
+        assert [route.id for route in view.routes] == [2, 1]
+
+    def test_a_route_this_application_can_open_says_so(self):
+        view = self._view(members=(('relation', 1),), elements=[_route(id=1, tags={**PTV2, 'ref': '71'})])
+
+        assert view.routes[0].editable is True
+
+    # a master may hold a route tagged in a way this application does not read, and an
+    # Edit button that fails is worse than saying so
+    def test_a_route_it_cannot_open_says_so_too(self):
+        view = self._view(members=(('relation', 1),), elements=[_route(id=1, tags={'type': 'route', 'route': 'bus'})])
+
+        assert view.routes[0].editable is False
+
+    def test_a_variant_carries_its_tags_for_comparing_with_the_others(self):
+        view = self._view(members=(('relation', 1),), elements=[_route(id=1, tags={**PTV2, 'operator': 'Alpha'})])
+
+        assert view.routes[0].tags['operator'] == 'Alpha'
+
+    # dropping it would make a master look tidier than it is
+    def test_a_member_that_is_not_a_relation_is_kept_apart_rather_than_lost(self):
+        view = self._view(members=(('way', 9), ('relation', 1)))
+
+        assert view.otherMembers == ['way/9']
+        assert [route.id for route in view.routes] == [1]
+
+    def test_a_member_that_could_not_be_looked_up_is_still_listed(self):
+        view = self._view(members=(('relation', 1), ('relation', 7)), elements=[_route(id=1)])
+
+        assert [route.id for route in view.routes] == [1, 7]
+        assert view.routes[1].name == ''
+        assert view.routes[1].editable is False
+
+    def test_an_empty_master_is_an_empty_list(self):
+        view = self._view(members=())
+
+        assert view.routes == []
+        assert view.otherMembers == []
