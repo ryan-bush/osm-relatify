@@ -517,20 +517,15 @@ async def build_osm_change(
         _set_changeset_placeholder(relation_data, include_changeset_id)
         result['osmChange']['modify']['relation'].append(relation_data)
 
-    # a master of a route being created holds it by its placeholder, which is the same id
-    # the route relation itself is written with below
-    new_master = build_new_route_master(
-        route_master,
-        tags_edited or route.tags,
-        relation_id if relation_id is not None else RelationPlaceholders.ROUTE,
-        placeholders,
-    )
+    # A route being created is referred to by its placeholder, by the master that holds it
+    # and by any master it is added to, exactly as the route relation itself is written.
+    route_ref = relation_id if relation_id is not None else RelationPlaceholders.ROUTE
 
-    if new_master is not None:
-        _set_changeset_placeholder(new_master, include_changeset_id)
-        result['osmChange']['create']['relation'].append(new_master)
+    # taken now so the master keeps its place in the numbering, though it is only written
+    # at the end, after the route it refers to
+    new_master = build_new_route_master(route_master, tags_edited or route.tags, route_ref, placeholders)
 
-    for relation_data in await build_route_master_modifications(route_master, route_master_detach, relation_id, osm):
+    for relation_data in await build_route_master_modifications(route_master, route_master_detach, route_ref, osm):
         _set_changeset_placeholder(relation_data, include_changeset_id)
         result['osmChange']['modify']['relation'].append(relation_data)
 
@@ -666,6 +661,13 @@ async def build_osm_change(
 
     if not unchanged:
         result['osmChange'][relation_action]['relation'].append(relation_data)
+
+    # Last, because the API resolves placeholders strictly in document order: a master
+    # written before the route it holds refers to an id that does not exist yet, and the
+    # upload is rejected rather than reordered.
+    if new_master is not None:
+        _set_changeset_placeholder(new_master, include_changeset_id)
+        result['osmChange']['create']['relation'].append(new_master)
 
     return xmltodict.unparse(result, pretty=not include_changeset_id)
 

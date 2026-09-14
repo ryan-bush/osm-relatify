@@ -136,9 +136,9 @@ class TestCheckNewRouteMaster:
 
 
 class TestBuildRouteMasterModifications:
-    def _build(self, change=None, detach=(), route_id=5, relations=()):
+    def _build(self, change=None, detach=(), route_ref=5, relations=()):
         return asyncio.run(
-            build_route_master_modifications(change, detach, route_id, FakeOsm(relations=relations))
+            build_route_master_modifications(change, detach, route_ref, FakeOsm(relations=relations))
         )
 
     def test_the_route_is_added_to_the_master_it_joins(self):
@@ -178,9 +178,19 @@ class TestBuildRouteMasterModifications:
 
     def test_a_route_being_created_has_no_master_to_leave(self):
         with pytest.raises(HTTPException) as e:
-            self._build(detach=[100], route_id=None, relations=[_relation()])
+            self._build(detach=[100], route_ref=RelationPlaceholders.ROUTE, relations=[_relation()])
 
         assert e.value.status_code == 400
+
+    # the modify block is read after the create block, so the route exists by then
+    def test_a_master_already_in_osm_can_take_on_a_route_being_created(self):
+        [master] = self._build(
+            RouteMasterChange(id=100),
+            route_ref=RelationPlaceholders.ROUTE,
+            relations=[_relation(members=(('relation', 7),))],
+        )
+
+        assert _members(master) == [('relation', '7'), ('relation', '-1')]
 
     def test_a_relation_that_stopped_being_a_master_is_a_conflict(self):
         with pytest.raises(HTTPException) as e:
