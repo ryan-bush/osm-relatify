@@ -22,7 +22,7 @@ import {
     setRouteEditHandler,
     setRouteMasterView,
 } from "./masterPicker.js"
-import { map } from "./map.js"
+import { hideDownloadBar, map, showDownloadBar } from "./map.js"
 import {
     detachingRouteMasters,
     pendingRouteMaster,
@@ -162,6 +162,8 @@ const loadRelation = (id, setBusy) => {
     newRouteType = null
     showRelationIdentity()
     setBusy(true)
+    // a download takes seconds, and the button that started it is not always in view
+    showDownloadBar(`Loading relation #${id}...`)
 
     return fetch("/query", {
         method: "POST",
@@ -203,7 +205,10 @@ const loadRelation = (id, setBusy) => {
             console.error(error)
             showMessage("danger", "❌ Relation load failed", error)
         })
-        .finally(() => setBusy(false))
+        .finally(() => {
+            hideDownloadBar()
+            setBusy(false)
+        })
 }
 
 const setLoadButtonBusy = (busy) => {
@@ -276,6 +281,7 @@ createRelationForm.addEventListener("submit", (e) => {
     createRelationBtn.classList.add("is-loading")
     const defaultInnerText = createRelationBtn.innerText
     createRelationBtn.innerText = "Creating..."
+    showDownloadBar("Downloading map data...")
 
     fetch("/query", {
         method: "POST",
@@ -326,6 +332,7 @@ createRelationForm.addEventListener("submit", (e) => {
             showMessage("danger", "❌ Could not start a new relation", error)
         })
         .finally(() => {
+            hideDownloadBar()
             createRouteType.disabled = false
             createRelationBtn.classList.remove("is-loading")
             createRelationBtn.innerText = defaultInnerText
@@ -635,6 +642,7 @@ editReloadBtn.onclick = async () => {
 
     const defaultInnerText = editReloadBtn.innerText
     editReloadBtn.innerText = "Reloading..."
+    showDownloadBar("Reloading map data...")
 
     fetch("/query", {
         method: "POST",
@@ -670,6 +678,7 @@ editReloadBtn.onclick = async () => {
             showMessage("danger", "❌ Relation reload failed", error)
         })
         .finally(() => {
+            hideDownloadBar()
             editReloadBtn.innerText = defaultInnerText
 
             editBackBtn.disabled = false
