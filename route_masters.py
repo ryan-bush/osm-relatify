@@ -256,7 +256,7 @@ def build_new_route_master(
 async def build_route_master_modifications(
     change: RouteMasterChange | None,
     detach: Sequence[int],
-    route_ref: int,
+    route_ref: int | None,
     osm,
 ) -> list[dict]:
     """
@@ -268,7 +268,8 @@ async def build_route_master_modifications(
 
     `route_ref` is how the route is referred to: its id, or its placeholder when this same
     changeset is creating it. A master already in OSM can take on a route that does not
-    exist yet, the modify block being read after the create block.
+    exist yet, the modify block being read after the create block. None means no route is
+    involved at all — the master's own tags are being edited and its members left alone.
     """
     wanted: dict[int, RouteMasterChange | None] = {}
 
@@ -286,8 +287,8 @@ async def build_route_master_modifications(
     if not wanted:
         return []
 
-    # a route being created is in nothing, so there is nothing to detach it from
-    if route_ref < 0 and any(target is None for target in wanted.values()):
+    # a route being created, or no route at all, is in nothing to be detached from
+    if (route_ref is None or route_ref < 0) and any(target is None for target in wanted.values()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'A route being created is not in any route master')
 
     result = []
@@ -311,7 +312,11 @@ async def build_route_master_modifications(
         key = f'relation/{route_ref}'
         present = any(f'{m["@type"]}/{m["@ref"]}' == key for m in members)
 
-        if target is None:
+        if route_ref is None:
+            # only the master's own tags are being changed; what it holds is not in question
+            updated = members
+            changed_members = False
+        elif target is None:
             updated = [m for m in members if f'{m["@type"]}/{m["@ref"]}' != key]
             changed_members = len(updated) != len(members)
         elif present:

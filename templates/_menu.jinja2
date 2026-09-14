@@ -44,6 +44,22 @@
             </div>
 
             <div id="master-summary"></div>
+
+            <table class="table table-sm table-bordered table-tags mb-2 d-none" id="master-tags-table">
+                <tbody id="master-tags"></tbody>
+            </table>
+            <div class="d-flex justify-content-between mb-2 d-none" id="master-tags-controls">
+                <button type="button" class="btn btn-link btn-sm p-0" id="master-tags-toggle">Show all tags</button>
+                <button type="button" class="btn btn-link btn-sm p-0" id="master-tags-add">+ Add tag</button>
+            </div>
+            <div class="mb-2 d-none" id="master-tags-actions">
+                <label class="form-label small mb-1" for="master-comment">Changeset comment</label>
+                <input type="text" class="form-control form-control-sm mb-1" id="master-comment" maxlength="255">
+                <button class="btn btn-sm btn-primary w-100 mb-1" id="master-upload">Upload route master</button>
+                <button class="btn btn-sm btn-secondary w-100" id="master-download">💾 Download .osc</button>
+            </div>
+
+            <div id="master-issues"></div>
             <div id="master-routes"></div>
         </div>
     </div>
