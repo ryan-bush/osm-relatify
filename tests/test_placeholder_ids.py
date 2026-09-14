@@ -133,3 +133,45 @@ def test_the_stop_areas_hold_the_stops_being_created(route):
     ]
 
     assert [int(area['member']['@ref']) for area in areas] == [-1, -2]
+
+
+def _created_relation_ids_in_document_order(osm_change_xml: str) -> list[int]:
+    """The order the API reads them in, which xmltodict's parsed dict does not preserve."""
+    import re
+
+    create = osm_change_xml.split('<create>', 1)[1].split('</create>', 1)[0]
+    return [int(m) for m in re.findall(r'<relation id="(-?\d+)"', create)]
+
+
+# The API resolves placeholders strictly in document order: a relation referring to one
+# that has not been created yet is rejected outright, not reordered. So this is about the
+# bytes, not about the parsed tree.
+def test_a_relation_is_created_before_anything_refers_to_it(route):
+    xml = _build_everything_at_once(route)
+
+    order = _created_relation_ids_in_document_order(xml)
+    positions = {id: index for index, id in enumerate(order)}
+
+    for relation in _created(xmltodict.parse(xml)['osmChange'], 'relation'):
+        members = relation.get('member') or []
+        for member in members if isinstance(members, list) else [members]:
+            ref = int(member['@ref'])
+            if member['@type'] != 'relation' or ref >= 0:
+                continue
+
+            assert positions[ref] < positions[int(relation['@id'])], (
+                f'relation {relation["@id"]} is written before relation {ref}, which it refers to'
+            )
+
+
+def test_the_master_comes_after_the_route_it_holds(route):
+    order = _created_relation_ids_in_document_order(_build_everything_at_once(route))
+
+    assert order[-1] == -4, 'the master, written last of all'
+    assert order.index(RelationPlaceholders.ROUTE) < order.index(-4)
+
+
+def test_nodes_are_created_before_the_relations_that_group_them(route):
+    xml = _build_everything_at_once(route)
+
+    assert xml.index('<node') < xml.index('<relation'), 'a stop area refers to the stops it holds'

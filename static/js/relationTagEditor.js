@@ -25,6 +25,14 @@ export const setRecalcHandler = (handler) => {
     onRecalcNeeded = handler
 }
 
+// Every edit, not just the ones that change the calculated route: a ref typed here is
+// what the route's siblings are found by, and nothing else would go looking again.
+let onTagsChanged = () => {}
+
+export const setTagsChangedHandler = (handler) => {
+    onTagsChanged = handler
+}
+
 const editor = createTagEditor({
     tableBody: document.getElementById("edit-tags"),
     toggleButton: document.getElementById("edit-tags-toggle"),
@@ -36,6 +44,7 @@ const editor = createTagEditor({
     wideElement: document.getElementById("menu"),
     onChange: (tags) => {
         relationTags = tags
+        if (tags !== null) onTagsChanged(tags)
     },
     // read through a wrapper rather than passed by reference, so the handler menu.js
     // registers later is the one that gets called

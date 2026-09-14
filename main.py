@@ -99,7 +99,28 @@ app = FastAPI(
     redoc_url=None,
 )
 app.router.route_class = DeflateRoute
-app.mount('/static', StaticFiles(directory='static', html=True), name='static')
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    """
+    Serves static files with `Cache-Control: no-cache`.
+
+    Nothing here is versioned in its filename, so a browser given no instruction applies
+    heuristic freshness and may reuse a file for the rest of a session without asking.
+    For a module that means an edited script quietly not running, which looks like the
+    change never happened rather than like a caching problem.
+
+    `no-cache` is revalidate, not do-not-store: the browser still keeps the file and still
+    asks, and the answer is a 304 with no body whenever it has not changed.
+    """
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers['cache-control'] = 'no-cache'
+        return response
+
+
+app.mount('/static', RevalidatedStaticFiles(directory='static', html=True), name='static')
 
 
 @app.get('/')
@@ -389,6 +410,33 @@ async def _describe_route_master_members(masters):
         # the masters are still worth showing, just without their variants listed
         print(f'🚧 Warning: Could not look up route master members: {e!r}')
         return {}
+
+
+class PostRouteMastersModel(BaseModel):
+    # absent when the relation is being created and does not exist yet
+    relationId: int | None = None
+    # the route's tags as the mapper has them now, which is what its siblings are found by
+    tags: dict[str, str] = Field(default_factory=dict)
+    # the downloaded area, as (minlat, minlon, maxlat, maxlon)
+    bounds: tuple[float, float, float, float]
+
+
+@app.post('/query_route_masters')
+async def post_query_route_masters(model: PostRouteMastersModel, _=Depends(require_user_details)):
+    """
+    The route masters for the tags the route has now.
+
+    A relation being created is downloaded before it has a ref, and a ref is the whole of
+    what its siblings are found by, so the answer at download time is always that there
+    are none. This asks again once there is something to ask with — and likewise once a
+    ref that was wrong has been corrected.
+    """
+    print(f'🔍 Querying route masters ({model.relationId})')
+
+    with print_run_time('Finding route masters'):
+        current, candidates = await _query_route_masters(model.relationId, model.tags, BoundingBox(*model.bounds))
+
+    return {'routeMasters': current, 'routeMasterCandidates': candidates}
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

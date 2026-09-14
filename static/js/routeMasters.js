@@ -16,11 +16,21 @@ let mastersKnown = true
 // A download replaces what is known and drops any change queued against the old answer,
 // which may have been about masters that are no longer what they were.
 export function setRouteMasters(data) {
+    clearRouteMasterChanges()
+    refreshRouteMasters(data)
+}
+
+// The same, for an answer to the tags the mapper has since typed rather than to a fresh
+// download. A choice they made by hand is theirs and survives; one made for them was
+// derived from the ref, and is derived again from the new one.
+export function refreshRouteMasters(data) {
     mastersKnown = data?.routeMasters != null
     currentMasters = data?.routeMasters ?? []
     candidateMasters = data?.routeMasterCandidates ?? []
 
-    clearRouteMasterChanges()
+    if (pending?.automatic === false) return
+
+    pending = null
 
     // PTv2 asks that every route be in a master, so the one this is plainly a variant of
     // is queued without being asked for. It says so, and can be undone.
@@ -185,6 +195,14 @@ export function unambiguousCandidate(candidates, routeTags) {
     )
 
     return matches.length === 1 ? matches[0] : null
+}
+
+// The ref changed, so what was found for the old one is not an answer about the new one.
+// A choice the mapper made by hand is still theirs; one made for them came from the ref,
+// and goes with it.
+export function invalidateRouteMasterCandidates() {
+    candidateMasters = []
+    if (pending?.automatic) pending = null
 }
 
 export const routeMasterPayload = () => ({

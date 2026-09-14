@@ -1,6 +1,7 @@
 // Shows which route master the loaded route belongs to, what else is in it, and what is
 // about to change: the master it will join or be created in, and the ones it will leave.
 
+import { showMessage } from "./messageBox.js"
 import {
     clearPendingRouteMaster,
     createRouteMaster,
@@ -9,12 +10,15 @@ import {
     describeRoute,
     detachRouteMaster,
     editRouteMasterTags,
+    invalidateRouteMasterCandidates,
     isDetaching,
     linkRouteMaster,
     mismatchesOf,
     pendingRouteMaster,
+    refreshRouteMasters,
     routeMasterCandidates,
     routeMastersKnown,
+    routeValue,
     setPendingRouteMasterTags,
     setRouteMasters,
     undescribedMemberCount,
@@ -26,10 +30,12 @@ import { osmUrl } from "./utils.js"
 const container = document.getElementById("edit-route-master")
 const tagsWrap = document.getElementById("edit-route-master-tags-wrap")
 
-// what the route looked like when it was downloaded, for seeding a new master
+// the route's tags as they stand, for seeding a new master and for finding its siblings
 let routeTags = {}
 let relationId = null
 let isCreating = false
+// the downloaded area the siblings are looked for in
+let bounds = null
 // set by menu.js, which owns the button that goes on to the summary
 let onChanged = () => {}
 
@@ -227,12 +233,35 @@ const makePendingBlock = () => {
     return block
 }
 
-// The masters this route could join, when it is in none. More than one and the mapper
-// picks; exactly one that matches outright has already been picked for them.
+// The masters this route could join, when it is in none. Looking for them is asked for
+// rather than done on every edit; a ref is what they are found by, and a route being
+// created has none until the mapper types one.
 const makeCandidateChooser = () => {
     const candidates = routeMasterCandidates()
     const block = document.createElement("div")
     block.className = "route-master-block"
+
+    const ref = routeTags?.ref?.trim() ?? ""
+    const unanswered =
+        searchedKey === null || siblingKey(routeTags) !== searchedKey
+
+    if (!ref) {
+        block.appendChild(
+            makeNote("A route master is found by ref, so fill one in above."),
+        )
+    } else if (searching) {
+        block.appendChild(makeNote("Looking for route masters…"))
+    } else if (unanswered) {
+        block.appendChild(
+            makeNote(`Nothing has been looked up for ref ${ref} yet.`),
+        )
+    } else if (!candidates.length) {
+        block.appendChild(
+            makeNote(
+                `No route master was found for ref ${ref} in the downloaded area.`,
+            ),
+        )
+    }
 
     let select = null
 
@@ -264,6 +293,12 @@ const makeCandidateChooser = () => {
                     },
                     { primary: true },
                 ),
+            ref &&
+                unanswered &&
+                !searching &&
+                makeButton("Find route masters", searchRouteMasters, {
+                    primary: true,
+                }),
             makeButton("Create one", () => {
                 createRouteMaster(routeTags)
                 changed()
@@ -355,6 +390,8 @@ export const processRouteMasters = (data, options = {}) => {
     routeTags = data?.tags ?? {}
     relationId = options.relationId ?? null
     isCreating = options.isCreating ?? false
+    bounds = data?.bounds ?? null
+    searchedKey = siblingKey(routeTags)
 
     if (data === null) {
         container.replaceChildren()
@@ -364,4 +401,68 @@ export const processRouteMasters = (data, options = {}) => {
     }
 
     render()
+}
+
+// What a lookup is made of. A route being created is downloaded before it has any of it,
+// which is why the answer then is that there are no siblings: there was nothing to ask.
+const siblingKey = (tags) =>
+    `${tags?.ref?.trim() ?? ""}|${tags?.network?.trim() ?? ""}|${routeValue(tags).trim()}`
+
+// The tags the candidate list is an answer to, or null when it is an answer to nothing.
+let searchedKey = null
+let searching = false
+
+// The route's tags changed under the answer that is being shown. Nothing is looked up
+// here: a query per keystroke is a query per keystroke on a shared Overpass instance, and
+// the mapper may not care about masters at all. What was found for the old ref is simply
+// no longer offered.
+export const noteRouteTags = (tags) => {
+    routeTags = tags ?? {}
+
+    if (searchedKey === null || siblingKey(routeTags) === searchedKey) return
+
+    searchedKey = null
+    invalidateRouteMasterCandidates()
+    render()
+}
+
+const searchRouteMasters = () => {
+    if (searching || bounds === null) return
+
+    const key = siblingKey(routeTags)
+    searching = true
+    render()
+
+    fetch("/query_route_masters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            relationId: relationId,
+            tags: routeTags,
+            bounds: [
+                bounds.minlat,
+                bounds.minlon,
+                bounds.maxlat,
+                bounds.maxlon,
+            ],
+        }),
+    })
+        .then(async (resp) => {
+            if (!resp.ok) throw new Error(await resp.text())
+            return resp.json()
+        })
+        .then((data) => {
+            searchedKey = key
+            refreshRouteMasters({ ...data, tags: routeTags })
+        })
+        .catch((error) => {
+            // taking a failed lookup for an answer would offer a master beside one it
+            // simply could not see, so it stays unanswered and can be asked again
+            searchedKey = null
+            showMessage("danger", "❌ Could not look for route masters", error)
+        })
+        .finally(() => {
+            searching = false
+            changed()
+        })
 }

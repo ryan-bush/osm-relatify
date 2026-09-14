@@ -229,7 +229,7 @@ def build_new_route_master(
 async def build_route_master_modifications(
     change: RouteMasterChange | None,
     detach: Sequence[int],
-    route_id: int | None,
+    route_ref: int,
     osm,
 ) -> list[dict]:
     """
@@ -238,6 +238,10 @@ async def build_route_master_modifications(
     One gains the route and any tag edits the mapper made to it; the ones being detached
     from lose it. A master that comes back unchanged is left out rather than uploaded with
     a new version that says nothing.
+
+    `route_ref` is how the route is referred to: its id, or its placeholder when this same
+    changeset is creating it. A master already in OSM can take on a route that does not
+    exist yet, the modify block being read after the create block.
     """
     wanted: dict[int, RouteMasterChange | None] = {}
 
@@ -256,7 +260,7 @@ async def build_route_master_modifications(
         return []
 
     # a route being created is in nothing, so there is nothing to detach it from
-    if route_id is None and any(target is None for target in wanted.values()):
+    if route_ref < 0 and any(target is None for target in wanted.values()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, 'A route being created is not in any route master')
 
     result = []
@@ -277,7 +281,7 @@ async def build_route_master_modifications(
 
         target = wanted[master_id]
         members = ensure_list(relation.get('member') or [])
-        key = f'relation/{route_id}'
+        key = f'relation/{route_ref}'
         present = any(f'{m["@type"]}/{m["@ref"]}' == key for m in members)
 
         if target is None:
@@ -287,7 +291,7 @@ async def build_route_master_modifications(
             updated = members
             changed_members = False
         else:
-            updated = [*members, {'@type': 'relation', '@ref': route_id, '@role': ''}]
+            updated = [*members, {'@type': 'relation', '@ref': route_ref, '@role': ''}]
             changed_members = True
 
         relation.pop('@timestamp', None)
