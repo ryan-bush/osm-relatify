@@ -103,6 +103,7 @@ export const detachingRouteMasters = () => [...detaching]
 // Puts the route in a master already in OSM. Its tags are left alone until the mapper
 // opens them, which is what gives the upload a baseline to diff against.
 export function linkRouteMaster(master, { automatic = false } = {}) {
+    seededTags = null
     pending = {
         id: master.id,
         tags: { ...master.tags },
@@ -111,20 +112,69 @@ export function linkRouteMaster(master, { automatic = false } = {}) {
     }
 }
 
+// What a master queued for creation was last given from the route. Kept so that a tag the
+// mapper has typed over can be told from one that is only following the route along.
+let seededTags = null
+
 // Creates a master for this route, seeded from the route's own tags.
 export function createRouteMaster(routeTags) {
+    seededTags = defaultMasterTags(routeTags)
     pending = {
         id: null,
-        tags: defaultMasterTags(routeTags),
+        tags: { ...seededTags },
         tagsOriginal: null,
         automatic: false,
     }
+}
+
+/**
+ * Follows the route's tags, for a master that does not exist yet.
+ *
+ * It was named after the route's ref, so a ref corrected before uploading would otherwise
+ * leave the master carrying the old one. Only what the mapper has not touched follows
+ * along; anything they typed into it is theirs to keep.
+ *
+ * Returns whether anything changed.
+ */
+export function followRouteTags(routeTags) {
+    if (pending === null || pending.id !== null || seededTags === null)
+        return false
+
+    const next = defaultMasterTags(routeTags)
+    const tags = { ...pending.tags }
+    let changed = false
+
+    for (const key of new Set([
+        ...Object.keys(seededTags),
+        ...Object.keys(next),
+    ])) {
+        // the mapper put something of their own here, so it is not ours to replace
+        if ((tags[key] ?? "") !== (seededTags[key] ?? "")) continue
+
+        if (next[key] === undefined) {
+            if (key in tags) {
+                delete tags[key]
+                changed = true
+            }
+        } else if (tags[key] !== next[key]) {
+            tags[key] = next[key]
+            changed = true
+        }
+    }
+
+    seededTags = next
+
+    if (!changed) return false
+
+    pending.tags = tags
+    return true
 }
 
 // Opens an existing master's tags for editing. What it is called now becomes the baseline
 // the edits are diffed against, so a tag someone else changes meanwhile is a conflict
 // rather than something quietly overwritten.
 export function editRouteMasterTags(master) {
+    seededTags = null
     pending = {
         id: master.id,
         tags: { ...master.tags },
@@ -142,19 +192,24 @@ export const setPendingRouteMasterTags = (tags) => {
 }
 
 export const clearPendingRouteMaster = () => {
+    seededTags = null
     pending = null
 }
 
 export function detachRouteMaster(id) {
     detaching.add(id)
     // leaving a master and joining it in the same breath is not a thing to send
-    if (pending?.id === id) pending = null
+    if (pending?.id === id) {
+        seededTags = null
+        pending = null
+    }
 }
 
 export const undetachRouteMaster = (id) => detaching.delete(id)
 export const isDetaching = (id) => detaching.has(id)
 
 export function clearRouteMasterChanges() {
+    seededTags = null
     pending = null
     detaching.clear()
 }
@@ -202,7 +257,10 @@ export function unambiguousCandidate(candidates, routeTags) {
 // and goes with it.
 export function invalidateRouteMasterCandidates() {
     candidateMasters = []
-    if (pending?.automatic) pending = null
+    if (pending?.automatic) {
+        seededTags = null
+        pending = null
+    }
 }
 
 export const routeMasterPayload = () => ({
