@@ -567,9 +567,9 @@ test("a new master follows a ref corrected before uploading", () => {
         name: "Bus 9",
     })
 
-    assert.equal(
-        followRouteTags({ type: "route", route: "bus", ref: "92" }),
-        true,
+    assert.deepEqual(
+        followRouteTags({ type: "route", route: "bus", ref: "92" }).sort(),
+        ["name", "ref"],
     )
 
     assert.equal(created().ref, "92")
@@ -638,14 +638,14 @@ test("an edit that changes nothing about the master is not a change", () => {
     setRouteMasters(download())
     createRouteMaster({ type: "route", route: "bus", ref: "9" })
 
-    assert.equal(
+    assert.deepEqual(
         followRouteTags({
             type: "route",
             route: "bus",
             ref: "9",
             from: "High Street",
         }),
-        false,
+        [],
     )
 })
 
@@ -654,9 +654,9 @@ test("a master being joined does not follow the route", () => {
     setRouteMasters(download())
     linkRouteMaster(master({ id: 101 }))
 
-    assert.equal(
+    assert.deepEqual(
         followRouteTags({ type: "route", route: "bus", ref: "92" }),
-        false,
+        [],
     )
     assert.deepEqual(pendingRouteMaster().tags, master().tags)
 })
@@ -665,9 +665,9 @@ test("a master whose tags are being edited does not follow the route", () => {
     setRouteMasters(download({ routeMasters: [master()] }))
     editRouteMasterTags(master())
 
-    assert.equal(
+    assert.deepEqual(
         followRouteTags({ type: "route", route: "bus", ref: "92" }),
-        false,
+        [],
     )
     assert.equal(pendingRouteMaster().tags.name, "Bus 71")
 })
@@ -675,9 +675,9 @@ test("a master whose tags are being edited does not follow the route", () => {
 test("nothing queued is nothing to follow", () => {
     setRouteMasters(download())
 
-    assert.equal(
+    assert.deepEqual(
         followRouteTags({ type: "route", route: "bus", ref: "92" }),
-        false,
+        [],
     )
 })
 
