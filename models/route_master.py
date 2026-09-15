@@ -13,6 +13,12 @@ class RouteMasterRoute:
     # whether this application can open it: a master may hold a route tagged in a way it
     # does not read, and that is a thing to say rather than an Edit button that fails
     editable: bool = False
+    # Whether OSM said what this member is at all. A member the lookup did not cover is
+    # not a member that cannot be opened: the relation may have been deleted since, the
+    # master may hold more than is worth expanding, or the lookup may simply have failed.
+    # Saying "not a route this application can open" to any of those is saying something
+    # untrue, and hiding a failure that a reload would put right.
+    described: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

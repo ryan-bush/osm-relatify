@@ -27,6 +27,11 @@ const routeKind = (tags) => value(tags, tags?.type ?? "")
  * does not carry is not a tag its variants are wrong about.
  */
 export function routeMasterIssues(masterTags, routes) {
+    // A member OSM did not describe says nothing about itself, so there is nothing to say
+    // about it: counting it as a variant with no ref, and no ends, is inventing a fault
+    // out of a lookup that did not happen.
+    routes = routes.filter((route) => route.described !== false)
+
     const issues = []
     const add = (message, routes) =>
         issues.push({ message, routes: routes.map((route) => route.id) })

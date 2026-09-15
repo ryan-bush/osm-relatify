@@ -127,6 +127,16 @@ const makeRouteRow = (route) => {
         edit.textContent = done.has(route.id) ? "Edit again" : "Edit"
         edit.onclick = () => onEdit(route.id)
         actions.appendChild(edit)
+    } else if (!route.described) {
+        // Nothing is known about it either way. Saying it is not a route this application
+        // can open would be saying something OSM never said: the relation may have been
+        // deleted since the master last mentioned it, or the lookup may have failed, which
+        // reloading puts right.
+        actions.appendChild(
+            makeNote(
+                "OSM did not say what this member is. It may have been deleted; otherwise reload to look again.",
+            ),
+        )
     } else {
         actions.appendChild(
             makeNote(

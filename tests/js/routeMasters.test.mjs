@@ -27,6 +27,7 @@ import {
     setRouteMasters,
     undescribedMemberCount,
     undetachRouteMaster,
+    wouldBeLeftEmpty,
 } from "../../static/js/routeMasters.js"
 
 const master = (over = {}) => ({
@@ -698,4 +699,24 @@ test("following twice keeps up rather than sticking to the first ref", () => {
     followRouteTags({ type: "route", route: "bus", ref: "93" })
 
     assert.equal(created().name, "Bus 93")
+})
+
+// An empty relation is litter, and this application cannot delete one, so the most it can
+// do is say what removing the route would leave behind.
+test("a master holding nothing but this route would be left empty", () => {
+    assert.equal(wouldBeLeftEmpty(master({ members: ["relation/1"] }), 1), true)
+})
+
+test("a master holding other variants would not", () => {
+    assert.equal(wouldBeLeftEmpty(master(), 1), false)
+})
+
+test("a master whose one member is something else is not this route's to empty", () => {
+    // the route is not in it at all, so removing it takes nothing out
+    assert.equal(wouldBeLeftEmpty(master({ members: ["way/9"] }), 1), false)
+    assert.equal(wouldBeLeftEmpty(master({ members: ["relation/2"] }), 1), false)
+})
+
+test("a route being created is in nothing, so it empties nothing", () => {
+    assert.equal(wouldBeLeftEmpty(master({ members: ["relation/1"] }), null), false)
 })

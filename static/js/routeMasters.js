@@ -95,6 +95,15 @@ export function mismatchesOf(master, tags) {
 export const undescribedMemberCount = (master) =>
     master.members.length - master.routes.length
 
+// Whether taking the given route out of this master would leave it holding nothing. An
+// empty relation is litter: it says nothing, and nothing is left in it to find it by.
+// Deleting one is not something this application does, so the most it can do is say so
+// before the route is taken out.
+export const wouldBeLeftEmpty = (master, routeId) =>
+    routeId !== null &&
+    master.members.length === 1 &&
+    master.members[0] === `relation/${routeId}`
+
 // The change queued for upload: the master to put this route in, either one already in
 // OSM (by id) or one to create (tags only). Null while the route's membership is left
 // exactly as it is.
