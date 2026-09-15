@@ -136,3 +136,9 @@ const calcBusRoute = async (...args) => {
 function processRouteData(route) {
     routeData = route
 }
+
+// A route put away leaves no calculation behind. It is what says whether the members were
+// edited, and the last answer it gave is not an answer about a route that is no longer open.
+export function clearRouteData() {
+    routeData = null
+}

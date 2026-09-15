@@ -16,6 +16,7 @@ from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id, split_element_id
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute
+from models.osm_change import OsmChange
 from models.relation_member import RelationMember
 from placeholder_ids import RelationPlaceholders
 from naptan_tags import StopTagAddition, build_tag_addition_elements
@@ -471,7 +472,7 @@ async def build_osm_change(
     stop_areas: Sequence[StopAreaChange] = (),
     route_master: RouteMasterChange | None = None,
     route_master_detach: Sequence[int] = (),
-) -> str:
+) -> OsmChange:
     split_ways_mutable: set[int] = set()
     native_id_element_ids_map: dict[int, dict[int, ElementId]] = defaultdict(dict)
     element_id_unique_map: dict[ElementId, int] = {}
@@ -529,9 +530,11 @@ async def build_osm_change(
     await check_new_stop_areas(stop_areas, osm)
     await check_new_route_master(route_master, relation_id, osm)
 
-    for relation_data in build_new_stop_area_relations(stop_areas, created_node_ids, placeholders):
-        _set_changeset_placeholder(relation_data, include_changeset_id)
-        result['osmChange']['create']['relation'].append(relation_data)
+    new_stop_area_plans = build_new_stop_area_relations(stop_areas, created_node_ids, placeholders)
+
+    for plan in new_stop_area_plans:
+        _set_changeset_placeholder(plan.element, include_changeset_id)
+        result['osmChange']['create']['relation'].append(plan.element)
 
     for relation_data in await build_stop_area_modifications(stop_areas, created_node_ids, osm):
         _set_changeset_placeholder(relation_data, include_changeset_id)
@@ -689,7 +692,10 @@ async def build_osm_change(
         _set_changeset_placeholder(new_master, include_changeset_id)
         result['osmChange']['create']['relation'].append(new_master)
 
-    return xmltodict.unparse(result, pretty=not include_changeset_id)
+    return OsmChange(
+        xml=xmltodict.unparse(result, pretty=not include_changeset_id),
+        new_stop_areas=tuple(new_stop_area_plans),
+    )
 
 
 def _relation_tags(relation_data: dict) -> dict[str, str]:

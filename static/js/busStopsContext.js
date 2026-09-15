@@ -681,11 +681,40 @@ function showSeveralStopAreasForm(latlng, members, several) {
     }).openOn(map)
 }
 
+// A place this session has already grouped, which the download still shows as ungrouped.
+// Overpass is behind rather than wrong, so there is nothing to do here but say so: the
+// relation is out there, and creating a second one is what the upload would refuse.
+function showUploadedStopAreaForm(latlng, members) {
+    const content = document.createElement("div")
+    content.className = "new-stop-form"
+    content.innerHTML = `
+        <div class="new-stop-title">Already grouped in this session</div>
+        <div class="new-stop-naptan"></div>`
+
+    // set through the DOM, so nothing from OSM is ever parsed as HTML
+    content.querySelector(".new-stop-naptan").textContent =
+        `A stop area for ${members.length === 1 ? "this stop" : "these stops"} was uploaded earlier in this ` +
+        "session. The map data comes from Overpass, which runs a few minutes behind OSM, so it is not in " +
+        "this download yet. Creating another would be a duplicate; reload the relation once Overpass has " +
+        "caught up to add anything still missing."
+
+    // the note is there to be read, and a click reaching the map closes it
+    L.DomEvent.disableClickPropagation(content)
+
+    popup = L.popup(latlng, {
+        content: content,
+        closeButton: true,
+        className: "popup-form popup-tags",
+        minWidth: 280,
+        maxWidth: 340,
+    }).openOn(map)
+}
+
 // The stops of one place and the stop_area relation that would bring them together,
 // either a new one or the one they are already partly in.
 export function showStopAreaForm(
     latlng,
-    { name, existing, members, missing, queued, onAdd, onRemove, several = null },
+    { name, existing, members, missing, queued, onAdd, onRemove, several = null, uploaded = false },
 ) {
     clearBusStopsPopup()
 
@@ -694,6 +723,12 @@ export function showStopAreaForm(
     // the place, not about this route - so it is shown and left alone.
     if (several) {
         showSeveralStopAreasForm(latlng, members, several)
+        return
+    }
+
+    // This session grouped these stops already, and the download has not caught up.
+    if (uploaded) {
+        showUploadedStopAreaForm(latlng, members)
         return
     }
 

@@ -298,7 +298,7 @@ def test_tagged_stops_are_modified_in_the_changeset():
             tags_edited={'type': 'route', 'route': 'bus', 'public_transport:version': '2'},
             tag_additions=[StopTagAddition(type='node', id=42, tags={'naptan:AtcoCode': 'A'})],
         )
-    )
+    ).xml
     node = xmltodict.parse(xml)['osmChange']['modify']['node']
 
     assert node['@id'] == '42'

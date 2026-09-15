@@ -54,6 +54,7 @@ from naptan import NAPTAN
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
+from placeholder_ids import RelationPlaceholders
 from relation_builder import (
     build_osm_change,
     build_route_master_only_change,
@@ -747,7 +748,7 @@ async def post_download_osm_change(model: PostDownloadOsmChangeModel, _=Depends(
             route_master_detach=model.routeMasterDetach,
         )
 
-    return Response(content=osm_change, media_type='text/xml; charset=utf-8')
+    return Response(content=osm_change.xml, media_type='text/xml; charset=utf-8')
 
 
 @app.post('/upload_osm')
@@ -781,8 +782,11 @@ async def post_upload_osm(model: PostDownloadOsmChangeModel, access_token: str =
         osm_user = await osm.get_authorized_user()
         user_edits = osm_user['changesets']['count']
         upload_result = await osm.upload_osm_change(
-            osm_change,
+            osm_change.xml,
             {'changesets_count': user_edits + 1, **model.make_changeset_tags()},
+            # a route being created is the relation the client is waiting on an id for
+            relation_placeholder=None if model.relationId is not None else RelationPlaceholders.ROUTE,
+            new_stop_areas=osm_change.new_stop_areas,
         )
 
     if upload_result.ok:

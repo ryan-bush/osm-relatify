@@ -105,7 +105,8 @@ class TestParse:
 
 class TestBuildNewStopAreaRelations:
     def test_creates_the_relation_with_its_tags_and_members(self):
-        [relation] = build_new_stop_area_relations([_change()], set(), RelationPlaceholders())
+        [plan] = build_new_stop_area_relations([_change()], set(), RelationPlaceholders())
+        relation = plan.element
 
         assert relation['@id'] == -2, 'below the route relation, which takes -1'
         assert {t['@k']: t['@v'] for t in relation['tag']} == {
@@ -118,9 +119,18 @@ class TestBuildNewStopAreaRelations:
             ('node', 2, 'stop'),
         ]
 
+    def test_the_plan_says_what_the_relation_will_be_once_uploaded(self):
+        """The upload reads the real id back by the placeholder, which is only known here."""
+        [plan] = build_new_stop_area_relations([_change()], set(), RelationPlaceholders())
+
+        assert plan.placeholder_id == -2
+        assert plan.name == 'The Station'
+        assert [m.key for m in plan.members] == ['node/1', 'node/2']
+
     def test_each_new_area_gets_its_own_placeholder(self):
-        relations = build_new_stop_area_relations([_change(), _change(name='Market Square')], set(), RelationPlaceholders())
-        assert [r['@id'] for r in relations] == [-2, -3]
+        plans = build_new_stop_area_relations([_change(), _change(name='Market Square')], set(), RelationPlaceholders())
+        assert [p.placeholder_id for p in plans] == [-2, -3]
+        assert [p.element['@id'] for p in plans] == [-2, -3]
 
     def test_an_existing_area_is_not_created_again(self):
         assert build_new_stop_area_relations([_change(id=99)], set(), RelationPlaceholders()) == []
@@ -134,9 +144,9 @@ class TestBuildNewStopAreaRelations:
 
     def test_it_may_group_a_stop_this_changeset_creates(self):
         change = _change(members=[_member(id=-3), _member(id=-4, role='stop')])
-        [relation] = build_new_stop_area_relations([change], {-3, -4}, RelationPlaceholders())
+        [plan] = build_new_stop_area_relations([change], {-3, -4}, RelationPlaceholders())
 
-        assert [m['@ref'] for m in relation['member']] == [-3, -4]
+        assert [m['@ref'] for m in plan.element['member']] == [-3, -4]
 
     def test_a_placeholder_nothing_creates_is_rejected(self):
         with pytest.raises(HTTPException) as e:
@@ -172,7 +182,7 @@ def _build(changes, osm, members=(), new_stops=(), new_stop_positions=()):
             new_stop_positions=new_stop_positions,
             stop_areas=changes,
         )
-    )
+    ).xml
     return xmltodict.parse(xml, force_list=('relation', 'node', 'way', 'member', 'tag'))['osmChange']
 
 
