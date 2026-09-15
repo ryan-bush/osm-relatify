@@ -3,6 +3,7 @@ import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
 import {
     completedStopAreaCount,
     newStopAreaCount,
+    noteUploadedStopAreas,
     stopAreaCount,
     stopAreasKnown,
     stopAreasPayload,
@@ -57,7 +58,7 @@ import {
     removeMembersList,
     waysData,
 } from "./waysLayer.js"
-import { requestCalcBusRoute, routeData } from "./waysRoute.js"
+import { clearRouteData, requestCalcBusRoute, routeData } from "./waysRoute.js"
 
 const busAnimationElement = document.getElementById("bus-animation")
 const loadRelationForm = document.getElementById("load-relation-form")
@@ -503,6 +504,7 @@ const unloadRoute = () => {
     relationId = null
     isCreating = false
     newRouteType = null
+    clearRouteData()
 }
 
 const unload = () => {
@@ -880,11 +882,20 @@ submitUploadBtn.onclick = async () => {
                 `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}${revert}`,
             )
 
+            // Stop areas are read back from Overpass, which is minutes behind: the next
+            // variant of this line calls at the same places, and would be offered a
+            // second relation for stops this upload has just grouped.
+            noteUploadedStopAreas(stopAreasPayload())
+
             // back to the variants, with this one marked, so the next is one click away
             if (routeMasterViewId() !== null) {
                 if (relationId !== null) markRouteUploaded(relationId)
                 unloadRoute()
                 showMasterPicker()
+                // the list in hand was an answer from before this upload, so the variant
+                // just uploaded would be named after the tags it no longer has. Asking
+                // again reads the relations back from the OSM API, which is current.
+                masterReloadBtn.click()
                 return
             }
 

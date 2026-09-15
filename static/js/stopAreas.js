@@ -19,6 +19,35 @@ export function setExistingStopAreas(areas) {
 
 export const stopAreasKnown = () => existingAreasKnown
 
+// The stops this session has already put into a stop area, by element key.
+//
+// Which stop areas exist is answered by Overpass, and Overpass runs minutes behind OSM: a
+// relation created a moment ago is simply not in the next download, so the same place
+// looks ungrouped and is offered a relation of its own all over again. The upload refuses
+// that as a conflict, but only once the work has been done twice, which is exactly what
+// going through the variants of one route master does — the return direction calls at the
+// same places as the outbound one.
+const uploadedKeys = new Set()
+
+// Records what an upload put into stop areas, taken from the payload that went up. Only
+// the stops that were already in OSM: a stop created by the same changeset is known here
+// by a placeholder id, which is handed out afresh for each route and so would go on to
+// name a different stop entirely.
+export function noteUploadedStopAreas(areas) {
+    for (const area of areas) {
+        for (const member of area.members) {
+            if (member.id > 0) uploadedKeys.add(`${member.type}/${member.id}`)
+        }
+    }
+}
+
+// Whether this session has already grouped these stops. Only worth asking when the
+// download found no stop area for them: once Overpass catches up, the relation is in the
+// answer and there is nothing to remember. Kept for as long as the page is open, and not
+// only while one route master is being worked through — a stop grouped in this session is
+// grouped whichever route is loaded next, however it was reached.
+export const stopAreaUploaded = (members) => members.some((member) => uploadedKeys.has(member.key))
+
 const elementKey = (stop) => `${stop.type}/${stop.id.split("_")[0]}`
 
 // Every stop of one group, as relation members. A platform takes the platform role and a

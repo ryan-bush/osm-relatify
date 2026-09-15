@@ -46,6 +46,7 @@ import {
     renameExistingStopArea,
     setExistingStopAreas,
     stopAreaSignature,
+    stopAreaUploaded,
     stopAreasKnown,
     unrenameStopArea,
 } from "./stopAreas.js"
@@ -687,6 +688,16 @@ function stopAreaAction(e, collection) {
         return {
             label: "Stop <b>area</b> ⚠",
             onClick: () => showStopAreaForm(e.latlng, { members: members, several: found }),
+        }
+    }
+
+    // Nothing out there holds these stops, but this session put them in a stop area a
+    // moment ago and the download has not caught up. Offering a relation of their own
+    // again would be offering a duplicate, which is what the upload refuses.
+    if (!found.length && !pending && stopAreaUploaded(members)) {
+        return {
+            label: "Stop <b>area</b> ⏳",
+            onClick: () => showStopAreaForm(e.latlng, { members: members, uploaded: true }),
         }
     }
 
