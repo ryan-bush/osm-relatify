@@ -450,6 +450,17 @@ const render = () => {
 }
 
 export const processRouteMasters = (data, options = {}) => {
+    // A merge download is more map data for the relation already open. The master queued
+    // against it is the mapper's, and what it was queued against was an answer about the
+    // relation's own tags and membership — neither of which panning the map changes. For a
+    // relation being created it would not even be that: it exists nowhere but here, so
+    // every download answers with the bare tags a new route starts from, and the siblings
+    // of a route whose ref is not among them are none. Only the downloaded area has grown.
+    if (data?.fetchMerge && bounds !== null) {
+        bounds = data.bounds ?? bounds
+        return
+    }
+
     setRouteMasters(data)
 
     routeTags = data?.tags ?? {}
