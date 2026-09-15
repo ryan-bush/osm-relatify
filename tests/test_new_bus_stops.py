@@ -42,7 +42,7 @@ def _build_xml(members, new_stops, tags=BUS_TAGS) -> str:
             tags_edited=tags,
             new_stops=new_stops,
         )
-    )
+    ).xml
 
 
 def _created(members, new_stops, tags=BUS_TAGS) -> dict:

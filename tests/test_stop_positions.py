@@ -77,7 +77,7 @@ def _change(members, new_stops, osm, positions=(), tags=BUS_TAGS) -> dict:
             new_stops=new_stops,
             new_stop_positions=positions,
         )
-    )
+    ).xml
     return xmltodict.parse(xml, force_list=('node', 'way', 'member', 'tag', 'nd'))['osmChange']
 
 

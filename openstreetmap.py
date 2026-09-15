@@ -1,32 +1,91 @@
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal
 
 import xmltodict
 from asyncache import cached
 from cachetools import TTLCache
 
 from config import CHANGESET_ID_PLACEHOLDER, OSM_API_URL, TAG_MAX_LENGTH
+from models.stop_area import StopArea
 from utils import ensure_list, get_http_client
 
+if TYPE_CHECKING:
+    # imported for typing only: stop_areas reaches OSM through this module
+    from stop_areas import NewStopAreaPlan
 
-def _parse_created_relation_id(diff_result: str) -> int | None:
-    """Read back the real id OSM assigned to a relation the changeset created."""
+
+# the element types a changeset creates, as the diffResult names them
+_CREATED_TYPES = ('node', 'way', 'relation')
+
+
+def _parse_created_ids(diff_result: str) -> dict[str, dict[int, int]]:
+    """
+    The real ids OSM assigned to the elements a changeset created, by placeholder.
+
+    A changeset can create several relations at once — the route, the stop areas its stops
+    are grouped into, the route master it joins — and the diffResult says which is which
+    only by the placeholder each went up with. Reading the first created relation and
+    calling it the route was wrong as soon as anything else was created alongside it: the
+    stop areas are written before the route, so the route's id was whichever of them came
+    first.
+    """
     try:
-        parsed = xmltodict.parse(diff_result, force_list=('relation',))
+        parsed = xmltodict.parse(diff_result, force_list=_CREATED_TYPES)
     except Exception:
         print('🚧 Warning: Could not parse the upload diffResult')
-        return None
+        return {}
 
-    for relation in parsed.get('diffResult', {}).get('relation', ()):
-        old_id = relation.get('@old_id')
-        new_id = relation.get('@new_id')
+    result: dict[str, dict[int, int]] = {}
 
-        # a created element is the only one whose id changes
-        if old_id is not None and new_id is not None and int(old_id) < 0:
-            return int(new_id)
+    for element_type in _CREATED_TYPES:
+        created: dict[int, int] = {}
 
-    return None
+        for element in parsed.get('diffResult', {}).get(element_type) or ():
+            old_id = element.get('@old_id')
+            new_id = element.get('@new_id')
+
+            # a created element is the only one whose id changes
+            if old_id is None or new_id is None or int(old_id) >= 0:
+                continue
+
+            created[int(old_id)] = int(new_id)
+
+        if created:
+            result[element_type] = created
+
+    return result
+
+
+def _resolve_new_stop_areas(
+    plans: Sequence['NewStopAreaPlan'],
+    created_ids: dict[str, dict[int, int]],
+) -> list[StopArea]:
+    """
+    The stop areas a change created, as the relations they now are.
+
+    A member may be a stop the same change created, whose placeholder is no more a name
+    for it than the relation's own was; one that cannot be resolved is left out rather
+    than named by a placeholder the client would take for an element id.
+    """
+    result = []
+
+    for plan in plans:
+        relation_id = created_ids.get('relation', {}).get(plan.placeholder_id)
+        if relation_id is None:
+            print(f'🚧 Warning: The upload did not say what id stop area {plan.placeholder_id} was given')
+            continue
+
+        members = []
+
+        for member in plan.members:
+            member_id = member.id if member.id > 0 else created_ids.get(member.type, {}).get(member.id)
+            if member_id is not None:
+                members.append(f'{member.type}/{member_id}')
+
+        result.append(StopArea(id=relation_id, name=plan.name, members=members))
+
+    return result
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -37,6 +96,11 @@ class UploadResult:
     changeset_id: int | None
     # the id OSM assigned to a newly created relation, if the change created one
     relation_id: int | None = None
+    # The stop areas the change created, with the ids OSM has now given them. The client
+    # learns which stop areas exist from Overpass, which runs minutes behind, so without
+    # this the next route of the same line is offered a second relation for stops this
+    # change has only just grouped.
+    new_stop_areas: list[StopArea] = field(default_factory=list)
 
 
 class OpenStreetMap:
@@ -107,7 +171,21 @@ class OpenStreetMap:
         r.raise_for_status()
         return r.json()['user']
 
-    async def upload_osm_change(self, osm_change: str, tags: dict[str, str]) -> UploadResult:
+    async def upload_osm_change(
+        self,
+        osm_change: str,
+        tags: dict[str, str],
+        *,
+        relation_placeholder: int | None = None,
+        new_stop_areas: Sequence['NewStopAreaPlan'] = (),
+    ) -> UploadResult:
+        """
+        Uploads a change, and reads back the ids OSM gave whatever it created.
+
+        `relation_placeholder` is the id the relation being created carried in the change,
+        and `new_stop_areas` the stop areas it creates; both are named by placeholder
+        because that is all the diffResult has to go on.
+        """
         assert 'comment' in tags, 'You must provide a comment'
 
         for key, value in tuple(tags.items()):
@@ -158,10 +236,15 @@ class OpenStreetMap:
                 changeset_id=changeset_id,
             )
 
+        created_ids = _parse_created_ids(upload_resp.text)
+
         return UploadResult(
             ok=True,
             error_code=None,
             error_message=None,
             changeset_id=changeset_id,
-            relation_id=_parse_created_relation_id(upload_resp.text),
+            relation_id=(
+                None if relation_placeholder is None else created_ids.get('relation', {}).get(relation_placeholder)
+            ),
+            new_stop_areas=_resolve_new_stop_areas(new_stop_areas, created_ids),
         )

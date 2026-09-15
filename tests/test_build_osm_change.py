@@ -89,7 +89,7 @@ def build(route: FinalRoute, **kwargs) -> dict:
             **kwargs,
         )
     )
-    return xmltodict.parse(osm_change)['osmChange']['modify']['relation']
+    return xmltodict.parse(osm_change.xml)['osmChange']['modify']['relation']
 
 
 def build_change(route: FinalRoute, relation_id=RELATION_ID, **kwargs) -> dict:
@@ -104,7 +104,7 @@ def build_change(route: FinalRoute, relation_id=RELATION_ID, **kwargs) -> dict:
             **kwargs,
         )
     )
-    return xmltodict.parse(osm_change)['osmChange']
+    return xmltodict.parse(osm_change.xml)['osmChange']
 
 
 def tags_of(relation: dict) -> dict[str, str]:

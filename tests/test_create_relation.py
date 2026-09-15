@@ -14,7 +14,7 @@ from models.fetch_relation import (
 )
 from models.final_route import FinalRoute, FinalRouteWay
 from models.relation_member import RelationMember
-from openstreetmap import _parse_created_relation_id
+from openstreetmap import _parse_created_ids
 from relation_builder import NEW_RELATION_PLACEHOLDER_ID, build_osm_change, sort_and_upgrade_members
 
 NEW_TAGS = {
@@ -57,6 +57,7 @@ def route():
 
 
 def _build(route, relation_id):
+    """The change document alone, which is what these read."""
     return asyncio.run(
         build_osm_change(
             relation_id,
@@ -68,7 +69,7 @@ def _build(route, relation_id):
             tags_original=None,
             tags_edited=NEW_TAGS,
         )
-    )
+    ).xml
 
 
 def test_new_relation_is_created_not_modified(route):
@@ -132,14 +133,29 @@ def test_comment_says_created_when_there_is_no_relation_yet(relation_id, expecte
     assert model.make_comment() == expected
 
 
-def test_created_relation_id_is_read_back_from_the_diff_result():
+def test_created_ids_are_read_back_from_the_diff_result():
     diff_result = """<?xml version="1.0"?>
     <diffResult version="0.6">
       <way old_id="-1" new_id="900" new_version="1"/>
       <relation old_id="-1" new_id="12345" new_version="1"/>
     </diffResult>"""
 
-    assert _parse_created_relation_id(diff_result) == 12345
+    assert _parse_created_ids(diff_result) == {'way': {-1: 900}, 'relation': {-1: 12345}}
+
+
+def test_every_created_relation_is_named_by_the_placeholder_it_went_up_with():
+    """The stop areas of a change are written before the route, so order says nothing."""
+    diff_result = """<?xml version="1.0"?>
+    <diffResult version="0.6">
+      <node old_id="-1" new_id="800" new_version="1"/>
+      <relation old_id="-2" new_id="500" new_version="1"/>
+      <relation old_id="-1" new_id="12345" new_version="1"/>
+    </diffResult>"""
+
+    assert _parse_created_ids(diff_result) == {
+        'node': {-1: 800},
+        'relation': {-2: 500, -1: 12345},
+    }
 
 
 def test_modified_relation_is_not_mistaken_for_a_created_one():
@@ -148,11 +164,11 @@ def test_modified_relation_is_not_mistaken_for_a_created_one():
       <relation old_id="18333921" new_id="18333921" new_version="8"/>
     </diffResult>"""
 
-    assert _parse_created_relation_id(diff_result) is None
+    assert _parse_created_ids(diff_result) == {}
 
 
 def test_unparseable_diff_result_is_survivable():
-    assert _parse_created_relation_id('not xml at all') is None
+    assert _parse_created_ids('not xml at all') == {}
 
 
 def _stop(id: str):

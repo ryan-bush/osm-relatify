@@ -6,6 +6,14 @@
 // stop_area relations the downloaded stops are already in, from the last download
 let existingAreas = []
 
+// The stop areas this session uploaded, which the download cannot see yet. Overpass is
+// where a download learns about stop areas and it runs minutes behind OSM, so a relation
+// created a moment ago is simply not in the next answer. The upload reads the real ids
+// back out of the changeset and says what it created, and those are folded in here: the
+// next variant of a line calls at the same places, and would otherwise be offered a
+// second relation for stops that are already grouped.
+const sessionAreas = []
+
 // Whether that list is the whole truth. The lookup is a second Overpass query, and one
 // that fails says nothing about what is out there: an empty list would read as "no stop
 // area here", which is exactly what invites the mapper to create a second one beside the
@@ -14,7 +22,45 @@ let existingAreasKnown = true
 
 export function setExistingStopAreas(areas) {
     existingAreasKnown = areas != null
-    existingAreas = areas ?? []
+    existingAreas = mergeSessionAreas(areas ?? [])
+}
+
+// The downloaded answer, with what this session uploaded folded in. A relation in both is
+// one relation: listed twice it would read as a place grouped twice over, which is a
+// warning rather than something to add to. The member lists are unioned, as each knows of
+// members the other does not — the download of anything added since, this session of what
+// it added itself.
+function mergeSessionAreas(areas) {
+    if (!sessionAreas.length) return areas
+
+    const result = areas.map((area) => {
+        const session = sessionAreas.find((candidate) => candidate.id === area.id)
+        if (!session) return area
+
+        return { ...area, members: [...new Set([...area.members, ...session.members])] }
+    })
+
+    const known = new Set(areas.map((area) => area.id))
+
+    return [...result, ...sessionAreas.filter((area) => !known.has(area.id))]
+}
+
+// What an upload created or completed, as the relations they now are. Applied to what is
+// already loaded as well, so the route still open shows them without a download.
+function noteSessionStopAreas(areas) {
+    for (const area of areas) {
+        const at = sessionAreas.findIndex((candidate) => candidate.id === area.id)
+
+        if (at === -1) sessionAreas.push(area)
+        else
+            sessionAreas[at] = {
+                ...sessionAreas[at],
+                name: area.name,
+                members: [...new Set([...sessionAreas[at].members, ...area.members])],
+            }
+    }
+
+    if (existingAreasKnown) existingAreas = mergeSessionAreas(existingAreas)
 }
 
 export const stopAreasKnown = () => existingAreasKnown
@@ -29,16 +75,43 @@ export const stopAreasKnown = () => existingAreasKnown
 // same places as the outbound one.
 const uploadedKeys = new Set()
 
-// Records what an upload put into stop areas, taken from the payload that went up. Only
-// the stops that were already in OSM: a stop created by the same changeset is known here
-// by a placeholder id, which is handed out afresh for each route and so would go on to
-// name a different stop entirely.
-export function noteUploadedStopAreas(areas) {
-    for (const area of areas) {
+/**
+ * Records what an upload did to stop areas.
+ *
+ * `sent` is the payload that went up and `created` what the upload said it created, each
+ * with the id OSM has now given it. The relations are remembered as relations, which is
+ * what lets the next route complete them; the stops are remembered as well, so a place
+ * this session grouped is known to have been grouped even when the upload could not say
+ * which relation it became.
+ *
+ * Only the stops that were already in OSM: one created by the same changeset is named in
+ * the payload by a placeholder id, which is handed out afresh for each route and so would
+ * go on to name a different stop entirely. What became of those is in `created`, which
+ * carries the real ids.
+ */
+export function noteUploadedStopAreas(sent, created = []) {
+    const completed = []
+
+    for (const area of sent) {
+        const members = []
+
         for (const member of area.members) {
-            if (member.id > 0) uploadedKeys.add(`${member.type}/${member.id}`)
+            if (member.id <= 0) continue
+
+            const key = `${member.type}/${member.id}`
+            uploadedKeys.add(key)
+            members.push(key)
         }
+
+        // a new one is only a relation once the upload says what id it was given
+        if (area.id !== null && members.length) completed.push({ id: area.id, name: area.name, members: members })
     }
+
+    for (const area of created) {
+        for (const key of area.members) uploadedKeys.add(key)
+    }
+
+    noteSessionStopAreas([...completed, ...created])
 }
 
 // Whether this session has already grouped these stops. Only worth asking when the

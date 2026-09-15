@@ -884,8 +884,10 @@ submitUploadBtn.onclick = async () => {
 
             // Stop areas are read back from Overpass, which is minutes behind: the next
             // variant of this line calls at the same places, and would be offered a
-            // second relation for stops this upload has just grouped.
-            noteUploadedStopAreas(stopAreasPayload())
+            // second relation for stops this upload has just grouped. The upload says
+            // what ids OSM gave the relations it created, so they can be completed rather
+            // than only left alone.
+            noteUploadedStopAreas(stopAreasPayload(), data.new_stop_areas ?? [])
 
             // back to the variants, with this one marked, so the next is one click away
             if (routeMasterViewId() !== null) {

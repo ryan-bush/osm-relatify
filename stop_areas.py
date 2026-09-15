@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Container, Iterable, Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import HTTPException, status
@@ -141,11 +142,28 @@ async def check_new_stop_areas(changes: Sequence[StopAreaChange], osm) -> None:
                 )
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class NewStopAreaPlan:
+    """
+    A stop_area relation this changeset creates.
+
+    The element is what goes into the change; the rest is what the real relation will be
+    once OSM has assigned it an id, which the upload reads back out of the diffResult. The
+    client learns which stop areas exist from Overpass, and Overpass runs minutes behind,
+    so a relation created now is told to it here or not at all.
+    """
+
+    placeholder_id: int
+    name: str
+    members: tuple[StopAreaMember, ...]
+    element: dict
+
+
 def build_new_stop_area_relations(
     changes: Sequence[StopAreaChange],
     created_node_ids: Container[int],
     placeholders: RelationPlaceholders,
-) -> list[dict]:
+) -> list[NewStopAreaPlan]:
     """The stop_area relations to create, each with its own placeholder id."""
     _check_members(changes, created_node_ids)
 
@@ -161,14 +179,19 @@ def build_new_stop_area_relations(
         for key, value in tags.items():
             validate_tag(key, value)
 
+        placeholder_id = placeholders.take()
+
         result.append(
-            {
-                '@id': placeholders.take(),
-                'tag': [{'@k': k, '@v': v} for k, v in tags.items()],
-                'member': [
-                    {'@type': m.type, '@ref': m.id, '@role': m.role} for m in change.members
-                ],
-            }
+            NewStopAreaPlan(
+                placeholder_id=placeholder_id,
+                name=name,
+                members=tuple(change.members),
+                element={
+                    '@id': placeholder_id,
+                    'tag': [{'@k': k, '@v': v} for k, v in tags.items()],
+                    'member': [{'@type': m.type, '@ref': m.id, '@role': m.role} for m in change.members],
+                },
+            )
         )
 
     return result

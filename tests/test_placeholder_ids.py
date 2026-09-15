@@ -7,10 +7,11 @@ from bus_stop_creation import NewBusStop
 from models.element_id import ElementId
 from models.final_route import FinalRoute
 from models.relation_member import RelationMember
+from openstreetmap import _parse_created_ids, _resolve_new_stop_areas
 from placeholder_ids import RelationPlaceholders
 from relation_builder import build_osm_change
 from route_masters import RouteMasterChange
-from stop_areas import StopAreaChange, StopAreaMember
+from stop_areas import NewStopAreaPlan, StopAreaChange, StopAreaMember
 
 NEW_TAGS = {
     'type': 'route',
@@ -57,6 +58,10 @@ class FakeOsm:
 
 def _build_everything_at_once(route):
     """A changeset that creates a route, the stops it serves, their stop areas and its master."""
+    return _everything_at_once(route).xml
+
+
+def _everything_at_once(route):
     return asyncio.run(
         build_osm_change(
             None,
@@ -175,3 +180,65 @@ def test_nodes_are_created_before_the_relations_that_group_them(route):
     xml = _build_everything_at_once(route)
 
     assert xml.index('<node') < xml.index('<relation'), 'a stop area refers to the stops it holds'
+
+
+# Everything above is about the change going up. These are about reading it back: the
+# diffResult names what was created by the placeholder it carried, and nothing else.
+def test_the_route_is_read_back_by_its_own_placeholder(route):
+    """A stop area is written before the route, so the first created relation is not it."""
+    plans = _everything_at_once(route).new_stop_areas
+    diff_result = (
+        '<?xml version="1.0"?><diffResult version="0.6">'
+        '<node old_id="-1" new_id="801"/><node old_id="-2" new_id="802"/>'
+        f'<relation old_id="{plans[0].placeholder_id}" new_id="501"/>'
+        f'<relation old_id="{plans[1].placeholder_id}" new_id="502"/>'
+        f'<relation old_id="{RelationPlaceholders.ROUTE}" new_id="12345"/>'
+        '<relation old_id="-4" new_id="600"/>'
+        '</diffResult>'
+    )
+
+    created = _parse_created_ids(diff_result)
+
+    assert created['relation'][RelationPlaceholders.ROUTE] == 12345
+
+
+def test_new_stop_areas_are_read_back_with_the_stops_they_hold(route):
+    change = _everything_at_once(route)
+    [college, town] = change.new_stop_areas
+    diff_result = (
+        '<?xml version="1.0"?><diffResult version="0.6">'
+        '<node old_id="-1" new_id="801"/><node old_id="-2" new_id="802"/>'
+        f'<relation old_id="{college.placeholder_id}" new_id="501"/>'
+        f'<relation old_id="{town.placeholder_id}" new_id="502"/>'
+        '</diffResult>'
+    )
+
+    areas = _resolve_new_stop_areas(change.new_stop_areas, _parse_created_ids(diff_result))
+
+    assert [(a.id, a.name, a.members) for a in areas] == [
+        # the members were placeholders too, and are the real stops now
+        (501, 'College', ['node/801']),
+        (502, 'Town', ['node/802']),
+    ]
+
+
+def test_a_stop_area_the_upload_said_nothing_about_is_left_out(route):
+    change = _everything_at_once(route)
+
+    assert _resolve_new_stop_areas(change.new_stop_areas, {}) == []
+
+
+def test_a_stop_already_in_osm_keeps_the_id_it_has():
+    plan = NewStopAreaPlan(
+        placeholder_id=-2,
+        name='The Station',
+        members=(
+            StopAreaMember(type='node', id=1, role='platform'),
+            StopAreaMember(type='node', id=-1, role='stop'),
+        ),
+        element={},
+    )
+
+    [area] = _resolve_new_stop_areas([plan], {'relation': {-2: 501}, 'node': {-1: 801}})
+
+    assert area.members == ['node/1', 'node/801']
