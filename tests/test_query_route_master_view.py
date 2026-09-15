@@ -19,7 +19,9 @@ class FakeOsm:
         return self._relations[int(relation_id)]
 
     async def get_relations(self, relation_ids, json: bool = True):  # noqa: ARG002
-        return [self._relations[int(i)] for i in relation_ids]
+        # as the API does: an id it knows nothing about is left out of the reply rather
+        # than making the whole request fail
+        return [self._relations[int(i)] for i in relation_ids if int(i) in self._relations]
 
 
 class FakeOverpass:
@@ -78,7 +80,42 @@ def test_a_variant_this_application_cannot_open_is_marked(monkeypatch):
     [route] = _query(relations, 100, monkeypatch).json()['routes']
 
     assert route['editable'] is False
+    # OSM said what it is; it is simply not one this application opens
+    assert route['described'] is True
     assert route['name'] == 'Bus 9 (old)'
+
+
+def test_a_member_osm_did_not_describe_is_not_marked_as_one_it_cannot_open(monkeypatch):
+    """A member deleted since the master last mentioned it is not a route with bad tags."""
+    relations = [_relation(100, MASTER_TAGS, [('relation', 1), ('relation', 2)]), _relation(1, PTV2)]
+
+    routes = _query(relations, 100, monkeypatch).json()['routes']
+
+    assert [route['id'] for route in routes] == [1, 2], 'listed rather than quietly dropped'
+    assert routes[0]['described'] is True
+    assert routes[1]['described'] is False
+    assert routes[1]['editable'] is False
+
+
+def test_a_lookup_that_failed_leaves_every_variant_undescribed(monkeypatch):
+    """
+    The variants are worth showing without their names, but not with an explanation the
+    application invented: a failed lookup is a thing to reload, not a master full of
+    routes it cannot open.
+    """
+
+    class FailingOsm(FakeOsm):
+        async def get_relations(self, relation_ids, json: bool = True):  # noqa: ARG002
+            raise RuntimeError('OSM is having a moment')
+
+    monkeypatch.setattr(main, '_OSM', FailingOsm([_relation(100, MASTER_TAGS, [('relation', 1), ('relation', 2)])]))
+    monkeypatch.setattr(main, '_OVERPASS', FakeOverpass())
+
+    body = _CLIENT.post('/query', json={'relationId': 100}).json()
+
+    assert body['kind'] == 'route_master'
+    assert [route['id'] for route in body['routes']] == [1, 2]
+    assert not any(route['described'] for route in body['routes'])
 
 
 def test_a_master_holding_something_that_is_not_a_route_says_so(monkeypatch):

@@ -111,6 +111,7 @@ def parse_routes(elements: Iterable[dict]) -> dict[int, RouteMasterRoute]:
             name=tags.get('name', '').strip(),
             tags=tags,
             editable=get_route_type(tags) is not None,
+            described=True,
         )
 
     return result
@@ -134,7 +135,8 @@ def build_route_master_view(master: RouteMaster, routes: dict[int, RouteMasterRo
             continue
 
         route = routes.get(int(id))
-        # in the master, but OSM did not describe it; named by its id so it is not lost
+        # in the master, but OSM did not describe it; named by its id so it is not lost,
+        # and marked as undescribed so it is not read as a route that cannot be opened
         listed.append(route if route is not None else RouteMasterRoute(id=int(id), ref='', name=''))
 
     return RouteMasterView(id=master.id, tags=master.tags, routes=listed, otherMembers=others)

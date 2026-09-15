@@ -132,7 +132,13 @@ def test_describe_members_leaves_out_members_it_could_not_look_up():
     described = describe_members(masters, parse_routes([_route(id=1)]))[0]
 
     assert described.routes == [
-        RouteMasterRoute(id=1, ref='71', name='Bus 71: A => B', tags={'ref': '71', 'name': 'Bus 71: A => B'})
+        RouteMasterRoute(
+            id=1,
+            ref='71',
+            name='Bus 71: A => B',
+            tags={'ref': '71', 'name': 'Bus 71: A => B'},
+            described=True,
+        )
     ]
 
 
@@ -145,8 +151,8 @@ def test_describe_members_without_any_lookups_leaves_the_variants_empty():
 def test_parse_routes_trims_and_defaults_missing_tags():
     routes = parse_routes([_route(id=1, tags={'name': '  Bus 71  '}), _route(id=2, tags={})])
 
-    assert routes[1] == RouteMasterRoute(id=1, ref='', name='Bus 71', tags={'name': '  Bus 71  '})
-    assert routes[2] == RouteMasterRoute(id=2, ref='', name='', tags={})
+    assert routes[1] == RouteMasterRoute(id=1, ref='', name='Bus 71', tags={'name': '  Bus 71  '}, described=True)
+    assert routes[2] == RouteMasterRoute(id=2, ref='', name='', tags={}, described=True)
 
 
 def test_parse_routes_ignores_elements_that_are_not_relations():

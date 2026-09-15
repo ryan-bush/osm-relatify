@@ -144,3 +144,19 @@ test("every kind of disagreement is reported at once", () => {
 
     assert.equal(found.length, 3, found.join(" | "))
 })
+
+// A master may list a member OSM never described: one deleted since, one beyond what is
+// worth expanding, or one whose lookup failed. Nothing is known about it either way.
+test("a member the lookup did not describe is not a variant with faults", () => {
+    const undescribed = { id: 3, tags: {}, described: false }
+
+    assert.deepEqual(messages(MASTER, [route(1), undescribed]), [])
+})
+
+test("the described variants are still checked alongside it", () => {
+    const undescribed = { id: 3, tags: {}, described: false }
+    const found = messages(MASTER, [route(1), route(2, { ref: "92" }), undescribed])
+
+    assert.equal(found.length, 1)
+    assert.match(found[0], /#2/)
+})

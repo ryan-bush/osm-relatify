@@ -25,6 +25,7 @@ import {
     setRouteMasters,
     undescribedMemberCount,
     undetachRouteMaster,
+    wouldBeLeftEmpty,
 } from "./routeMasters.js"
 import { createTagEditor } from "./tagEditor.js"
 import { osmUrl } from "./utils.js"
@@ -202,6 +203,15 @@ const makeMasterBlock = (master) => {
         block.appendChild(
             makeNote("This route will be removed from it.", "LOW"),
         )
+
+        if (wouldBeLeftEmpty(master, relationId))
+            block.appendChild(
+                makeNote(
+                    "It holds nothing else, so it will be left empty. Deleting the relation has to be done elsewhere.",
+                    "LOW",
+                ),
+            )
+
         block.appendChild(
             makeActions(
                 makeButton("Keep it here", () => {
@@ -212,6 +222,11 @@ const makeMasterBlock = (master) => {
         )
         return block
     }
+
+    if (wouldBeLeftEmpty(master, relationId))
+        block.appendChild(
+            makeNote("This route is its only member; removing it would leave the master empty.", "LOW"),
+        )
 
     const pending = pendingRouteMaster()
     const editing = pending?.id === master.id && pending.tagsOriginal !== null
