@@ -68,6 +68,15 @@ const editor = createTagEditor({
 })
 
 export const processRelationTags = (data) => {
+    // A merge download is more map data for the relation already open, not a fresh answer
+    // about the relation itself. What is in the table is the mapper's — typed or loaded —
+    // and panning the map far enough to download more is not a reason to throw it away.
+    //
+    // A relation being created is where this showed: it exists nowhere but here, so every
+    // download answers with the bare tags a new route starts from, and a name and ref
+    // typed before panning were replaced by them.
+    if (data.fetchMerge && relationTagsOriginal !== null) return
+
     editor.load(data.tags)
     relationTagsOriginal = editor.tagsOriginal
 }
