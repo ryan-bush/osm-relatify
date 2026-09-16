@@ -110,6 +110,13 @@ def test_stops_without_a_mappable_pole_are_skipped(overrides):
     assert parse_row(_row(**overrides)) is None
 
 
+def test_a_backtick_in_the_name_becomes_an_apostrophe():
+    tags = parse_row(_row(CommonName='St Mihangel`s Church')).tags
+
+    assert tags['name'] == "St Mihangel's Church"
+    assert tags['naptan:CommonName'] == 'St Mihangel`s Church'
+
+
 def test_unmarked_stop_is_kept_and_tagged_as_such():
     tags = parse_row(_row(BusStopType='CUS')).tags
 

@@ -14,7 +14,7 @@ from cachetools import TTLCache
 from fastapi import HTTPException
 from starlette import status
 
-from bus_collection_builder import build_bus_stop_collections
+from bus_collection_builder import build_bus_stop_collections, stop_position_headings
 from config import (
     DOWNLOAD_RELATION_GRID_CELL_EXPAND,
     DOWNLOAD_RELATION_WAY_BB_EXPAND,
@@ -708,6 +708,8 @@ class Overpass:
             e['_oneway'] = is_oneway(e['tags'])
             e['_roundabout'] = is_roundabout(e['tags'])
 
+        # before the ways are cut up, as a stop position's direction is relative to its way
+        unsplit_road_elements = road_elements
         road_elements, connected_ways_map, id_map = organize_ways(road_elements, turn_in_place_nodes)
 
         ways = {
@@ -733,7 +735,12 @@ class Overpass:
             elements_ex = (e for e in elements_ex if is_tram_element(e['tags']))
 
         stops = tuple(FetchRelationBusStop.from_data(e) for e in elements_ex)
-        bus_stop_collections = build_bus_stop_collections(stops)
+        headings = stop_position_headings(
+            stops,
+            unsplit_road_elements,
+            {n_id: (node['lat'], node['lon']) for n_id, node in nodes_map.items()},
+        )
+        bus_stop_collections = build_bus_stop_collections(stops, headings)
         bus_stop_collections = tuple(c for c in bus_stop_collections if bbc.contains(c.best.latLng))
 
         global_bb = BoundingBox(*bbc.idx.bounds)

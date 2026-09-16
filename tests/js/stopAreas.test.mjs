@@ -10,6 +10,7 @@ import {
     existingAreasFor,
     getPendingStopArea,
     groupMembers,
+    growStopArea,
     newStopAreaCount,
     reconcileStopAreas,
     removeStopArea,
@@ -217,4 +218,42 @@ test("a new area never carries a name to replace", () => {
     addStopArea(groupMembers([northbound, southbound]), "The Station", null)
 
     assert.equal(stopAreasPayload()[0].expectedName, null)
+})
+
+// Llys Watling on route 4: an area was queued for one side, then the other side was
+// renamed to match, bringing its existing area into the group
+test("an area queued for part of a group grows into the group's existing relation", () => {
+    const watlingCourt = { platform: stop(3, "Watling Court"), stop: stop(4, "Watling Court") }
+    setExistingStopAreas([{ id: 77, name: "Watling Court", members: ["node/3", "node/4"] }])
+
+    const part = groupMembers([northbound])
+    addStopArea(part, "Llys Watling", null)
+
+    const whole = groupMembers([northbound, watlingCourt])
+    assert.equal(growStopArea(whole, existingAreaFor(whole)), true)
+
+    assert.equal(getPendingStopArea(part), null)
+    assert.deepEqual(
+        stopAreasPayload().map((area) => [area.id, area.name, area.members.length]),
+        [[77, "Watling Court", 4]],
+    )
+})
+
+test("a part already covered by an area queued for the whole group is dropped", () => {
+    const part = groupMembers([northbound])
+    const whole = groupMembers([northbound, southbound])
+    addStopArea(part, "The Station", null)
+    addStopArea(whole, "The Station", null)
+
+    assert.equal(growStopArea(whole, null), true)
+    assert.equal(stopAreasPayload().length, 1)
+    assert.equal(stopAreasPayload()[0].members.length, 4)
+})
+
+test("an area for a different group is left alone", () => {
+    const other = groupMembers([{ platform: stop(8, "Elsewhere"), stop: null }, { platform: stop(9, "Elsewhere") }])
+    addStopArea(other, "Elsewhere", null)
+
+    assert.equal(growStopArea(groupMembers([northbound, southbound]), null), false)
+    assert.ok(getPendingStopArea(other))
 })

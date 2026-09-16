@@ -1,8 +1,8 @@
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from itertools import combinations
-from math import radians
+from math import atan2, cos, degrees, radians
 from operator import itemgetter
 
 import networkx as nx
@@ -13,14 +13,98 @@ from scipy.optimize import linear_sum_assignment
 from sentry_sdk import trace
 from sklearn.neighbors import BallTree
 
+from compass import OPPOSITE_HEADING_ANGLE, angle_between, compass_degrees
 from config import BUS_COLLECTION_SEARCH_AREA, STOP_AREA_SEARCH_AREA
 from cython_lib.geoutils import haversine_distance, radians_tuple
+from models.element_id import ElementId, element_id
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, PublicTransport
 from utils import extract_numbers, normalize_name
 
+# what pairing a stop position with a platform its buses do not serve costs, so that it is
+# never the cheaper choice; such a pair is undone once the assignment is made
+_WRONG_DIRECTION = 1e9
+
+
+def stop_position_headings(
+    stops: Iterable[FetchRelationBusStop],
+    roads: Iterable[dict],
+    coordinates: Mapping[int, tuple[float, float]],
+) -> dict[ElementId, float]:
+    """
+    Which way the buses halting at each one-way stop position travel, in degrees clockwise
+    from north.
+
+    Only for a stop position tagged direction=forward or backward, which is relative to
+    the way it stands on, so `roads` are the ways as OSM has them rather than cut up. One
+    standing where ways meet is left out, having no single way to be relative to.
+    """
+    wanted = {
+        int(stop.id): stop.tags['direction']
+        for stop in stops
+        if stop.type == 'node'
+        and stop.public_transport == PublicTransport.STOP_POSITION
+        and stop.tags.get('direction') in ('forward', 'backward')
+    }
+    if not wanted:
+        return {}
+
+    found: dict[int, list[float]] = defaultdict(list)
+
+    for road in roads:
+        nodes = road['nodes']
+
+        for i, node in enumerate(nodes):
+            if node not in wanted:
+                continue
+
+            a = coordinates[nodes[max(i - 1, 0)]]
+            b = coordinates[nodes[min(i + 1, len(nodes) - 1)]]
+            if a == b:
+                continue
+
+            heading = degrees(atan2((b[1] - a[1]) * cos(radians(a[0])), b[0] - a[0]))
+            if wanted[node] == 'backward':
+                heading += 180
+            found[node].append(heading % 360)
+
+    return {element_id(node): headings[0] for node, headings in found.items() if len(headings) == 1}
+
+
+def _serves(platform: FetchRelationBusStop, stop: FetchRelationBusStop, headings: Mapping[ElementId, float]) -> bool:
+    """
+    Whether the buses halting at a stop position can be the ones calling at a platform.
+
+    Told from the direction NaPTAN gives the platform, which says which way its buses go
+    without needing to know which side of the road they keep to.
+    """
+    heading = headings.get(stop.id)
+    bearing = compass_degrees(platform.tags.get('naptan:Bearing', ''))
+
+    return heading is None or bearing is None or angle_between(heading, bearing) <= OPPOSITE_HEADING_ANGLE
+
+
+def _pairing_costs(
+    platforms: Sequence[FetchRelationBusStop],
+    stops: Sequence[FetchRelationBusStop],
+    headings: Mapping[ElementId, float],
+) -> np.ndarray:
+    costs = np.zeros((len(platforms), len(stops)))
+
+    for i, platform in enumerate(platforms):
+        for j, stop in enumerate(stops):
+            if _serves(platform, stop, headings):
+                costs[i, j] = haversine_distance(platform.latLng, stop.latLng)
+            else:
+                costs[i, j] = _WRONG_DIRECTION
+
+    return costs
+
 
 @trace
-def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> list[FetchRelationBusStopCollection]:
+def build_bus_stop_collections(
+    bus_stops: Sequence[FetchRelationBusStop],
+    headings: Mapping[ElementId, float] | None = None,
+) -> list[FetchRelationBusStopCollection]:
     # 1. group by area
     # 2. group by name in area
     # 3. discard unnamed if in area with named
@@ -28,6 +112,7 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
     if not bus_stops:
         return []
 
+    headings = headings or {}
     search_latLng = BUS_COLLECTION_SEARCH_AREA / 111_111
     search_latLng_rad = radians(search_latLng)
 
@@ -169,15 +254,15 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 )
 
             if platforms_explicit:
-                collections.extend(_collect(platforms_explicit, stops))
+                collections.extend(_collect(platforms_explicit, stops, headings))
                 continue
 
             if stops_explicit:
-                collections.extend(_collect(platforms, stops_explicit))
+                collections.extend(_collect(platforms, stops_explicit, headings))
                 continue
 
             if platforms_implicit and stops_implicit:
-                collections.extend(_collect(platforms_implicit, stops))
+                collections.extend(_collect(platforms_implicit, stops, headings))
                 continue
 
             if platforms_implicit:  # and not stops_implicit
@@ -193,12 +278,13 @@ def build_bus_stop_collections(bus_stops: Sequence[FetchRelationBusStop]) -> lis
                 )
                 continue
 
-    return _pair_by_distance_within_places(assign_stop_area_groups(collections))
+    return _pair_by_distance_within_places(assign_stop_area_groups(collections), headings)
 
 
 def _collect(
     platforms: Sequence[FetchRelationBusStop],
     stops: Sequence[FetchRelationBusStop],
+    headings: Mapping[ElementId, float],
 ) -> list[FetchRelationBusStopCollection]:
     """
     Pair the platforms of one name group with its stop positions, keeping every one.
@@ -210,7 +296,7 @@ def _collect(
     top of it. At the High Street terminus that would have put a new node 0.5 m from
     node/14177644556.
     """
-    assigned = _assign(platforms, stops)
+    assigned = _assign(platforms, stops, headings)
     paired = {id(stop) for stop in assigned if stop is not None}
 
     result = [
@@ -226,6 +312,7 @@ def _collect(
 
 def _pair_by_distance_within_places(
     collections: list[FetchRelationBusStopCollection],
+    headings: Mapping[ElementId, float],
 ) -> list[FetchRelationBusStopCollection]:
     """
     Within one place, give each stop position to the platform it stands beside.
@@ -271,13 +358,13 @@ def _pair_by_distance_within_places(
 
         platforms = [result[i].platform for i in indices]
 
-        distance_matrix = np.zeros((len(platforms), len(sources)))
-        for i, platform in enumerate(platforms):
-            for j, (_, stop) in enumerate(sources):
-                distance_matrix[i, j] = haversine_distance(platform.latLng, stop.latLng)
-
-        row_ind, col_ind = linear_sum_assignment(distance_matrix)
-        taken = {indices[i]: sources[j][1] for i, j in zip(row_ind, col_ind, strict=False)}
+        costs = _pairing_costs(platforms, [stop for _, stop in sources], headings)
+        row_ind, col_ind = linear_sum_assignment(costs)
+        taken = {
+            indices[i]: sources[j][1]
+            for i, j in zip(row_ind, col_ind, strict=False)
+            if costs[i, j] < _WRONG_DIRECTION
+        }
         # the stops are not hashable, and two of them are never the same node anyway
         moved = {id(stop) for stop in taken.values()}
 
@@ -313,6 +400,7 @@ def _pick_best(
 def _assign(
     primary: Sequence[FetchRelationBusStop],
     elements: Sequence[FetchRelationBusStop],
+    headings: Mapping[ElementId, float],
 ) -> list[FetchRelationBusStop | None]:
     """
     Pair each of `primary` with the element that goes with it, closest pairs first.
@@ -327,18 +415,18 @@ def _assign(
     if not elements:
         return [None] * len(primary)
 
-    distance_matrix = np.zeros((len(primary), len(elements)))
-    for i, p in enumerate(primary):
-        for j, e in enumerate(elements):
-            distance_matrix[i, j] = haversine_distance(p.latLng, e.latLng)
+    # A stop position the platform's buses do not serve is never paired with it, as that
+    # would leave the platform looking as though it had one of its own.
+    costs = _pairing_costs(primary, elements, headings)
 
     # the Hungarian algorithm, which pairs off as many as it can for the least total
-    # distance; on a lopsided matrix it simply leaves the extras unpaired
-    row_ind, col_ind = linear_sum_assignment(distance_matrix)
+    # cost; on a lopsided matrix it simply leaves the extras unpaired
+    row_ind, col_ind = linear_sum_assignment(costs)
 
     result: list[FetchRelationBusStop | None] = [None] * len(primary)
     for i, j in zip(row_ind, col_ind, strict=False):
-        result[i] = elements[j]
+        if costs[i, j] < _WRONG_DIRECTION:
+            result[i] = elements[j]
 
     return result
 

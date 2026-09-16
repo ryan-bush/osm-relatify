@@ -39,6 +39,7 @@ import {
     existingAreaFor,
     existingAreasFor,
     getPendingStopArea,
+    growStopArea,
     groupMembers,
     reconcileStopAreas,
     removeStopArea,
@@ -306,7 +307,7 @@ function addBusStopToLayer(i, stop, name, role) {
             naptanTagsAction(e, stop, suggestion, addition),
             () => showAllTagsForm(e.latlng, tagSections(busStopData[i])),
             stopPositionAction(e, busStopData[i]),
-            naptanDifferencesAction(e, stop, suggestion),
+            naptanDifferencesAction(e, stop, suggestion, busStopData[i]),
             stopAreaAction(e, busStopData[i]),
             editStopAction(e, busStopData[i]),
         ),
@@ -405,6 +406,7 @@ function renameFollowers(collection, name) {
     const stop = collection.stop
     if (stop && !isNewStop(stop) && (stop.tags?.name ?? "").trim() && (stop.tags.name ?? "").trim() !== name) {
         followers.push({
+            kind: "stopPosition",
             label: "the stop position",
             apply: () => setStopEdit(stop, { name: name }),
         })
@@ -415,12 +417,39 @@ function renameFollowers(collection, name) {
 
     if (area && area.name && area.name !== name) {
         followers.push({
+            kind: "stopArea",
             label: "the stop area",
+            was: area.name,
             apply: () => renameExistingStopArea(members, area, name),
         })
     }
 
     return followers
+}
+
+// A NaPTAN name the mapper accepts renames what was carrying the stop's old name - the
+// stop position on the road, and the stop area - as a rename typed into the stop form
+// offers to. Worked out afresh from the decision, so taking it back undoes them.
+function followNaptanRename(collection) {
+    const platform = collection.platform
+    // a name the mapper typed outranks NaPTAN's, and has its own say over the rest
+    if (getStopEdit(platform)?.tags?.name !== undefined) return
+
+    const oldName = (platform.tags?.name ?? "").trim()
+    const name = nameOf(platform)
+    const stop = collection.stop
+
+    if (stop && !isNewStop(stop) && (stop.tags?.name ?? "").trim() === oldName) {
+        if (name !== oldName) setStopEdit(stop, { name: name })
+        else removeStopEdit(stop)
+    }
+
+    unfollowRename(collection)
+    if (name === oldName) return
+
+    for (const follower of renameFollowers(collection, name)) {
+        if (follower.kind === "stopArea" && follower.was === oldName) follower.apply()
+    }
 }
 
 // Drops a stop area rename that was following this stop, leaving a relation it is still
@@ -499,6 +528,10 @@ function refreshDerivedNames() {
         const collections = collectionsInGroup(entry, index)
         const members = groupMembers(collections)
         if (members.length >= 2) {
+            // a rename can bring two groups together after an area was queued for one
+            if (stopAreasKnown() && existingAreasFor(members).length < 2) {
+                changed = growStopArea(members, existingAreaFor(members)) || changed
+            }
             changed = renameStopArea(members, groupName(collections)) || changed
         }
     }
@@ -620,7 +653,7 @@ const directionFor = (placement) => (placement ? travelDirectionOn(placement.seg
 
 // Where NaPTAN and the stop hold different values for a tag, the mapper decides which
 // one is right. Until every one is decided the route cannot be uploaded.
-function naptanDifferencesAction(e, stop, suggestion) {
+function naptanDifferencesAction(e, stop, suggestion, collection) {
     const differing = suggestion?.differing
     if (!differing || !Object.keys(differing).length) return null
 
@@ -639,6 +672,7 @@ function naptanDifferencesAction(e, stop, suggestion) {
                 })),
                 onDecide: (tagKey, naptanValue, decision) => {
                     setDecision(stop, tagKey, naptanValue, decision)
+                    if (tagKey === "name" && collection.platform === stop) followNaptanRename(collection)
                     // the popup stays up so the rest of the stop's tags can be decided too
                     onTagAdditionsChanged({ keepPopup: true })
                 },
