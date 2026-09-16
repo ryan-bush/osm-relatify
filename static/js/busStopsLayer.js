@@ -60,7 +60,7 @@ import {
     setStopPosition,
     setStopPositionDirection,
 } from "./stopPositions.js"
-import { effectiveName } from "./stopNames.js"
+import { effectiveName, placeKey } from "./stopNames.js"
 import { relationTags } from "./relationTagEditor.js"
 import { escapeHtml, getBusCollectionName, haversine_distance } from "./utils.js"
 import { waysData, waysRBush } from "./waysLayer.js"
@@ -73,6 +73,9 @@ let naptanStops = []
 
 // tags NaPTAN has for stops already in OSM, keyed like the stops' type and id
 let naptanTagSuggestions = new Map()
+
+// how far apart the stops of one place can be, as the server grouped them by
+let stopAreaReach = 150
 
 const stopKey = (stop) => `${stop.type},${stop.id}`
 
@@ -130,9 +133,11 @@ export function processBusStopData(fetchData) {
 
         // worked out afresh for the whole downloaded area, so replaced rather than merged
         setExistingStopAreas(fetchData.stopAreas ?? null)
-        reconcileGroups()
+        stopAreaReach = fetchData.stopAreaSearchArea ?? stopAreaReach
         naptanStops = fetchData.naptanStops ?? []
         naptanTagSuggestions = new Map((fetchData.naptanTags ?? []).map((suggestion) => [stopKey(suggestion), suggestion]))
+        // after the suggestions, as the groups go by the names stops are going to have
+        reconcileGroups()
 
         // after the suggestions, which is where an accepted rename is looked up
         refreshDerivedNames()
@@ -481,6 +486,7 @@ function refreshDerivedNames() {
     if (!busStopData) return
 
     let changed = false
+    const index = placeIndex()
 
     for (const entry of busStopData) {
         const platform = entry.platform
@@ -490,7 +496,7 @@ function refreshDerivedNames() {
             changed = renameStopPosition(platform, nameOf(platform)) || changed
         }
 
-        const collections = collectionsInGroup(entry)
+        const collections = collectionsInGroup(entry, index)
         const members = groupMembers(collections)
         if (members.length >= 2) {
             changed = renameStopArea(members, groupName(collections)) || changed
@@ -642,18 +648,61 @@ function naptanDifferencesAction(e, stop, suggestion) {
 
 // The stops of one place: the group the server worked out, plus any stop the user has
 // placed here since, which no download knows about yet.
-function collectionsInGroup(collection) {
-    const inGroup =
-        collection.groupId >= 0 ? busStopData.filter((entry) => entry.groupId === collection.groupId) : [collection]
+function collectionsInGroup(collection, index = placeIndex()) {
+    const group = []
 
-    const groupName = inGroup.map((entry) => (entry.platform ?? entry.stop)?.groupName).find(Boolean) ?? ""
-
-    for (const entry of busStopData) {
-        if (inGroup.includes(entry) || !isNewStop(entry.platform)) continue
-        if (groupName && entry.platform.groupName === groupName) inGroup.push(entry)
+    const add = (entry) => {
+        const together = entry.groupId >= 0 ? index.byGroup.get(entry.groupId) : [entry]
+        for (const member of together) if (!group.includes(member)) group.push(member)
     }
 
-    return inGroup
+    add(collection)
+
+    // The server grouped the stops by the names they had when downloaded. One renamed in
+    // this session, or placed in it, belongs with the stops nearby that share the name it
+    // is going to have. A stop renamed away keeps its old group, whose stop area follows
+    // the rename. Stops added along the way are visited too, as the array iterator
+    // reaches whatever is appended before it gets there.
+    for (const entry of group) {
+        const latLng = placeLatLng(entry)
+
+        for (const other of index.byKey.get(index.keyOf.get(entry)) ?? []) {
+            if (group.includes(other)) continue
+            if (haversine_distance(latLng, placeLatLng(other)) <= stopAreaReach) add(other)
+        }
+    }
+
+    // in download order, so every stop of the group agrees on which name it takes
+    return group.sort((a, b) => index.order.get(a) - index.order.get(b))
+}
+
+const placeLatLng = (entry) => (entry.platform ?? entry.stop).latLng
+
+// What collectionsInGroup() looks stops up by, worked out once for a pass over them all.
+function placeIndex() {
+    const byGroup = new Map()
+    const byKey = new Map()
+    const keyOf = new Map()
+    const order = new Map()
+
+    busStopData.forEach((entry, i) => {
+        order.set(entry, i)
+
+        if (entry.groupId >= 0) {
+            if (!byGroup.has(entry.groupId)) byGroup.set(entry.groupId, [])
+            byGroup.get(entry.groupId).push(entry)
+        }
+
+        // as the server does: the platform's name, or the stop position's without one
+        const key = placeKey(nameOf(entry.platform) || nameOf(entry.stop))
+        if (!key) return
+
+        keyOf.set(entry, key)
+        if (!byKey.has(key)) byKey.set(key, [])
+        byKey.get(key).push(entry)
+    })
+
+    return { byGroup, byKey, keyOf, order }
 }
 
 // what the relation should be called: the stops' own name, without the stop letter that
@@ -715,12 +764,15 @@ function stopAreaAction(e, collection) {
     return {
         label: pending ? "Stop <b>area</b> ✓" : "Stop <b>area</b>",
         queued: Boolean(pending),
-        onClick: () =>
+        onClick: () => {
+            const shown = shownNames(members, collections)
+            const missingKeys = new Set(missing.map((member) => member.key))
+
             showStopAreaForm(e.latlng, {
                 name: existing?.name || name,
                 existing: existing,
-                members: members,
-                missing: missing,
+                members: shown,
+                missing: shown.filter((member) => missingKeys.has(member.key)),
                 queued: Boolean(pending),
                 onAdd: () => {
                     addStopArea(members, name, existing)
@@ -730,8 +782,25 @@ function stopAreaAction(e, collection) {
                     removeStopArea(members)
                     onStopAreasChanged()
                 },
-            }),
+            })
+        },
     }
+}
+
+// The members as the form lists them: a stop being renamed by this changeset is shown by
+// the name it is going to have, which is the one the area takes.
+function shownNames(members, collections) {
+    const renamed = new Map()
+
+    for (const entry of collections) {
+        for (const stop of [entry.platform, entry.stop]) {
+            if (!stop) continue
+            const name = nameOf(stop)
+            if (name && name !== (stop.tags?.name ?? "").trim()) renamed.set(`${stop.type}/${stop.id.split("_")[0]}`, name)
+        }
+    }
+
+    return members.map((member) => (renamed.has(member.key) ? { ...member, name: renamed.get(member.key) } : member))
 }
 
 function onStopAreasChanged() {
@@ -747,9 +816,10 @@ function reconcileGroups() {
     if (!busStopData) return
 
     const seen = new Set()
+    const index = placeIndex()
 
     for (const entry of busStopData) {
-        const members = groupMembers(collectionsInGroup(entry))
+        const members = groupMembers(collectionsInGroup(entry, index))
         if (members.length >= 2) seen.add(stopAreaSignature(members))
     }
 

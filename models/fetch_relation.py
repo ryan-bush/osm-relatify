@@ -4,6 +4,7 @@ from enum import Enum
 from itertools import pairwise
 from typing import Self
 
+from config import STOP_AREA_SEARCH_AREA
 from cython_lib.geoutils import haversine_distance
 from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
@@ -172,6 +173,8 @@ class FetchRelation:
     # stop_area relations the downloaded stops are already in, so none is duplicated.
     # None when the lookup failed, which is not the same as there being none of them.
     stopAreas: list[StopArea] | None = field(default_factory=list)
+    # how far apart the stops of one place can be, which the page groups renamed stops by
+    stopAreaSearchArea: float = STOP_AREA_SEARCH_AREA
     # the route_master relations this route is already a member of. None when the lookup
     # failed: "not in one" is what invites linking it into one, and guessing that wrongly
     # would put the route in a second master beside the one it already belongs to.

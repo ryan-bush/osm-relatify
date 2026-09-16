@@ -9,7 +9,7 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from itertools import chain
-from math import radians
+from math import atan2, cos, degrees, radians
 from pathlib import Path
 
 import orjson
@@ -52,6 +52,13 @@ _TAG_COLUMNS = (
 # bumped whenever what the database stores changes, so an older one is rebuilt on start
 # rather than serving stale tags until the next daily refresh
 DATA_VERSION = 4
+
+# NaPTAN gives the direction buses travel when calling at a stop as a compass point
+_COMPASS_DEGREES = {'N': 0, 'NE': 45, 'E': 90, 'SE': 135, 'S': 180, 'SW': 225, 'W': 270, 'NW': 315}
+# compass points are 45° apart and roads bend, so only a clearly opposite heading counts
+OPPOSITE_HEADING_ANGLE = 120  # degrees
+# a platform nearer than this to its stop position could be standing at either kerb
+_KERB_OFFSET = 2  # meters
 
 # NaPTAN positions are often tens of metres out
 MATCH_DISTANCE = 80  # meters
@@ -143,6 +150,41 @@ def build_database(csv_path: Path, db_path: Path) -> int:
     return count
 
 
+def compass_degrees(bearing: str) -> int | None:
+    return _COMPASS_DEGREES.get(bearing.strip().upper())
+
+
+def angle_between(a: float, b: float) -> float:
+    difference = abs(a - b) % 360
+    return min(difference, 360 - difference)
+
+
+def travel_heading(collection: FetchRelationBusStopCollection) -> float | None:
+    """
+    Which way the buses calling at an OSM stop travel, in degrees clockwise from north.
+
+    Read from where the platform stands beside its stop position: buses keep left
+    wherever NaPTAN applies, so the platform is on their left. The stop's own
+    naptan:Bearing is not trusted for this, being copied onto the stop across the road
+    often enough.
+    """
+    platform = collection.platform
+    stop = collection.stop
+
+    if platform is None or stop is None or haversine_distance(stop.latLng, platform.latLng) < _KERB_OFFSET:
+        return None
+
+    dy = platform.latLng[0] - stop.latLng[0]
+    dx = (platform.latLng[1] - stop.latLng[1]) * cos(radians(stop.latLng[0]))
+    return (degrees(atan2(dx, dy)) + 90) % 360
+
+
+def _same_direction(naptan_stop: NaptanStop, heading: float | None) -> bool:
+    """Whether a NaPTAN stop could be served by buses travelling this way."""
+    bearing = compass_degrees(naptan_stop.tags.get('naptan:Bearing', ''))
+    return bearing is None or heading is None or angle_between(bearing, heading) <= OPPOSITE_HEADING_ANGLE
+
+
 @dataclass(frozen=True, slots=True)
 class StopMatches:
     # NaPTAN stops that no OSM stop represents
@@ -214,6 +256,8 @@ def match_stops(
         r=radians(MATCH_DISTANCE / 111_111),
     )
 
+    headings = [travel_heading(c) for c in bus_stop_collections]
+
     def comparable(name: str) -> str:
         return normalize_name(name, lower=True, special=True, whitespace=True)
 
@@ -231,6 +275,10 @@ def match_stops(
 
             # a group of stops sharing a name is told apart by their letters
             if stop_ref and osm_ref and stop_ref != osm_ref:
+                continue
+
+            # and the two sides of a road by which way their buses go
+            if not _same_direction(stop, headings[j]):
                 continue
 
             # A stop matched by code only takes on a second record for the same letter,
@@ -276,17 +324,18 @@ def match_stops(
             tag_suggestions.append(suggestion)
 
     # A stop with a wrong name, or none, is only taken for the NaPTAN stop beside it when
-    # neither has any other pairing, by name or by distance, that could be the right one.
+    # neither has any other pairing that could be the right one: the OSM stop none by
+    # name, and neither another by distance among the stops still unmatched.
+    close_pairs = [
+        (distance, i, j)
+        for distance, i, j in close_pairs
+        if i not in matched_candidates and j not in matched_collections and not pairs_per_collection[j]
+    ]
     close_per_candidate = Counter(i for _, i, _ in close_pairs)
     close_per_collection = Counter(j for _, _, j in close_pairs)
 
     for _, i, j in close_pairs:
-        if (
-            pairs_per_candidate[i]
-            or pairs_per_collection[j]
-            or close_per_candidate[i] != 1
-            or close_per_collection[j] != 1
-        ):
+        if close_per_candidate[i] != 1 or close_per_collection[j] != 1:
             continue
         matched_candidates.add(i)
 
