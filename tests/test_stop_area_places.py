@@ -2,7 +2,7 @@
 
 from bus_collection_builder import build_bus_stop_collections
 from models.fetch_relation import FetchRelationBusStop, PublicTransport
-from overpass import stop_area_places
+from overpass import stop_area_places, stop_elements
 
 
 def _node(id, tags, lon=0.0):
@@ -101,3 +101,24 @@ def test_a_stop_in_two_areas_takes_the_first():
     )
 
     assert platform.placeName == 'First'
+
+
+def test_a_bare_node_in_a_stop_area_is_read_by_its_role():
+    """An X43 stop area held a stop position with no tags at all, which failed the load."""
+    platform = _node(10, {'highway': 'bus_stop', 'public_transport': 'platform', 'name': 'Coleg Normal'})
+    bare = {'type': 'node', 'id': 20, 'lat': 53.2, 'lon': 0.00005}
+    relations = [_area(1, [(20, 'stop_position'), (10, 'platform')])]
+    places = stop_area_places(relations, [platform], [bare])
+
+    elements = stop_elements([platform, bare], places)
+    stop = FetchRelationBusStop.from_data(elements[1], places[('node', 20)])
+
+    assert stop.tags == {}
+    assert stop.public_transport == PublicTransport.STOP_POSITION
+    assert stop.placeName == 'Coleg Normal'
+
+
+def test_an_untagged_node_in_no_stop_area_is_left_out():
+    bare = {'type': 'node', 'id': 20, 'lat': 53.2, 'lon': 0.0}
+
+    assert stop_elements([bare], {}) == ()
