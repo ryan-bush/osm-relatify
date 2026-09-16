@@ -7,6 +7,7 @@ import {
     refreshUTurnMarkers,
     toggleUTurn,
 } from "./waysUTurn.js"
+import { arrowSvg, getTravel, headingAt, refreshTravelMarkers, setTravel } from "./waysTravel.js"
 
 let startMarker = null
 let stopMarker = null
@@ -135,6 +136,24 @@ export function showContextMenu(e, way) {
                        </button>`
     }
 
+    // Which way buses use this road, for settling which way round a loop goes. A oneway
+    // already says, and a road cannot be made to go against it.
+    const travel = getTravel(way)
+    const heading = headingAt(way, e.latlng)
+    const travelButton = (value, label, arrowHeading) =>
+        `<button class="btn btn-sm btn-light d-flex flex-column align-items-center${travel === value ? " active" : ""}"
+                 data-travel="${value}" title="${label}">
+             ${arrowHeading === null ? '<span class="travel-either">⇅</span>' : arrowSvg(arrowHeading, 24)}
+             <div>${label}</div>
+         </button>`
+    const travelButtons = way.oneway
+        ? ""
+        : `<div class="btn-group text-center mt-1 w-100">
+               ${travelButton("forward", travel === "forward" ? "<b>Only</b> this way" : "Only this way", heading)}
+               ${travelButton("backward", travel === "backward" ? "<b>Only</b> this way" : "Only this way", (heading + 180) % 360)}
+               ${travel ? travelButton("", "Either way", null) : ""}
+           </div>`
+
     popup = L.popup(e.latlng, {
         content: `
             <div class="btn-group text-center">
@@ -151,7 +170,8 @@ export function showContextMenu(e, way) {
                     <img class="mb-1" src="/static/img/brands/openstreetmap.webp" width="24" alt="OpenStreetMap logo">
                     <div>Inspect</div>
                 </button>
-            </div>`,
+            </div>
+            ${travelButtons}`,
         closeButton: false,
         className: "popup-sm",
         maxWidth: 400,
@@ -178,6 +198,15 @@ export function showContextMenu(e, way) {
         const id = way.id.split("_")[0]
         openInOpenStreetMap(`way/${id}`)
         popup.close()
+    }
+
+    for (const button of content.querySelectorAll("[data-travel]")) {
+        button.onclick = () => {
+            setTravel(way, button.dataset.travel || null)
+            refreshTravelMarkers()
+            requestCalcBusRoute()
+            popup.close()
+        }
     }
 
     if (!fromOsm && !unusable) {

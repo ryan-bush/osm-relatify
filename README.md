@@ -151,6 +151,7 @@ this fork makes, listed above, are documented there too.
 - ✅ Custom changeset comment
 - ✅ Creating new relations
 - ✅ U-turns without `highway=turning_circle`
+- ✅ Loops driven the right way round for left- and right-hand traffic, with per-road direction overrides
 - ✅ Creating new bus stops (platforms)
 - ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
 - ✅ Stop positions on the road, for new and existing stops

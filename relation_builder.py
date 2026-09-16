@@ -43,7 +43,9 @@ class SortedBusEntry(NamedTuple):
     sort_index: int
     neighbor_id: ElementId
     distance_from_neighbor: float
-    right_hand_side: bool | None
+    # Whether a bus driving the way forwards has the stop on its kerb side: the right
+    # where traffic keeps right, the left where it keeps left. None when it is not known.
+    kerb_side_forward: bool | None
 
 
 def is_right_hand_side(
@@ -77,7 +79,9 @@ def interpolate_latLng(
 
 
 def sort_bus_on_path(
-    bus_stop_collections: Sequence[FetchRelationBusStopCollection], ways: Iterable[FetchRelationElement]
+    bus_stop_collections: Sequence[FetchRelationBusStopCollection],
+    ways: Iterable[FetchRelationElement],
+    driving_side: str = 'right',
 ) -> list[SortedBusEntry]:
     if not bus_stop_collections:
         return []
@@ -126,13 +130,20 @@ def sort_bus_on_path(
         else:
             right_hand_side = None
 
+        if right_hand_side is None:
+            kerb_side_forward = None
+        elif driving_side == 'left':
+            kerb_side_forward = not right_hand_side
+        else:
+            kerb_side_forward = right_hand_side
+
         result.append(
             SortedBusEntry(
                 bus_stop_collection=collection,
                 sort_index=idx,
                 neighbor_id=neighbor_way.id,
                 distance_from_neighbor=distance,
-                right_hand_side=right_hand_side,
+                kerb_side_forward=kerb_side_forward,
             )
         )
 

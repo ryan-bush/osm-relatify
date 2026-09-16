@@ -4,6 +4,7 @@ import { processRouteStops, processRouteWarnings, relationId } from "./menu.js"
 import { relationTags } from "./relationTagEditor.js"
 import { deflateCompress, deflateDecompress } from "./utils.js"
 import { followWaySegments, insertStopPositionsIntoWays, stopPositionPlacements } from "./stopPositions.js"
+import { drivingSide } from "./drivingSide.js"
 import { startWay, stopWay } from "./waysEndpoint.js"
 import { waysData } from "./waysLayer.js"
 
@@ -86,6 +87,7 @@ const onopen = async () => {
         ways: ways,
         busStops: busStops,
         tags: tags,
+        drivingSide: drivingSide(),
     })
 
     ws.send(body)

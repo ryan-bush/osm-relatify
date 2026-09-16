@@ -108,10 +108,33 @@ class _RoutePass:
     # signed meters from the route, positive when the stop stands to the left of travel,
     # which is the kerb a bus pulls in at wherever NaPTAN applies
     offset: float
+    # on a road only driven one way, or round a roundabout, where a stop can stand at
+    # either kerb
+    one_way: bool = False
+
+
+_Segment = tuple[tuple[float, float], tuple[float, float], bool]
+
+
+def _route_segments(route: FinalRoute) -> list[_Segment]:
+    """The route as it is driven, a pair of points at a time, each saying if it is one-way."""
+    segments: list[_Segment] = []
+
+    for route_way in route.ways:
+        way = route_way.way
+        lat_lngs = way.latLngs[::-1] if route_way.reversed_latLngs else way.latLngs
+        one_way = way.oneway or way.roundabout or way.travel is not None
+        segments.extend((a, b, one_way) for a, b in pairwise(lat_lngs))
+
+    return segments
 
 
 def _route_passes(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[float, float]]) -> list[_RoutePass]:
     """Where the route passes a point, nearest first."""
+    return _passes_along(lat_lng, [(a, b, False) for a, b in pairwise(route_lat_lngs)])
+
+
+def _passes_along(lat_lng: tuple[float, float], segments: Sequence[_Segment]) -> list[_RoutePass]:
     lat0, lon0 = lat_lng
     # flat enough over the few hundred metres that matter
     x_scale = 111_320 * cos(radians(lat0))
@@ -119,7 +142,7 @@ def _route_passes(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[f
 
     passes: list[_RoutePass] = []
 
-    for (lat_a, lon_a), (lat_b, lon_b) in pairwise(route_lat_lngs):
+    for (lat_a, lon_a), (lat_b, lon_b), one_way in segments:
         ax, ay = (lon_a - lon0) * x_scale, (lat_a - lat0) * y_scale
         dx, dy = (lon_b - lon_a) * x_scale, (lat_b - lat_a) * y_scale
 
@@ -135,6 +158,7 @@ def _route_passes(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[f
                 heading=degrees(atan2(dx, dy)) % 360,
                 # the travel direction crossed with the way to the stop
                 offset=(dy * ax - dx * ay) / sqrt(length_sq),
+                one_way=one_way,
             )
         )
 
@@ -189,6 +213,40 @@ def _check_for_bus_stop_serving_other_direction(route: FinalRoute) -> FinalRoute
 
 
 @trace
+def _check_for_bus_stop_on_far_kerb(route: FinalRoute, driving_side: str) -> FinalRouteWarning | None:
+    """Catches a route driving past its stops on the wrong side of the road.
+
+    Most often a loop driven the wrong way round: every stop on it ends up across the
+    road. Only two-way roads count, as a one-way street can have its stops at either kerb,
+    and only a stop the route passes on no side but the far one.
+    """
+    kerb = 1 if driving_side == 'left' else -1
+    segments = _route_segments(route)
+    far = []
+
+    for collection in route.busStops:
+        if collection.platform is None:
+            continue
+
+        passes = _passes_along(collection.platform.latLng, segments)
+        if not passes or any(route_pass.one_way for route_pass in passes):
+            continue
+
+        if all(route_pass.offset * kerb < -_KERB_OFFSET for route_pass in passes):
+            far.append(collection.best.id)
+
+    if far:
+        return FinalRouteWarning(
+            severity=WarningSeverity.LOW,
+            message=(
+                f'Some stops are on the far side of the road for traffic keeping {driving_side} '
+                '- is a loop driven the wrong way round?'
+            ),
+            extra=tuple(far),
+        )
+
+
+@trace
 def _check_for_not_enough_bus_stops(route: FinalRoute) -> FinalRouteWarning | None:
     if len(route.busStops) < 2:
         return FinalRouteWarning(
@@ -227,6 +285,7 @@ def check_for_issues(
     relation_members: list[RelationMember],
     # empty unless NaPTAN is enabled
     inactive_naptan_codes: frozenset[str] = frozenset(),
+    driving_side: str = 'right',
 ) -> FinalRoute:
     warnings = (
         _check_for_unused_ways(route, ways),
@@ -235,6 +294,7 @@ def check_for_issues(
         _check_for_bus_stop_not_reached(route, bus_stop_collections),
         _check_for_bus_stop_inactive_in_naptan(route, inactive_naptan_codes),
         _check_for_bus_stop_serving_other_direction(route),
+        _check_for_bus_stop_on_far_kerb(route, driving_side),
         _check_for_not_enough_bus_stops(route),
         _check_for_roundtrip_not_roundtrip(route),
         _check_for_members_unchanged(route, relation_members),
