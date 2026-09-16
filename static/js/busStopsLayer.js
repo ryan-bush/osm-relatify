@@ -442,7 +442,9 @@ function nameOf(stop) {
     if (!stop) return ""
 
     const naptanName = naptanTagSuggestions.get(stopKey(stop))?.differing?.name
-    const edited = getStopEdit(stop)?.tags?.name
+    // a name NaPTAN fills in only ever goes on a stop that has none, so it stands in for
+    // one the mapper typed
+    const edited = getStopEdit(stop)?.tags?.name ?? getTagAddition(stop)?.tags?.name
 
     return effectiveName(stop, naptanName, naptanName && getDecision(stop, "name", naptanName), edited)
 }
@@ -852,7 +854,8 @@ function addNaptanStopsToLayer() {
         }).addTo(naptanStopsLayer)
 
         const indicator = naptanStop.indicator ? ` <i>${escapeHtml(naptanStop.indicator)}</i>` : ""
-        marker.bindTooltip(`${escapeHtml(naptanStop.name)}${indicator}<br><small>In NaPTAN, missing from OSM</small>`, {
+        const unmarked = naptanStop.tags["naptan:BusStopType"] === "CUS" ? " (unmarked stop)" : ""
+        marker.bindTooltip(`${escapeHtml(naptanStop.name)}${indicator}<br><small>In NaPTAN, missing from OSM${unmarked}</small>`, {
             direction: "top",
             offset: [0, -10],
         })

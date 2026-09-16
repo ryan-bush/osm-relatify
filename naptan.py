@@ -30,8 +30,11 @@ NAPTAN_URL = 'https://naptan.api.dft.gov.uk/v1/access-nodes?dataFormat=csv'
 
 # on-street stops, and bays in a bus station
 _BUS_STOP_TYPES = frozenset(('BCT', 'BCS', 'BCQ'))
-# hail-and-ride, flexible and unmarked stops have no pole to put on the map
-_POLELESS_BUS_STOP_TYPES = frozenset(('HAR', 'FLX', 'CUS'))
+# hail-and-ride and flexible stops have no single point to put on the map
+_POLELESS_BUS_STOP_TYPES = frozenset(('HAR', 'FLX'))
+# an unmarked stop, where buses halt on request with no pole or sign; still a place on
+# the map, but tagged so nobody goes looking for a pole
+_UNMARKED_BUS_STOP_TYPE = 'CUS'
 
 # "Stop A", "Stop P1", "Stance 1", "Bay 12"; other indicators ("opp", "o/s 103", "->N")
 # describe where the stop is rather than naming it
@@ -48,12 +51,16 @@ _TAG_COLUMNS = (
 
 # bumped whenever what the database stores changes, so an older one is rebuilt on start
 # rather than serving stale tags until the next daily refresh
-DATA_VERSION = 3
+DATA_VERSION = 4
 
 # NaPTAN positions are often tens of metres out
 MATCH_DISTANCE = 80  # meters
 # the cutoff bus_collection_builder.py groups similar stop names with
 MATCH_NAME_SCORE = 89
+# An OSM stop this close is taken to be the NaPTAN stop even when the names disagree, or
+# it has none, as long as nothing else competes for either; the name is then offered for
+# review rather than a second stop being suggested beside it.
+MATCH_UNNAMED_DISTANCE = 30  # meters
 
 
 def parse_row(row: dict[str, str]) -> NaptanStop | None:
@@ -81,6 +88,9 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     # https://wiki.openstreetmap.org/wiki/NaPTAN/Tag_mappings
     if naptan_code := row['NaptanCode'].strip():
         tags['ref'] = naptan_code
+
+    if row['BusStopType'] == _UNMARKED_BUS_STOP_TYPE:
+        tags['naptan:BusStopType'] = _UNMARKED_BUS_STOP_TYPE
 
     # taken from NaPTAN rather than surveyed; a mapper removes it after checking the stop
     tags['naptan:verified'] = 'no'
@@ -208,6 +218,8 @@ def match_stops(
         return normalize_name(name, lower=True, special=True, whitespace=True)
 
     pairs: list[tuple[float, int, int]] = []
+    # pairs close enough to match whatever the names say
+    close_pairs: list[tuple[float, int, int]] = []
 
     for i, (stop, indices) in enumerate(zip(candidates, nearby, strict=True)):
         stop_name = comparable(stop.name)
@@ -226,12 +238,13 @@ def match_stops(
             if coded[j] and not (stop_ref and stop_ref == osm_ref):
                 continue
 
+            distance = haversine_distance(stop.latLng, collection.best.latLng)
             osm_name = comparable(collection.best.tags.get('name', ''))
 
-            if token_ratio(stop_name, osm_name) < MATCH_NAME_SCORE:
-                continue
-
-            pairs.append((haversine_distance(stop.latLng, collection.best.latLng), i, j))
+            if osm_name and token_ratio(stop_name, osm_name) >= MATCH_NAME_SCORE:
+                pairs.append((distance, i, j))
+            elif not coded[j] and distance <= MATCH_UNNAMED_DISTANCE:
+                close_pairs.append((distance, i, j))
 
     # Stops come in same-named pairs either side of the road. Each OSM stop stands for
     # one of them, closest first, so a missing stop is not hidden by its mapped twin.
@@ -260,6 +273,24 @@ def match_stops(
         certain = (stop_ref and stop_ref == osm_ref) or (pairs_per_candidate[i] == 1 and pairs_per_collection[j] == 1)
 
         if certain and (suggestion := _suggest_tags(collection, stop)):
+            tag_suggestions.append(suggestion)
+
+    # A stop with a wrong name, or none, is only taken for the NaPTAN stop beside it when
+    # neither has any other pairing, by name or by distance, that could be the right one.
+    close_per_candidate = Counter(i for _, i, _ in close_pairs)
+    close_per_collection = Counter(j for _, _, j in close_pairs)
+
+    for _, i, j in close_pairs:
+        if (
+            pairs_per_candidate[i]
+            or pairs_per_collection[j]
+            or close_per_candidate[i] != 1
+            or close_per_collection[j] != 1
+        ):
+            continue
+        matched_candidates.add(i)
+
+        if suggestion := _suggest_tags(bus_stop_collections[j], candidates[i]):
             tag_suggestions.append(suggestion)
 
     return StopMatches([stop for i, stop in enumerate(candidates) if i not in matched_candidates], tag_suggestions)

@@ -35,7 +35,7 @@ NAPTAN_TAGS = {
 }
 
 
-def test_only_missing_fillable_tags_are_offered():
+def test_only_missing_tags_are_offered():
     osm_tags = {'name': 'Union Grove Road', 'ref': '999', 'naptan:Street': ' '}
 
     assert missing_tags(osm_tags, NAPTAN_TAGS) == {
@@ -49,11 +49,18 @@ def test_only_missing_fillable_tags_are_offered():
     }
 
 
-def test_name_and_verified_are_never_offered():
+def test_a_stop_without_a_name_is_offered_naptans():
     offered = missing_tags({}, NAPTAN_TAGS)
 
-    assert 'name' not in offered
-    assert 'naptan:verified' not in offered
+    assert offered['name'] == 'Union Grove'
+
+
+def test_verified_is_never_offered():
+    assert 'naptan:verified' not in missing_tags({}, NAPTAN_TAGS)
+
+
+def test_an_unmarked_stop_is_offered_its_stop_type():
+    assert missing_tags({}, {'naptan:BusStopType': 'CUS'}) == {'naptan:BusStopType': 'CUS'}
 
 
 # about 25 m apart, either side of a road
@@ -115,6 +122,30 @@ def test_an_unambiguous_name_match_is_offered_the_code():
     suggestions = _suggestions([_naptan('A', NORTH_SIDE)], [_platform('1', (57.14125, -2.11750), {})])
 
     assert suggestions['1'][1]['naptan:AtcoCode'] == 'A'
+
+
+def test_an_unnamed_stop_beside_a_naptan_stop_is_offered_its_name():
+    collection = _platform('1', (57.14125, -2.11750), {})
+    collection.platform.tags.pop('name')
+
+    matches = match_stops([_naptan('A', NORTH_SIDE)], [collection])
+
+    assert matches.unmapped == []
+    [suggestion] = matches.tag_suggestions
+    assert suggestion.tags['name'] == 'Union Grove'
+    assert suggestion.tags['naptan:AtcoCode'] == 'A'
+
+
+def test_a_wrongly_named_stop_beside_a_naptan_stop_is_offered_the_right_name():
+    collection = _platform('1', (57.14125, -2.11750), {})
+    collection.platform.tags['name'] = 'Capel Hebron'
+
+    matches = match_stops([_naptan('A', NORTH_SIDE)], [collection])
+
+    assert matches.unmapped == []
+    [suggestion] = matches.tag_suggestions
+    assert suggestion.differing == {'name': 'Union Grove'}
+    assert suggestion.tags['naptan:AtcoCode'] == 'A'
 
 
 def test_twins_across_the_road_without_letters_get_no_codes():
@@ -253,11 +284,11 @@ def test_nothing_is_fetched_without_additions():
 def test_only_naptan_keys_can_be_added():
     with pytest.raises(HTTPException) as e:
         _build_elements(
-            [StopTagAddition(type='node', id=1, tags={'name': 'Renamed', 'highway': 'no'})], FakeOpenStreetMap()
+            [StopTagAddition(type='node', id=1, tags={'shelter': 'yes', 'highway': 'no'})], FakeOpenStreetMap()
         )
 
     assert e.value.status_code == 400
-    assert 'highway, name' in e.value.detail
+    assert 'highway, shelter' in e.value.detail
 
 
 def test_the_same_stop_twice_is_rejected():
@@ -359,7 +390,7 @@ class TestDifferingTags:
     def test_whitespace_alone_is_not_a_disagreement(self):
         assert differing_tags({'ref': ' brimjdg '}, {'ref': 'brimjdg'}) == {}
 
-    def test_keys_outside_the_reviewable_set_are_ignored(self):
+    def test_keys_naptan_has_no_say_over_are_ignored(self):
         # the mapper's own survey, which NaPTAN has no say over
         assert differing_tags({'shelter': 'yes'}, {'shelter': 'no'}) == {}
 
@@ -377,9 +408,11 @@ class TestWritableKeys:
     def test_a_fillable_key_can_always_be_written(self):
         assert self._addition({'naptan:Bearing': 'NE'}).writable_keys() == {'naptan:Bearing'}
 
-    def test_name_cannot_be_filled_in(self):
-        # an empty name stays the mapper's to decide
-        assert self._addition({'name': 'High Street'}).writable_keys() == set()
+    def test_name_can_be_filled_in(self):
+        assert self._addition({'name': 'High Street'}).writable_keys() == {'name'}
+
+    def test_other_keys_cannot_be_written(self):
+        assert self._addition({'highway': 'no'}).writable_keys() == set()
 
     def test_name_can_be_written_as_an_accepted_replacement(self):
         addition = self._addition({'name': 'High Street'}, {'name': 'High St'})
@@ -440,16 +473,23 @@ def test_an_accepted_replacement_reaches_the_element():
     assert _tags_of(element)['name'] == 'High Street'
 
 
-def test_a_name_sent_without_a_value_to_replace_is_refused():
-    # name is never filled in, only ever swapped for one the mapper decided against
+def test_a_name_filled_into_an_unnamed_stop_reaches_the_element():
     osm = FakeOpenStreetMap(nodes=[_element({}, '1')])
+    addition = StopTagAddition(type='node', id=1, tags={'name': 'High Street'})
+
+    [(_, element)] = _build_elements([addition], osm)
+
+    assert _tags_of(element)['name'] == 'High Street'
+
+
+def test_a_name_filled_into_a_stop_named_since_is_a_conflict():
+    osm = FakeOpenStreetMap(nodes=[_element({'name': 'Market Square'}, '1')])
     addition = StopTagAddition(type='node', id=1, tags={'name': 'High Street'})
 
     with pytest.raises(HTTPException) as e:
         _build_elements([addition], osm)
 
-    assert e.value.status_code == 400
-    assert 'name' in e.value.detail
+    assert e.value.status_code == 409
 
 
 def test_a_replacement_the_stop_has_since_changed_is_a_conflict():
@@ -514,8 +554,8 @@ class TestEditedByHand:
         assert addition.writable_keys() == {'name', 'naptan:Bearing'}
 
     def test_a_naptan_key_the_mapper_did_not_type_keeps_its_own_rule(self):
-        # marked as NaPTAN's, so an empty name is still not its to fill in
-        addition = StopTagAddition(type='node', id=42, tags={'name': 'High Street'}, byHand=set())
+        # marked as NaPTAN's, so a shelter is not its to fill in
+        addition = StopTagAddition(type='node', id=42, tags={'shelter': 'yes'}, byHand=set())
 
         assert addition.writable_keys() == set()
 

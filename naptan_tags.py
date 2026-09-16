@@ -8,9 +8,12 @@ from pydantic import BaseModel, Field
 from tag_editing import normalize_tags, validate_tag
 from utils import ensure_list
 
-# The NaPTAN tags a stop already in OSM can be given. name stays the mapper's to decide,
-# and naptan:verified=no would mark a stop someone surveyed as unchecked.
-FILLABLE_KEYS = (
+# The NaPTAN tags a stop already in OSM can be given, filled in where it has none or put
+# in front of the mapper where it holds a different value - a stop NaPTAN has renamed, or
+# one mapped with the wrong name, is exactly the disagreement worth seeing.
+# naptan:verified=no is left out, as it would mark a stop someone surveyed as unchecked.
+NAPTAN_KEYS = (
+    'name',
     'ref',
     'local_ref',
     'naptan:AtcoCode',
@@ -19,13 +22,8 @@ FILLABLE_KEYS = (
     'naptan:Indicator',
     'naptan:Street',
     'naptan:Bearing',
+    'naptan:BusStopType',
 )
-
-
-# Keys worth putting in front of a mapper when OSM and NaPTAN hold different values.
-# name is here but not in FILLABLE_KEYS: a stop NaPTAN has renamed is exactly the
-# disagreement worth seeing, while an empty name is still the mapper's to fill in.
-REVIEWABLE_KEYS = ('name', *FILLABLE_KEYS)
 
 
 # What the mapper may write to a stop by hand, as opposed to what NaPTAN may fill in for
@@ -37,15 +35,15 @@ EDITABLE_KEYS = ('name', 'local_ref', 'shelter', 'bench')
 
 
 def missing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
-    """NaPTAN's value for each fillable key the OSM stop lacks; values it has are kept."""
-    return {key: naptan_tags[key] for key in FILLABLE_KEYS if key in naptan_tags and not osm_tags.get(key, '').strip()}
+    """NaPTAN's value for each key the OSM stop lacks; values it has are kept."""
+    return {key: naptan_tags[key] for key in NAPTAN_KEYS if key in naptan_tags and not osm_tags.get(key, '').strip()}
 
 
 def differing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
-    """NaPTAN's value for each reviewable key where the OSM stop holds a different one."""
+    """NaPTAN's value for each key where the OSM stop holds a different one."""
     result = {}
 
-    for key in REVIEWABLE_KEYS:
+    for key in NAPTAN_KEYS:
         naptan_value = naptan_tags.get(key, '').strip()
         osm_value = osm_tags.get(key, '').strip()
 
@@ -81,9 +79,8 @@ class StopTagAddition(BaseModel):
         The keys this may write.
 
         What the mapper typed is theirs to decide, within the fields the form offers.
-        What NaPTAN offers is narrower: fillable keys always, and the rest of the
-        reviewable keys only as a replacement accepted for a value that is actually
-        there — an empty name is not NaPTAN's to fill in.
+        What NaPTAN offers is narrower: the NaPTAN keys, either filled in where the
+        stop has none or as a replacement the mapper accepted.
         """
         result = set()
 
@@ -91,7 +88,7 @@ class StopTagAddition(BaseModel):
             if key in self.byHand:
                 if key in EDITABLE_KEYS:
                     result.add(key)
-            elif key in FILLABLE_KEYS or (key in REVIEWABLE_KEYS and self.expected.get(key, '').strip()):
+            elif key in NAPTAN_KEYS:
                 result.add(key)
 
         return result
