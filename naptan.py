@@ -7,7 +7,7 @@ import sqlite3
 import time
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import chain, pairwise
 from math import atan2, ceil, cos, degrees, hypot, radians
 from pathlib import Path
@@ -269,6 +269,9 @@ class StopMatches:
     unmapped: list[NaptanStop]
     # OSM stops matched to a NaPTAN stop but missing some of its tags
     tag_suggestions: list[NaptanTagSuggestion]
+    # every OSM stop that stands for a NaPTAN stop, as "type,id", with the NaPTAN code; empty
+    # where it matched by name but could be either of two stops
+    matched: dict[str, str] = field(default_factory=dict)
 
 
 def _suggest_tags(collection: FetchRelationBusStopCollection, naptan_stop: NaptanStop) -> NaptanTagSuggestion | None:
@@ -314,6 +317,10 @@ def match_stops(
     # whether each OSM stop already stands for a NaPTAN stop through its code
     coded: list[bool] = []
     tag_suggestions: list[NaptanTagSuggestion] = []
+    matched: dict[str, str] = {}
+
+    def key(collection: FetchRelationBusStopCollection) -> str:
+        return f'{collection.best.type},{collection.best.id}'
 
     for collection in bus_stop_collections:
         # a code NaPTAN no longer lists says nothing about which stop this is, so the
@@ -321,13 +328,15 @@ def match_stops(
         live_codes = collection.atco_codes & naptan_by_code.keys()
         mapped_codes |= live_codes
         coded.append(bool(live_codes))
+        if live_codes:
+            matched[key(collection)] = ';'.join(sorted(live_codes))
 
         if len(live_codes) == 1 and (suggestion := _suggest_tags(collection, naptan_by_code[next(iter(live_codes))])):
             tag_suggestions.append(suggestion)
 
     candidates = [stop for stop in naptan_stops if stop.atcoCode not in mapped_codes]
     if not candidates or not bus_stop_collections:
-        return StopMatches(candidates, tag_suggestions)
+        return StopMatches(candidates, tag_suggestions, matched)
 
     tree = BallTree([radians_tuple(c.best.latLng) for c in bus_stop_collections], metric='haversine')
     nearby = tree.query_radius(
@@ -404,6 +413,7 @@ def match_stops(
         # codes are only copied from a match the stop letters confirm, or that no other
         # pairing competes with
         certain = (stop_ref and stop_ref == osm_ref) or (pairs_per_candidate[i] == 1 and pairs_per_collection[j] == 1)
+        matched[key(collection)] = stop.atcoCode if certain else ''
 
         if certain and (suggestion := _suggest_tags(collection, stop)):
             tag_suggestions.append(suggestion)
@@ -423,11 +433,14 @@ def match_stops(
         if close_per_candidate[i] != 1 or close_per_collection[j] != 1:
             continue
         matched_candidates.add(i)
+        matched[key(bus_stop_collections[j])] = candidates[i].atcoCode
 
         if suggestion := _suggest_tags(bus_stop_collections[j], candidates[i]):
             tag_suggestions.append(suggestion)
 
-    return StopMatches([stop for i, stop in enumerate(candidates) if i not in matched_candidates], tag_suggestions)
+    return StopMatches(
+        [stop for i, stop in enumerate(candidates) if i not in matched_candidates], tag_suggestions, matched
+    )
 
 
 class NaptanStore:

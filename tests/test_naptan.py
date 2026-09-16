@@ -544,3 +544,26 @@ def test_without_the_roads_both_twins_are_still_suggested():
     )
 
     assert sorted(_codes(matches.unmapped)) == ['NE', 'SW']
+
+
+def test_stops_matched_by_code_name_and_distance_are_listed():
+    matches = match_stops(
+        [_naptan('A', NORTH_SIDE), _naptan('C', (57.1500, -2.1175)), _naptan('D', (57.1600, -2.1175), 'Mill Close')],
+        [
+            _osm('1', (57.2, -2.2), {'name': 'Elsewhere', 'naptan:AtcoCode': 'A'}),
+            _osm('2', (57.15005, -2.1175), {'name': 'Union Grove'}),
+            _osm('3', (57.16005, -2.1175), {'name': 'Wrong Name'}),
+            _osm('4', (57.3, -2.3), {'name': 'Nothing Near'}),
+        ],
+    )
+
+    assert matches.matched == {'node,1': 'A', 'node,2': 'C', 'node,3': 'D'}
+
+
+def test_twins_matched_by_name_alone_are_listed_without_a_code():
+    matches = match_stops(
+        [_naptan('A', NORTH_SIDE), _naptan('B', SOUTH_SIDE)],
+        [_osm('1', NORTH_SIDE, {'name': 'Union Grove'}), _osm('2', SOUTH_SIDE, {'name': 'Union Grove'})],
+    )
+
+    assert matches.matched == {'node,1': '', 'node,2': ''}

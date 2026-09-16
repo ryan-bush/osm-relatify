@@ -40,6 +40,7 @@ import {
     existingAreasFor,
     getPendingStopArea,
     growStopArea,
+    pendingStopAreaFor,
     groupMembers,
     reconcileStopAreas,
     removeStopArea,
@@ -74,6 +75,9 @@ let naptanStops = []
 
 // tags NaPTAN has for stops already in OSM, keyed like the stops' type and id
 let naptanTagSuggestions = new Map()
+
+// the stops already in OSM that stand for a NaPTAN stop, keyed the same, to their code
+let naptanMatched = new Map()
 
 // how far apart the stops of one place can be, as the server grouped them by
 let stopAreaReach = 150
@@ -137,6 +141,7 @@ export function processBusStopData(fetchData) {
         stopAreaReach = fetchData.stopAreaSearchArea ?? stopAreaReach
         naptanStops = fetchData.naptanStops ?? []
         naptanTagSuggestions = new Map((fetchData.naptanTags ?? []).map((suggestion) => [stopKey(suggestion), suggestion]))
+        naptanMatched = new Map(Object.entries(fetchData.naptanMatched ?? {}))
         // after the suggestions, as the groups go by the names stops are going to have
         reconcileGroups()
 
@@ -146,6 +151,7 @@ export function processBusStopData(fetchData) {
         busStopData = null
         naptanStops = []
         naptanTagSuggestions = new Map()
+        naptanMatched = new Map()
         setExistingStopAreas([])
         clearNewStops()
         clearTagAdditions()
@@ -858,6 +864,28 @@ function reconcileGroups() {
     }
 
     reconcileStopAreas(seen)
+}
+
+// What the route summary says about a stop beyond its platform and stop position: the
+// stop area it is in or is joining, and the NaPTAN stop it stands for. `naptan` is the
+// code, an empty string for a match by name alone, or null for no match.
+export function stopSummary(collection) {
+    const keys = groupMembers([collection]).map((member) => member.key)
+    const existing = stopAreasKnown() ? existingAreasFor(keys.map((key) => ({ key: key }))) : []
+    const pendingArea = pendingStopAreaFor(keys)
+
+    let area = null
+    if (pendingArea) area = { id: pendingArea.id, name: pendingArea.name, queued: true }
+    else if (existing.length) area = { id: existing[0].id, name: existing[0].name, queued: false }
+
+    let naptan = null
+    for (const stop of [collection.platform, collection.stop]) {
+        if (!stop) continue
+        const code = stop.tags?.["naptan:AtcoCode"] ?? getTagAddition(stop)?.tags?.["naptan:AtcoCode"]
+        naptan = naptanMatched.get(stopKey(stop)) ?? (isNewStop(stop) && code ? code : null) ?? naptan
+    }
+
+    return { area: area, naptan: naptan }
 }
 
 // The stops the route calls at that are still waiting on a NaPTAN decision.

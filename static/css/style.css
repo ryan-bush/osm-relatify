@@ -535,6 +535,14 @@
   color: #2a2;
 }
 
+.route-summary-item .stop-info-area {
+  color: #a52;
+}
+
+.route-summary-item .stop-info-naptan {
+  color: #726;
+}
+
 .digit {
   font-family: monospace;
   font-weight: bold;

@@ -248,6 +248,14 @@ export function growStopArea(members, existingArea) {
     return changed
 }
 
+// The area a stop is queued to join, if any, going by the element keys it is made of.
+export function pendingStopAreaFor(keys) {
+    for (const area of pending.values()) {
+        if (area.members.some((member) => keys.includes(member.key))) return area
+    }
+    return null
+}
+
 export const clearStopAreas = () => pending.clear()
 
 export const stopAreaCount = () => pending.size
