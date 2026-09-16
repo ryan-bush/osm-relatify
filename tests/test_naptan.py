@@ -93,13 +93,23 @@ def test_empty_fields_are_left_out():
         {'StopType': 'RSE'},
         {'BusStopType': 'HAR'},
         {'BusStopType': 'FLX'},
-        {'BusStopType': 'CUS'},
         {'CommonName': ' '},
         {'Latitude': ''},
     ],
 )
 def test_stops_without_a_mappable_pole_are_skipped(overrides):
     assert parse_row(_row(**overrides)) is None
+
+
+def test_unmarked_stop_is_kept_and_tagged_as_such():
+    tags = parse_row(_row(BusStopType='CUS')).tags
+
+    assert tags['naptan:BusStopType'] == 'CUS'
+    assert tags['name'] == 'Union Grove'
+
+
+def test_marked_stop_is_not_given_a_stop_type():
+    assert 'naptan:BusStopType' not in parse_row(_row()).tags
 
 
 @pytest.mark.parametrize('stop_type', ['BCS', 'BCQ'])
@@ -262,10 +272,53 @@ def test_mapped_stop_does_not_hide_its_twin_across_the_road():
     assert _codes(unmapped) == ['B']
 
 
-def test_a_differently_named_stop_nearby_is_not_a_match():
+def test_a_differently_named_stop_beside_it_is_a_match():
+    # most likely the same stop with a wrong name, which is offered for review instead
     unmapped = find_unmapped_stops([_naptan('A', NORTH_SIDE)], [_osm('1', NORTH_SIDE, {'name': 'Holburn Street'})])
 
+    assert unmapped == []
+
+
+def test_an_unnamed_stop_beside_it_is_a_match():
+    unmapped = find_unmapped_stops([_naptan('A', NORTH_SIDE)], [_osm('1', (57.14125, -2.11750), {})])
+
+    assert unmapped == []
+
+
+def test_a_differently_named_stop_further_away_is_not_a_match():
+    unmapped = find_unmapped_stops(
+        [_naptan('A', NORTH_SIDE)], [_osm('1', (57.14160, -2.11750), {'name': 'Holburn Street'})]
+    )
+
     assert _codes(unmapped) == ['A']
+
+
+def test_a_differently_named_stop_is_not_taken_from_its_own_naptan_stop():
+    # the OSM stop is Holburn Street, correctly named, so Union Grove is still missing
+    unmapped = find_unmapped_stops(
+        [_naptan('A', NORTH_SIDE), _naptan('H', (57.14140, -2.11750), 'Holburn Street')],
+        [_osm('1', NORTH_SIDE, {'name': 'Holburn Street'})],
+    )
+
+    assert _codes(unmapped) == ['A']
+
+
+def test_an_unnamed_stop_between_two_naptan_stops_is_not_a_match():
+    unmapped = find_unmapped_stops(
+        [_naptan('A', NORTH_SIDE), _naptan('B', SOUTH_SIDE)],
+        [_osm('1', (57.14109, -2.11750), {})],
+    )
+
+    assert _codes(unmapped) == ['A', 'B']
+
+
+def test_a_coded_stop_does_not_take_a_differently_named_neighbour():
+    unmapped = find_unmapped_stops(
+        [_naptan('A', NORTH_SIDE), _naptan('B', NORTH_SIDE, 'Holburn Street')],
+        [_osm('1', NORTH_SIDE, {'name': 'Union Grove', 'naptan:AtcoCode': 'A'})],
+    )
+
+    assert _codes(unmapped) == ['B']
 
 
 def test_a_same_named_stop_far_away_is_not_a_match():

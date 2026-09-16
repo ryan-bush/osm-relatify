@@ -24,8 +24,8 @@ export const tagAdditionCount = () => additions.size
 
 // Tags the mapper typed into the stop form for a stop already in OSM, against what it
 // was showing them at the time. Kept apart from the NaPTAN fills above because the two
-// are allowed to write different things: a name is the mapper's to set and never
-// NaPTAN's to fill in.
+// are allowed to write different things: the mapper's shelter and bench are nothing
+// NaPTAN knows about.
 const edits = new Map()
 
 export const getStopEdit = (stop) => edits.get(additionKey(stop))
