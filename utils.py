@@ -68,6 +68,8 @@ def normalize_name(
         name = re.sub(r'\b(\d\d)\b', r'0\1', name)
         name = re.sub(r'\b(\d)\b', r'00\1', name)
     if special:
+        # "Carreg-Bran" and "Carreg Bran" are one name, so a hyphen separates words
+        name = re.sub(r'[-\u2010-\u2015/]', ' ', name)
         name = re.sub(r'[^\w\s]', '', name)
     if whitespace:
         name = re.sub(r'\s+', ' ', name).strip()

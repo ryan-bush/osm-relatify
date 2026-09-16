@@ -2,6 +2,7 @@ import csv
 import os
 import sqlite3
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -11,7 +12,15 @@ from models.bounding_box import BoundingBox
 from models.element_id import ElementId
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, PublicTransport
 from models.naptan_stop import NaptanStop
-from naptan import DATA_VERSION, NaptanStore, build_database, find_unmapped_stops, parse_row
+from naptan import (
+    DATA_VERSION,
+    NaptanStore,
+    build_database,
+    find_unmapped_stops,
+    match_stops,
+    parse_row,
+    travel_heading,
+)
 
 COLUMNS = (
     'ATCOCode',
@@ -392,3 +401,83 @@ def test_changeset_has_no_source_without_naptan_stops():
 
     assert 'source' not in _changeset_tags([stop])
     assert _changeset_tags([])['comment'] == 'Updated route: Bus 12, #7'
+
+
+def _naptan_facing(code, lat_lng, name, bearing):
+    tags = {'name': name, 'naptan:Bearing': bearing}
+    return NaptanStop(atcoCode=code, name=name, indicator='', latLng=lat_lng, tags=tags)
+
+
+def _osm_with_stop_position(id, lat_lng, stop_lat_lng, tags):
+    collection = _osm(id, lat_lng, tags)
+    stop = replace(
+        collection.platform,
+        id=ElementId(f'{id}0'),
+        latLng=stop_lat_lng,
+        highway=None,
+        public_transport=PublicTransport.STOP_POSITION,
+    )
+    return replace(collection, stop=stop)
+
+
+def test_a_platform_left_of_eastbound_buses_heads_east():
+    # the platform stands north of its stop position, the left of buses heading east
+    collection = _osm_with_stop_position('1', (57.14125, -2.11750), (57.14120, -2.11750), {'name': 'Union Grove'})
+
+    assert round(travel_heading(collection)) == 90
+
+
+def test_a_platform_on_its_stop_position_has_no_heading():
+    collection = _osm_with_stop_position('1', NORTH_SIDE, NORTH_SIDE, {'name': 'Union Grove'})
+
+    assert travel_heading(collection) is None
+
+
+def test_twins_are_told_apart_by_the_way_their_buses_go():
+    """Bryn Llewelyn in Anglesey: the mapped stop is the westbound one, further from NaPTAN's."""
+    unmapped = find_unmapped_stops(
+        [
+            _naptan_facing('NE', (53.181611641, -4.265142634), 'Bryn Llewelyn', 'NE'),
+            _naptan_facing('SW', (53.18157998, -4.264916467), 'Bryn Llewelyn', 'SW'),
+        ],
+        [
+            _osm_with_stop_position(
+                '1', (53.1814817, -4.2652112), (53.1815283, -4.2652518), {'name': 'Bryn Llewelyn'}
+            )
+        ],
+    )
+
+    assert _codes(unmapped) == ['NE']
+
+
+def test_a_misnamed_stop_is_matched_once_its_name_twin_is_ruled_out():
+    """
+    Capel Horeb in Brynsiencyn: NaPTAN calls it Post Office, and the Post Office stop
+    across the road is within reach by name, but serves the other direction.
+    """
+    post_office_se = _naptan_facing('SE', (53.179575679, -4.274074778), 'Post Office', 'SE')
+    post_office_nw = _naptan_facing('NW', (53.179871191, -4.275078171), 'Post Office', 'NW')
+
+    matches = match_stops(
+        [post_office_se, post_office_nw],
+        [
+            _osm('1', (53.1795493, -4.2741036), {'name': 'Capel Horeb'}),
+            _osm_with_stop_position('2', (53.1798609, -4.2751585), (53.1799043, -4.2751129), {'name': 'Post Office'}),
+        ],
+    )
+
+    assert matches.unmapped == []
+    assert {s.id: s.differing.get('name') for s in matches.tag_suggestions if s.id == '1'} == {'1': 'Post Office'}
+
+
+def test_a_misnamed_stop_is_matched_when_its_naptan_stop_lost_a_name_pairing():
+    # NaPTAN's stop pairs by name with a mapped stop further off, which its twin takes
+    unmapped = find_unmapped_stops(
+        [_naptan('A', NORTH_SIDE, 'Post Office'), _naptan('B', (57.14170, -2.11750), 'Post Office')],
+        [
+            _osm('1', NORTH_SIDE, {'name': 'Capel Horeb'}),
+            _osm('2', (57.14172, -2.11750), {'name': 'Post Office'}),
+        ],
+    )
+
+    assert unmapped == []

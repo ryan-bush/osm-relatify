@@ -9,12 +9,9 @@ from models.element_id import ElementId
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute, FinalRouteWarning, WarningSeverity
 from models.relation_member import RelationMember
+from naptan import OPPOSITE_HEADING_ANGLE, angle_between, compass_degrees
 from relation_builder import sort_bus_on_path
 
-# NaPTAN gives the direction buses travel when calling at a stop as a compass point
-_COMPASS_DEGREES = {'N': 0, 'NE': 45, 'E': 90, 'SE': 135, 'S': 180, 'SW': 225, 'W': 270, 'NW': 315}
-# compass points are 45° apart and roads bend, so only a clearly opposite heading counts
-_OPPOSITE_HEADING_ANGLE = 120  # degrees
 # a route can pass a stop in both directions; stretches this much further away than the
 # nearest still count as passing it
 _PASSING_TOLERANCE = 20  # meters
@@ -96,8 +93,8 @@ def _check_for_bus_stop_inactive_in_naptan(
 
 def _naptan_bearing(collection: FetchRelationBusStopCollection) -> int | None:
     for stop in (collection.platform, collection.stop):
-        if stop is not None and (bearing := stop.tags.get('naptan:Bearing', '').strip().upper()) in _COMPASS_DEGREES:
-            return _COMPASS_DEGREES[bearing]
+        if stop is not None and (bearing := compass_degrees(stop.tags.get('naptan:Bearing', ''))) is not None:
+            return bearing
     return None
 
 
@@ -153,11 +150,6 @@ def _route_passes(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[f
     return [route_pass for route_pass in passes if route_pass.distance <= limit]
 
 
-def _angle_between(a: float, b: float) -> float:
-    difference = abs(a - b) % 360
-    return min(difference, 360 - difference)
-
-
 @trace
 def _check_for_bus_stop_serving_other_direction(route: FinalRoute) -> FinalRouteWarning | None:
     """Catches the stop across the road being picked.
@@ -176,7 +168,7 @@ def _check_for_bus_stop_serving_other_direction(route: FinalRoute) -> FinalRoute
         if not passes:
             continue
 
-        if not all(_angle_between(bearing, route_pass.heading) > _OPPOSITE_HEADING_ANGLE for route_pass in passes):
+        if not all(angle_between(bearing, route_pass.heading) > OPPOSITE_HEADING_ANGLE for route_pass in passes):
             continue
 
         # The bearing of one stop of a pair gets copied onto the other often enough that
