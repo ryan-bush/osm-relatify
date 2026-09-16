@@ -270,7 +270,9 @@ async def build_stop_area_modifications(
         relation.pop('@user', None)
         relation.pop('@uid', None)
         relation['member'] = [
-            *members,
+            # stop_position is what older areas call a stop; PTv2 says stop, and as the
+            # relation is being changed anyway it is put right on the way
+            *({**m, '@role': 'stop'} if m.get('@role') == 'stop_position' else m for m in members),
             *({'@type': m.type, '@ref': m.id, '@role': m.role} for m in added),
         ]
         result.append(relation)

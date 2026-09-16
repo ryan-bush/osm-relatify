@@ -70,6 +70,49 @@ def stop_position_headings(
     return {element_id(node): headings[0] for node, headings in found.items() if len(headings) == 1}
 
 
+# an unnamed stop position this close to a named platform is taken to be its
+UNNAMED_STOP_POSITION_REACH = 25  # meters
+
+
+def name_unnamed_stop_positions(stops: Sequence[FetchRelationBusStop]) -> list[FetchRelationBusStop]:
+    """
+    Give each unnamed stop position the name of the nearest named platform beside it.
+
+    Stops are put together by name, and an unnamed one is dropped from a place that has
+    named ones, so a stop position mapped without a name looked as though the platform
+    had none - and the mapper was offered a second one a few metres along the road.
+    """
+    platforms = [s for s in stops if s.public_transport == PublicTransport.PLATFORM and s.placeName]
+    if not platforms:
+        return list(stops)
+
+    tree = BallTree([radians_tuple(p.latLng) for p in platforms], metric='haversine')
+    result = []
+
+    for stop in stops:
+        if stop.public_transport != PublicTransport.STOP_POSITION or stop.placeName:
+            result.append(stop)
+            continue
+
+        distances, indices = tree.query([radians_tuple(stop.latLng)], k=1)
+        if distances[0][0] * 6_371_000 > UNNAMED_STOP_POSITION_REACH:
+            result.append(stop)
+            continue
+
+        platform = platforms[indices[0][0]]
+        name = platform.placeName
+        result.append(
+            replace(
+                stop,
+                name=name,
+                groupName=normalize_name(name, lower=True, special=True, number=True),
+                placeName=name,
+            )
+        )
+
+    return result
+
+
 def _serves(platform: FetchRelationBusStop, stop: FetchRelationBusStop, headings: Mapping[ElementId, float]) -> bool:
     """
     Whether the buses halting at a stop position can be the ones calling at a platform.
@@ -440,7 +483,7 @@ def _stop_area_key(collection: FetchRelationBusStopCollection) -> str:
     road, and grouping by display name would never put them together.
     """
     for stop in (collection.platform, collection.stop):
-        if stop is not None and (name := stop.tags.get('name', '').strip()):
+        if stop is not None and (name := stop.placeName.strip()):
             return normalize_name(name, lower=True, special=True, whitespace=True)
 
     return ''
