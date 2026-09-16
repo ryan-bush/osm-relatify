@@ -462,6 +462,24 @@ def stop_area_places(
     return result
 
 
+def stop_elements(elements: Iterable[dict], places: Mapping[tuple[str, int], StopAreaPlace]) -> tuple[dict, ...]:
+    """
+    The elements that can be read as stops, each with its tags, even if it has none.
+
+    A stop area can hold a bare node, with nothing but its role to say what it is.
+    Anything neither tagged as a stop nor holding a stop's role says nothing at all.
+    """
+    result = []
+
+    for element in elements:
+        element.setdefault('tags', {})
+
+        if 'public_transport' in element['tags'] or (element['type'], element['id']) in places:
+            result.append(element)
+
+    return tuple(result)
+
+
 def _create_node_counts(ways: list[dict]) -> Counter[int]:
     node_counts: Counter[int] = Counter()
     for way in ways:
@@ -764,6 +782,8 @@ class Overpass:
 
         elements_ex = chain(stop_area_platform_elements, stop_area_stop_position_elements, bus_elements)
         elements_ex = preprocess_elements(elements_ex)
+
+        elements_ex = stop_elements(elements_ex, places)
 
         def kind_tags(e: dict) -> dict[str, str]:
             # a stop in a bus stop area is a bus stop, even if it does not say so itself
