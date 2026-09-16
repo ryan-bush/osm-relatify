@@ -205,6 +205,17 @@ class TestBuildStopAreaModifications:
 
         assert _modifications([_change(id=99)], osm) == []
 
+    def test_an_older_stop_position_role_is_put_right_when_the_area_changes(self):
+        osm = FakeOsm({99: _relation(members=[('node', 5, 'stop_position'), ('node', 1, 'platform')])})
+        [relation] = _modifications([_change(id=99)], osm)
+
+        assert [(m['@ref'], m['@role']) for m in relation['member']] == [('5', 'stop'), ('1', 'platform'), (2, 'stop')]
+
+    def test_an_older_role_alone_is_not_a_reason_to_change_the_area(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform'), ('node', 2, 'stop_position')])})
+
+        assert _modifications([_change(id=99)], osm) == []
+
     def test_strips_the_metadata_but_keeps_the_tags(self):
         osm = FakeOsm({99: _relation(members=[])})
         [relation] = _modifications([_change(id=99)], osm)

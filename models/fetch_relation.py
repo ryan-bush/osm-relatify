@@ -82,6 +82,9 @@ class FetchRelationBusStop:
     groupName: str
     highway: str | None
     public_transport: PublicTransport
+    # what the place is called: the stop's own name, or its stop area's for one without.
+    # Kept apart from the tags, which are only ever what OSM holds.
+    placeName: str = ''  # noqa: N815
 
     @property
     def typed_id(self) -> tuple[str, ElementId]:
@@ -92,10 +95,12 @@ class FetchRelationBusStop:
         return f'{self.type}/{self.id}'
 
     @classmethod
-    def from_data(cls, data: dict) -> Self:
+    def from_data(cls, data: dict, place=None) -> Self:
+        """`place` is the StopAreaPlace the stop takes from its stop area, if any."""
         tags: dict[str, str] = data['tags']
 
-        name = tags.get('name', '').strip()
+        name = tags.get('name', '').strip() or (place.name if place is not None else '')
+        place_name = name
         local_ref = tags.get('local_ref', '').strip()
 
         ref_parts: dict[str, None] = {}
@@ -124,7 +129,10 @@ class FetchRelationBusStop:
             name=name,
             groupName=group_name,
             highway=tags.get('highway'),
-            public_transport=PublicTransport(tags['public_transport']),
+            public_transport=PublicTransport(
+                tags['public_transport'] if place is None or 'public_transport' in tags else place.public_transport
+            ),
+            placeName=place_name,
         )
 
 

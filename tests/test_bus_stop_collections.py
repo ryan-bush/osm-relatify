@@ -1,6 +1,6 @@
 """Pairing each platform with the stop position that serves it."""
 
-from bus_collection_builder import build_bus_stop_collections, stop_position_headings
+from bus_collection_builder import build_bus_stop_collections, name_unnamed_stop_positions, stop_position_headings
 from models.fetch_relation import FetchRelationBusStop
 
 LAT = 51.5574
@@ -199,3 +199,39 @@ def test_a_stop_position_where_ways_meet_has_no_heading():
     stop = _stop(2, {'name': 'X', 'public_transport': 'stop_position', 'direction': 'forward'})
 
     assert stop_position_headings([stop], [_road([1, 2]), _road([2, 3])], COORDINATES) == {}
+
+
+def _unnamed_position(id, **kwargs):
+    return _stop(id, {'public_transport': 'stop_position', 'bus': 'yes'}, **kwargs)
+
+
+def test_an_unnamed_stop_position_beside_a_platform_pairs_with_it():
+    """Farrar Road in Bangor: the stop position was mapped without a name."""
+    stops = name_unnamed_stop_positions([_platform(1, 'Farrar Road'), _unnamed_position(2, lat=LAT + 0.00005)])
+
+    assert _pairs(stops) == [('1', '2')]
+    assert 'name' not in stops[1].tags
+
+
+def test_an_unnamed_stop_position_far_from_any_platform_stays_unnamed():
+    stops = name_unnamed_stop_positions([_platform(1, 'Farrar Road'), _unnamed_position(2, lat=LAT + 0.001)])
+
+    assert stops[1].placeName == ''
+
+
+def test_an_unnamed_stop_position_takes_the_nearest_platform():
+    stops = name_unnamed_stop_positions(
+        [
+            _platform(1, 'Farrar Road'),
+            _platform(3, 'Deiniol Road', lat=LAT + 0.0002),
+            _unnamed_position(2, lat=LAT + 0.00015),
+        ]
+    )
+
+    assert stops[2].placeName == 'Deiniol Road'
+
+
+def test_a_named_stop_position_keeps_its_name():
+    stops = name_unnamed_stop_positions([_platform(1, 'Farrar Road'), _position(2, 'Something Else')])
+
+    assert stops[1].placeName == 'Something Else'

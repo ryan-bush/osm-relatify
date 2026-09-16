@@ -2,7 +2,7 @@ import asyncio
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import chain
 from typing import NamedTuple
@@ -14,7 +14,7 @@ from cachetools import TTLCache
 from fastapi import HTTPException
 from starlette import status
 
-from bus_collection_builder import build_bus_stop_collections, stop_position_headings
+from bus_collection_builder import build_bus_stop_collections, name_unnamed_stop_positions, stop_position_headings
 from config import (
     DOWNLOAD_RELATION_GRID_CELL_EXPAND,
     DOWNLOAD_RELATION_WAY_BB_EXPAND,
@@ -204,13 +204,17 @@ def build_query(
             'out tags qt;'
             'out count;'
             + ''.join(
-                f'node[highway=bus_stop][public_transport=platform][name]({bb});'
+                # unnamed too: one mapped without a name is still the stop, and NaPTAN
+                # would otherwise offer a second one on top of it
+                f'node[highway=bus_stop][public_transport=platform]({bb});'
                 f'out tags center qt;'
                 f'nwr[highway=platform][public_transport=platform][name]({bb});'
                 f'out tags center qt;'
                 f'nwr[highway=platform][public_transport=platform][ref]({bb});'
                 f'out tags center qt;'
                 f'node[public_transport=stop_position][name]({bb});'
+                f'out tags center qt;'
+                f'node[public_transport=stop_position][bus=yes][!name]({bb});'
                 f'out tags center qt;'
                 for bb in cell_bbs_expanded
             )
@@ -225,7 +229,7 @@ def build_query(
             'rel(r.r:platform);'
             'out tags center qt;'
             'out count;'
-            'node(r.r:stop);'
+            '(node(r.r:stop);node(r.r:stop_position););'
             'out tags center qt;'
             'out count;'
         )
@@ -264,7 +268,7 @@ def build_query(
             'rel(r.r:platform);'
             'out tags center qt;'
             'out count;'
-            'node(r.r:stop);'
+            '(node(r.r:stop);node(r.r:stop_position););'
             'out tags center qt;'
             'out count;'
         )
@@ -394,26 +398,67 @@ def is_tram_element(tags: dict[str, str]) -> bool:
     return tram_valid or (rail_valid and not train_valid and not subway_valid)
 
 
-def _merge_relation_tags(element: dict, relation: dict, extra: dict) -> None:
-    element['tags'] = {
-        **relation.get('tags', {}),
-        **element.get('tags', {}),
-        **extra,
-    }
+# stop_position is the role older stop areas give their stop positions, before PTv2
+# settled on stop; it means the same
+_STOP_AREA_ROLES = {'platform': 'platform', 'stop': 'stop_position', 'stop_position': 'stop_position'}
 
 
-def merge_relations_tags(relations: Iterable[dict], elements: Iterable[dict], role: str, public_transport: str) -> None:
-    element_map = {(e['type'], e['id']): e for e in elements}
+@dataclass(frozen=True, slots=True)
+class StopAreaPlace:
+    """What a stop takes from the stop area it is in, without it becoming the stop's tags."""
+
+    # the area's tags, for telling which kind of transport the stop is for
+    tags: dict[str, str]
+    # the name of the place, for a stop that has none of its own
+    name: str
+    # what the area's role says the stop is, for one not tagged public_transport itself
+    public_transport: str
+
+
+def stop_area_places(
+    relations: Iterable[dict],
+    platforms: Iterable[dict],
+    stop_positions: Iterable[dict],
+) -> dict[tuple[str, int], StopAreaPlace]:
+    """
+    What each member of a stop area takes from it, keyed by (type, id).
+
+    None of it goes into the members' tags, which are what OSM holds and what edits are
+    checked against: a platform with no name of its own is not one called whatever its
+    area is. An area with no name is named by its members instead, so the stop position
+    of an unnamed pair is still grouped with the platform beside it.
+    """
+    elements = {(e['type'], e['id']): e for e in chain(platforms, stop_positions)}
+    result: dict[tuple[str, int], StopAreaPlace] = {}
 
     for relation in sorted(relations, key=lambda r: r['id']):
-        for member in (m for m in relation['members'] if m['role'] == role):
-            platform = element_map.get((member['type'], member['ref']), None)
+        members = [
+            (member, _STOP_AREA_ROLES[member['role']])
+            for member in relation['members']
+            if member['role'] in _STOP_AREA_ROLES
+        ]
 
-            if platform is None:
-                print(f'🚧 Warning: Platform {member["type"]}/{member["ref"]} not found in map')
+        tags = relation.get('tags', {})
+        name = tags.get('name', '').strip()
+
+        if not name:
+            # platforms first, being what the sign is on
+            for member, _ in sorted(members, key=lambda m: m[1] != 'platform'):
+                element = elements.get((member['type'], member['ref']))
+                if element is not None and (name := element.get('tags', {}).get('name', '').strip()):
+                    break
+
+        for member, public_transport in members:
+            key = (member['type'], member['ref'])
+
+            if key not in elements:
+                print(f'🚧 Warning: Stop area member {member["type"]}/{member["ref"]} not found in map')
                 continue
 
-            _merge_relation_tags(platform, relation, {'public_transport': public_transport})
+            # the lowest-numbered area a stop is in speaks for it
+            result.setdefault(key, StopAreaPlace(tags=tags, name=name, public_transport=public_transport))
+
+    return result
 
 
 def _create_node_counts(ways: list[dict]) -> Counter[int]:
@@ -685,18 +730,7 @@ class Overpass:
         stop_area_platform_elements = elements_split[5]
         stop_area_stop_position_elements = elements_split[6]
 
-        merge_relations_tags(
-            stop_area_relations,
-            stop_area_platform_elements,
-            role='platform',
-            public_transport='platform',
-        )
-        merge_relations_tags(
-            stop_area_relations,
-            stop_area_stop_position_elements,
-            role='stop',
-            public_transport='stop_position',
-        )
+        places = stop_area_places(stop_area_relations, stop_area_platform_elements, stop_area_stop_position_elements)
 
         road_elements = tuple(e for e in maybe_road_elements if is_routable(e['tags'], route_type))
 
@@ -729,12 +763,22 @@ class Overpass:
 
         elements_ex = chain(stop_area_platform_elements, stop_area_stop_position_elements, bus_elements)
         elements_ex = preprocess_elements(elements_ex)
-        if route_type == 'bus':
-            elements_ex = (e for e in elements_ex if is_bus_explicit(e['tags']) or not is_any_rail_related(e['tags']))
-        elif route_type == 'tram':
-            elements_ex = (e for e in elements_ex if is_tram_element(e['tags']))
 
-        stops = tuple(FetchRelationBusStop.from_data(e) for e in elements_ex)
+        def kind_tags(e: dict) -> dict[str, str]:
+            # a stop in a bus stop area is a bus stop, even if it does not say so itself
+            place = places.get((e['type'], e['id']))
+            return {**place.tags, **e['tags']} if place is not None else e['tags']
+
+        if route_type == 'bus':
+            elements_ex = (
+                e for e in elements_ex if is_bus_explicit(kind_tags(e)) or not is_any_rail_related(kind_tags(e))
+            )
+        elif route_type == 'tram':
+            elements_ex = (e for e in elements_ex if is_tram_element(kind_tags(e)))
+
+        stops = name_unnamed_stop_positions(
+            tuple(FetchRelationBusStop.from_data(e, places.get((e['type'], e['id']))) for e in elements_ex)
+        )
         headings = stop_position_headings(
             stops,
             unsplit_road_elements,
