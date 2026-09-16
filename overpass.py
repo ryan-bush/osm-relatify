@@ -22,6 +22,7 @@ from config import (
     OVERPASS_API_INTERPRETERS,
     OVERPASS_MAX_DATA_AGE,
 )
+from driving_side import DrivingSide, build_driving_side_query, parse_driving_side
 from models.bounding_box import BoundingBox
 from models.bounding_box_collection import BoundingBoxCollection
 from models.download_history import Cell, DownloadHistory
@@ -802,6 +803,13 @@ class Overpass:
 
         r = await overpass_post(query, timeout)
         return parse_stop_areas(r.json().get('elements', ()))
+
+    @cached(TTLCache(maxsize=1024, ttl=24 * 3600))
+    async def query_driving_side(self, lat: float, lon: float) -> DrivingSide | None:
+        """Which side of the road traffic keeps to at a point, or None if nothing says."""
+        timeout = 30
+        r = await overpass_post(build_driving_side_query(lat, lon, timeout), timeout)
+        return parse_driving_side(r.json().get('elements', ()))
 
     @cached(TTLCache(maxsize=128, ttl=60))
     async def query_route_master_candidates(

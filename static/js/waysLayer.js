@@ -8,6 +8,7 @@ import {
     clearUTurnOverrides,
     updateUTurnMarkers,
 } from "./waysUTurn.js"
+import { applyTravelOverrides, clearTravelOverrides, updateTravelMarkers } from "./waysTravel.js"
 
 export let waysData = null
 export let waysRBush = null
@@ -51,9 +52,11 @@ export function processRelationWaysData(fetchData) {
         }
 
         applyUTurnOverrides(waysData)
+        applyTravelOverrides(waysData)
     } else {
         waysData = null
         clearUTurnOverrides()
+        clearTravelOverrides()
     }
 
     onWaysDataChanged()
@@ -97,6 +100,7 @@ function onWaysDataChanged() {
     waysRBush = createWaysRBush()
 
     updateUTurnMarkers(waysData)
+    updateTravelMarkers(waysData)
 
     updateWaysVisibility()
     updateBusStopsVisibility()

@@ -53,6 +53,7 @@ import {
     osmIsLive,
     osmUrl,
 } from "./utils.js"
+import { processDrivingSide } from "./drivingSide.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
 import {
     processRelationWaysData,
@@ -346,6 +347,7 @@ export const processFetchRelationData = (data) => {
     switchView("edit")
 
     // order is important here
+    processDrivingSide(data)
     processRelationEndpointData(data)
     processRelationWaysData(data)
 
@@ -494,6 +496,7 @@ export const processRouteWarnings = (data) => {
 // Everything belonging to the route being edited. The master it was picked from is not
 // part of that: going back to the list is not leaving it.
 const unloadRoute = () => {
+    processDrivingSide(null)
     processRelationEndpointData(null)
     processRelationWaysData(null)
     processRelationDownloadTriggers(null)

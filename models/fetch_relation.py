@@ -56,6 +56,9 @@ class FetchRelationElement:  # more like FetchRelationWay
     connectedTo: list[ElementId]
     turn_in_place_start: bool
     turn_in_place_end: bool
+    # "forward" or "backward" when the mapper has said which way buses use the way,
+    # relative to its own direction; None to let the route use it either way
+    travel: str | None = None
 
     # automatically calculated
     length: float = None
@@ -185,6 +188,9 @@ class FetchRelation:
     stopAreas: list[StopArea] | None = field(default_factory=list)
     # how far apart the stops of one place can be, which the page groups renamed stops by
     stopAreaSearchArea: float = STOP_AREA_SEARCH_AREA
+    # which side of the road traffic keeps to where the route runs, for working out which
+    # way round it goes; None when it could not be found out
+    drivingSide: str | None = None
     # the route_master relations this route is already a member of. None when the lookup
     # failed: "not in one" is what invites linking it into one, and guessing that wrongly
     # would put the route in a second master beside the one it already belongs to.

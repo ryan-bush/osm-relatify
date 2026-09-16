@@ -305,6 +305,10 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
             model.relationId, relation_tags, bounds
         )
 
+    with print_run_time('Finding the driving side'):
+        # NaPTAN only covers Great Britain, where traffic keeps left
+        driving_side = await _query_driving_side(bounds) or ('left' if naptan_stops or naptan_matched else None)
+
     return FetchRelation(
         fetchMerge=len(download_hist.history) > 1 or model.reload,
         nameOrRef=relation_tags.get('name', relation_tags.get('ref', '')).strip(),
@@ -322,7 +326,20 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         stopAreas=stop_areas,
         routeMasters=route_masters,
         routeMasterCandidates=route_master_candidates,
+        drivingSide=driving_side,
     )
+
+
+async def _query_driving_side(bounds: BoundingBox) -> str | None:
+    lat = round((bounds.minlat + bounds.maxlat) / 2, 2)
+    lon = round((bounds.minlon + bounds.maxlon) / 2, 2)
+
+    try:
+        return await _OVERPASS.query_driving_side(lat, lon)
+    except Exception as e:
+        # the mapper can still say which side, and the route is worked out regardless
+        print(f'🚧 Warning: Could not look up the driving side: {e!r}')
+        return None
 
 
 async def _query_stop_areas(bus_stop_collections) -> list[StopArea] | None:
@@ -454,6 +471,8 @@ class PostCalcBusRouteModel:
     ways: dict[ElementId | str, FetchRelationElement]
     busStops: list[FetchRelationBusStopCollection]
     tags: dict[str, str]
+    # which side of the road traffic keeps to; right until the client says otherwise
+    drivingSide: str = 'right'
 
 
 @app.websocket('/ws/calc_bus_route')
@@ -480,6 +499,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                 ways_non_members = {way_id: way for way_id, way in model.ways.items() if not way.member}
 
                 assert ways_members, 'No ways are members of the relation'
+                assert model.drivingSide in ('left', 'right'), 'Driving side must be left or right'
 
                 assert all(collection.platform.member for collection in model.busStops if collection.platform), (
                     'All bus platforms must be members of the relation'
@@ -505,6 +525,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                                     model.busStops,
                                     model.tags,
                                     _PROCESS_EXECUTOR,
+                                    driving_side=model.drivingSide,
                                     n_processes=CALC_ROUTE_N_PROCESSES,
                                 ),
                                 # MAX_SEARCH_TIME plus room for building the graph and
@@ -536,6 +557,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                     bus_stop_collections=model.busStops,
                     relation_members=relation_members,
                     inactive_naptan_codes=inactive_naptan_codes,
+                    driving_side=model.drivingSide,
                 )
 
                 response = deflate_compress(orjson.dumps(final_route, option=orjson.OPT_STRICT_INTEGER))

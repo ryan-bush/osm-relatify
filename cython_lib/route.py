@@ -159,6 +159,16 @@ class BestPathCollection(NamedTuple):
         )
 
 
+# `travel` is the direction the mapper said the buses use a way in, where the data alone
+# would let the route go either way round
+def drivable_forward(way: FetchRelationElement) -> bool:
+    return way.travel != 'backward'
+
+
+def drivable_backward(way: FetchRelationElement) -> bool:
+    return not way.oneway and way.travel != 'forward'
+
+
 def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, GraphValue]:
     convert_graph: dict[GraphKey, list[GraphKey]] = {}
 
@@ -172,9 +182,9 @@ def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, G
                     continue
                 connected_start = connected_way.latLngs[0]
                 connected_end = connected_way.latLngs[-1]
-                if latlon == connected_start:
+                if latlon == connected_start and drivable_forward(connected_way):
                     connections.append(GraphKey(connected_way_id, BOOL_START))
-                elif latlon == connected_end and not connected_way.oneway:
+                elif latlon == connected_end and drivable_backward(connected_way):
                     connections.append(GraphKey(connected_way_id, BOOL_END))
             return connections
 
@@ -185,12 +195,12 @@ def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, G
 
         # Build neighbors for START
         start_neighbors = find_connections_at(way.latLngs[0])
-        if way.turn_in_place_start and not way.oneway:
+        if way.turn_in_place_start and drivable_forward(way) and drivable_backward(way):
             start_neighbors.append(GraphKey(way_id, BOOL_START))
 
         # Build neighbors for END
         end_neighbors = find_connections_at(way.latLngs[-1])
-        if way.turn_in_place_end and not way.oneway:
+        if way.turn_in_place_end and drivable_forward(way) and drivable_backward(way):
             end_neighbors.append(GraphKey(way_id, BOOL_END))
 
         convert_graph[GraphKey(way_id, BOOL_START)] = start_neighbors
@@ -324,7 +334,7 @@ def get_bus_stops_at(
     almost_visited = []
 
     for sorted_bus in id_sorted_bus_map.get(neighbor.way_id, []):
-        if sorted_bus.right_hand_side is None or neighbor_is_forward == sorted_bus.right_hand_side:
+        if sorted_bus.kerb_side_forward is None or neighbor_is_forward == sorted_bus.kerb_side_forward:
             visited.append(sorted_bus)
         else:
             almost_visited.append(sorted_bus)
@@ -550,10 +560,13 @@ async def modified_dfs(
             complete_length=ways[start_way].length,
         )
 
-    stack: list[StackElement] = [
-        init_stack_element(start_start_key),
-        init_stack_element(start_end_key),
-    ]
+    # entered at its start is driven forwards, and at its end backwards; only a direction
+    # the mapper set rules one out, as the route has always been free to start either way
+    stack: list[StackElement] = []
+    if ways[start_way].travel != 'backward':
+        stack.append(init_stack_element(start_start_key))
+    if ways[start_way].travel != 'forward':
+        stack.append(init_stack_element(start_end_key))
 
     best_path = BestPathCollection(valid=BestPath.zero(), invalid=BestPath.zero())
 
@@ -923,9 +936,10 @@ async def calc_bus_route(
     tags: dict[str, str],
     executor: ProcessPoolExecutor,
     n_processes: cython.int,
+    driving_side: str = 'right',
 ) -> FinalRoute:
     with print_run_time('Sorting bus stops'):
-        sorted_buses = sort_bus_on_path(bus_stop_collections, ways_members.values())
+        sorted_buses = sort_bus_on_path(bus_stop_collections, ways_members.values(), driving_side)
 
     id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]] = {}
 

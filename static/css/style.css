@@ -657,3 +657,13 @@
 .icon.bus-stop img {
   width: 100%;
 }
+
+.travel-marker {
+  color: #7b2ff7;
+  filter: drop-shadow(0 0 1px white) drop-shadow(0 0 1px white);
+}
+
+.travel-either {
+  font-size: 1.25rem;
+  line-height: 24px;
+}
