@@ -50,7 +50,7 @@ from models.fetch_relation import (
 from models.final_route import FinalRoute, WarningSeverity
 from models.route_master import RouteMaster
 from models.stop_area import StopArea
-from naptan import NAPTAN
+from naptan import NAPTAN, Roads
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
@@ -286,12 +286,16 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
 
     naptan_stops = []
     naptan_tags = []
+    naptan_matched = {}
     # get_route_type() reads trolleybus routes as bus
     if NAPTAN_ENABLED and route_type == 'bus':
         with print_run_time('Matching stops with NaPTAN'):
-            matches = await NAPTAN.match(download_hist, bus_stop_collections)
+            matches = await NAPTAN.match(
+                download_hist, bus_stop_collections, Roads([way.latLngs for way in ways.values()])
+            )
         naptan_stops = matches.unmapped
         naptan_tags = matches.tag_suggestions
+        naptan_matched = matches.matched
 
     with print_run_time('Finding existing stop areas'):
         stop_areas = await _query_stop_areas(bus_stop_collections)
@@ -314,6 +318,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         busStops=bus_stop_collections,
         naptanStops=naptan_stops,
         naptanTags=naptan_tags,
+        naptanMatched=naptan_matched,
         stopAreas=stop_areas,
         routeMasters=route_masters,
         routeMasterCandidates=route_master_candidates,

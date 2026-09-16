@@ -15,6 +15,7 @@ from models.naptan_stop import NaptanStop
 from naptan import (
     DATA_VERSION,
     NaptanStore,
+    Roads,
     build_database,
     find_unmapped_stops,
     match_stops,
@@ -488,3 +489,81 @@ def test_a_misnamed_stop_is_matched_when_its_naptan_stop_lost_a_name_pairing():
     )
 
     assert unmapped == []
+
+
+# the B5109 through Talwrn, running north-east, as OSM has it
+B5109 = [(53.2711175, -4.2700748), (53.2717794, -4.2694455), (53.2721534, -4.2691043), (53.2724083, -4.2689268)]
+
+
+def test_a_platform_beside_a_road_heads_the_way_that_keeps_it_on_the_left():
+    # east of a north-east road, so on the left of buses heading south-west
+    heading = Roads([B5109]).travel_heading((53.2721338, -4.2690413))
+
+    assert 190 < heading < 230
+
+
+def test_a_platform_on_the_carriageway_has_no_heading():
+    assert Roads([B5109]).travel_heading((53.2721534, -4.2691043)) is None
+
+
+def test_a_platform_far_from_any_road_has_no_heading():
+    assert Roads([B5109]).travel_heading((53.2750, -4.2600)) is None
+
+
+def test_no_roads_give_no_heading():
+    assert Roads([]).travel_heading((53.2721338, -4.2690413)) is None
+
+
+def test_a_misnamed_stop_without_a_stop_position_is_told_apart_by_its_road():
+    """
+    Talwrn in Anglesey: OSM has the south-westbound stop by another name, and NaPTAN's
+    two Halfway Terrace stops are both close enough to be it.
+    """
+    matches = match_stops(
+        [
+            _naptan_facing('SW', (53.272109713, -4.269101461), 'Halfway Terrace', 'SW'),
+            _naptan_facing('NE', (53.272116127, -4.269236784), 'Halfway Terrace', 'NE'),
+        ],
+        [_osm('1', (53.2721338, -4.2690413), {'name': 'Talwrn'})],
+        Roads([B5109]),
+    )
+
+    assert _codes(matches.unmapped) == ['NE']
+    assert [(s.id, s.atcoCode, s.differing.get('name')) for s in matches.tag_suggestions] == [
+        ('1', 'SW', 'Halfway Terrace')
+    ]
+
+
+def test_without_the_roads_both_twins_are_still_suggested():
+    matches = match_stops(
+        [
+            _naptan_facing('SW', (53.272109713, -4.269101461), 'Halfway Terrace', 'SW'),
+            _naptan_facing('NE', (53.272116127, -4.269236784), 'Halfway Terrace', 'NE'),
+        ],
+        [_osm('1', (53.2721338, -4.2690413), {'name': 'Talwrn'})],
+    )
+
+    assert sorted(_codes(matches.unmapped)) == ['NE', 'SW']
+
+
+def test_stops_matched_by_code_name_and_distance_are_listed():
+    matches = match_stops(
+        [_naptan('A', NORTH_SIDE), _naptan('C', (57.1500, -2.1175)), _naptan('D', (57.1600, -2.1175), 'Mill Close')],
+        [
+            _osm('1', (57.2, -2.2), {'name': 'Elsewhere', 'naptan:AtcoCode': 'A'}),
+            _osm('2', (57.15005, -2.1175), {'name': 'Union Grove'}),
+            _osm('3', (57.16005, -2.1175), {'name': 'Wrong Name'}),
+            _osm('4', (57.3, -2.3), {'name': 'Nothing Near'}),
+        ],
+    )
+
+    assert matches.matched == {'node,1': 'A', 'node,2': 'C', 'node,3': 'D'}
+
+
+def test_twins_matched_by_name_alone_are_listed_without_a_code():
+    matches = match_stops(
+        [_naptan('A', NORTH_SIDE), _naptan('B', SOUTH_SIDE)],
+        [_osm('1', NORTH_SIDE, {'name': 'Union Grove'}), _osm('2', SOUTH_SIDE, {'name': 'Union Grove'})],
+    )
+
+    assert matches.matched == {'node,1': '', 'node,2': ''}

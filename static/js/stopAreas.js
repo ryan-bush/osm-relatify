@@ -248,6 +248,14 @@ export function growStopArea(members, existingArea) {
     return changed
 }
 
+// The area a stop is queued to join, if any, going by the element keys it is made of.
+export function pendingStopAreaFor(keys) {
+    for (const area of pending.values()) {
+        if (area.members.some((member) => keys.includes(member.key))) return area
+    }
+    return null
+}
+
 export const clearStopAreas = () => pending.clear()
 
 export const stopAreaCount = () => pending.size
@@ -288,12 +296,35 @@ export function unrenameStopArea(members, existingArea) {
     return true
 }
 
-export const stopAreasPayload = () =>
-    Array.from(pending.values(), (area) => ({
-        id: area.id,
-        name: area.name,
-        // only sent for one already in OSM, where it says the name may be replaced; a new
-        // relation has no name to disagree with
-        expectedName: area.id !== null ? (area.expectedName ?? null) : null,
-        members: area.members.map((member) => ({ type: member.type, id: member.id, role: member.role })),
-    }))
+// `created` holds the placeholder ids this upload creates. A new stop left out of it -
+// deleted, or a stop position whose stop the route no longer calls at - is left out of
+// its area too, as OSM refuses a member nothing creates. An area with nothing left to do
+// is left out altogether.
+export function stopAreasPayload(created = null) {
+    const result = []
+
+    for (const area of pending.values()) {
+        const members = area.members.filter((member) => member.id > 0 || !created || created.has(member.id))
+        const existing = area.id !== null ? existingAreas.find((known) => known.id === area.id) : null
+
+        if (area.id === null && members.length < 2) continue
+        if (
+            existing &&
+            !area.expectedName &&
+            members.every((member) => existing.members.includes(member.key ?? `${member.type}/${member.id}`))
+        ) {
+            continue
+        }
+
+        result.push({
+            id: area.id,
+            name: area.name,
+            // only sent for one already in OSM, where it says the name may be replaced; a
+            // new relation has no name to disagree with
+            expectedName: area.id !== null ? (area.expectedName ?? null) : null,
+            members: members.map((member) => ({ type: member.type, id: member.id, role: member.role })),
+        })
+    }
+
+    return result
+}

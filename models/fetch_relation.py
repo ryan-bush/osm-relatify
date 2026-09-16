@@ -170,6 +170,8 @@ class FetchRelation:
     naptanStops: list[NaptanStop] = field(default_factory=list)
     # stops in OSM that are missing tags NaPTAN has for them, offered for filling in
     naptanTags: list[NaptanTagSuggestion] = field(default_factory=list)
+    # the OSM stops that stand for a NaPTAN stop, as "type,id", with the NaPTAN code
+    naptanMatched: dict[str, str] = field(default_factory=dict)
     # stop_area relations the downloaded stops are already in, so none is duplicated.
     # None when the lookup failed, which is not the same as there being none of them.
     stopAreas: list[StopArea] | None = field(default_factory=list)

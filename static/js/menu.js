@@ -1,4 +1,4 @@
-import { busStopData, processBusStopData, undecidedDisagreementStops } from "./busStopsLayer.js"
+import { busStopData, processBusStopData, stopSummary, undecidedDisagreementStops } from "./busStopsLayer.js"
 import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
 import {
     completedStopAreaCount,
@@ -48,6 +48,7 @@ import {
 import {
     createElementFromHTML,
     deflateCompress,
+    escapeHtml,
     getBusCollectionName,
     osmIsLive,
     osmUrl,
@@ -621,6 +622,10 @@ setRouteEditHandler((id) => editRoute(id))
 // Loading one relation in place of another, from wherever it was named: a variant picked
 // out of the master's list, one listed beside the route being edited, or the master of
 // the route being edited.
+// the placeholder ids of the stops and stop positions this upload creates
+const createdPlaceholders = () =>
+    new Set([...newStopsPayload(), ...stopPositionsPayload()].map((element) => element.id))
+
 function editRoute(id) {
     if (!confirmLeavingRoute() || !confirmLeavingMaster()) return
 
@@ -751,10 +756,33 @@ const styleStopName = (name) => {
     })
 }
 
+const summaryLink = (className, title, href, letter) =>
+    `<a class="${className} link-underline link-underline-opacity-0 link-underline-opacity-100-hover"
+        title="${escapeHtml(title)}" href="${href}" target="_blank">${letter}</a>`
+
+function stopAreaLetter(area) {
+    if (!area) return ""
+
+    const title = area.queued
+        ? `Joins the stop area “${area.name}” when you upload`
+        : `In the stop area “${area.name}”`
+
+    if (area.id === null) return `<span class="stop-info-area" title="${escapeHtml(title)}">A</span>`
+    return summaryLink("stop-info-area", title, `https://www.openstreetmap.org/relation/${area.id}`, "A")
+}
+
+function naptanLetter(code) {
+    if (code === null) return ""
+
+    const title = code ? `Matches NaPTAN stop ${code}` : "Matches a NaPTAN stop by name"
+    return `<span class="stop-info-naptan" title="${escapeHtml(title)}">N</span>`
+}
+
 export const processRouteStops = (data) => {
     routeSummary.innerHTML = ""
 
     for (const collection of data.busStops) {
+        const { area, naptan } = stopSummary(collection)
         const isPlatform = collection.platform != null
         const isStop = collection.stop != null
         // not in OSM until upload, so there is nothing to link to yet
@@ -785,7 +813,9 @@ export const processRouteStops = (data) => {
                     href="https://www.openstreetmap.org/${collection.stop.type}/${collection.stop.id}"
                     target="_blank">S</a>`
                         : ""
-                }
+                }<!--
+                -->${stopAreaLetter(area)}<!--
+                -->${naptanLetter(naptan)}
             </div>
         </div>`),
         )
@@ -836,7 +866,7 @@ submitUploadBtn.onclick = async () => {
             comment: submitComment.value,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
-            stopAreas: stopAreasPayload(),
+            stopAreas: stopAreasPayload(createdPlaceholders()),
             naptanTagAdditions: tagAdditionsPayload(),
             ...routeMasterPayload(),
         }),
@@ -887,7 +917,7 @@ submitUploadBtn.onclick = async () => {
             // second relation for stops this upload has just grouped. The upload says
             // what ids OSM gave the relations it created, so they can be completed rather
             // than only left alone.
-            noteUploadedStopAreas(stopAreasPayload(), data.new_stop_areas ?? [])
+            noteUploadedStopAreas(stopAreasPayload(createdPlaceholders()), data.new_stop_areas ?? [])
 
             // back to the variants, with this one marked, so the next is one click away
             if (routeMasterViewId() !== null) {
@@ -928,7 +958,7 @@ submitDownloadBtn.onclick = async () => {
             tagsOriginal: relationTagsOriginal,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
-            stopAreas: stopAreasPayload(),
+            stopAreas: stopAreasPayload(createdPlaceholders()),
             naptanTagAdditions: tagAdditionsPayload(),
             ...routeMasterPayload(),
         }),
