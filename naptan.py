@@ -16,6 +16,7 @@ import orjson
 from rapidfuzz.fuzz import token_ratio
 from sklearn.neighbors import BallTree
 
+from compass import OPPOSITE_HEADING_ANGLE, angle_between, compass_degrees
 from config import NAPTAN_DATA_DIR, NAPTAN_MAX_AGE
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.bounding_box import BoundingBox
@@ -51,12 +52,8 @@ _TAG_COLUMNS = (
 
 # bumped whenever what the database stores changes, so an older one is rebuilt on start
 # rather than serving stale tags until the next daily refresh
-DATA_VERSION = 4
+DATA_VERSION = 5
 
-# NaPTAN gives the direction buses travel when calling at a stop as a compass point
-_COMPASS_DEGREES = {'N': 0, 'NE': 45, 'E': 90, 'SE': 135, 'S': 180, 'SW': 225, 'W': 270, 'NW': 315}
-# compass points are 45° apart and roads bend, so only a clearly opposite heading counts
-OPPOSITE_HEADING_ANGLE = 120  # degrees
 # a platform nearer than this to its stop position could be standing at either kerb
 _KERB_OFFSET = 2  # meters
 
@@ -78,7 +75,9 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     ):
         return None
 
-    name = row['CommonName'].strip()
+    # NaPTAN writes an apostrophe as a backtick, "St Mihangel`s Church"; naptan:CommonName
+    # below keeps it as NaPTAN has it
+    name = row['CommonName'].strip().replace('`', "'")
     if not name or not row['Latitude'] or not row['Longitude']:
         return None
 
@@ -148,15 +147,6 @@ def build_database(csv_path: Path, db_path: Path) -> int:
 
     tmp_path.replace(db_path)
     return count
-
-
-def compass_degrees(bearing: str) -> int | None:
-    return _COMPASS_DEGREES.get(bearing.strip().upper())
-
-
-def angle_between(a: float, b: float) -> float:
-    difference = abs(a - b) % 360
-    return min(difference, 360 - difference)
 
 
 def travel_heading(collection: FetchRelationBusStopCollection) -> float | None:

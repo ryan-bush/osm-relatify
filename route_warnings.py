@@ -5,11 +5,11 @@ from math import atan2, cos, degrees, hypot, radians, sqrt
 
 from sentry_sdk import trace
 
+from compass import OPPOSITE_HEADING_ANGLE, angle_between, compass_degrees
 from models.element_id import ElementId
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute, FinalRouteWarning, WarningSeverity
 from models.relation_member import RelationMember
-from naptan import OPPOSITE_HEADING_ANGLE, angle_between, compass_degrees
 from relation_builder import sort_bus_on_path
 
 # a route can pass a stop in both directions; stretches this much further away than the

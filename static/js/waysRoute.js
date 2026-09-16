@@ -3,7 +3,7 @@ import { busStopData, refreshStopPositionDirections } from "./busStopsLayer.js"
 import { processRouteStops, processRouteWarnings, relationId } from "./menu.js"
 import { relationTags } from "./relationTagEditor.js"
 import { deflateCompress, deflateDecompress } from "./utils.js"
-import { insertStopPositionsIntoWays, stopPositionPlacements } from "./stopPositions.js"
+import { followWaySegments, insertStopPositionsIntoWays, stopPositionPlacements } from "./stopPositions.js"
 import { startWay, stopWay } from "./waysEndpoint.js"
 import { waysData } from "./waysLayer.js"
 
@@ -56,6 +56,7 @@ export function requestCalcBusRoute() {
 
     // a new stop position is only a vertex of the road once it is put there; without it
     // the calculation cannot find it on the route and drops it
+    followWaySegments(waysData)
     const waysWithStopPositions = insertStopPositionsIntoWays(ways, stopPositionPlacements())
 
     calcBusRoute(startWay.id, stopWay.id, waysWithStopPositions, busStops, relationTags)

@@ -113,6 +113,18 @@ def build_new_stop_nodes(
             f'The route refers to new bus stops that were not sent: {", ".join(missing)}',
         )
 
+    # and the other way about: a stop position the route does not call at would be put on
+    # the road as a member of nothing
+    member_ids = {member.id for member in members if member.type == 'node'}
+    stray = [position for position in new_stop_positions if element_id(position.id) not in member_ids]
+    if stray:
+        names = ', '.join(sorted({position.name or str(position.id) for position in stray}))
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f'Stop positions that are not on the route: {names}. '
+            'Remove them, or add them again so they sit on a road the route uses.',
+        )
+
     nodes = [_node(stop.id, stop.lat, stop.lon, make_new_stop_tags(route_type, stop.tags)) for stop in new_stops]
 
     nodes += [

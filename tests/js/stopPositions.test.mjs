@@ -6,6 +6,8 @@ import { beforeEach, test } from "node:test"
 
 import {
     clearStopPositions,
+    currentSegmentId,
+    followWaySegments,
     getStopPositionNode,
     getStopPositionPlacement,
     hasStopPosition,
@@ -291,4 +293,43 @@ test("the placement is kept, so the direction can be worked out again later", ()
     setStopPosition(osmStop, placementFor(), "The Station")
 
     assert.equal(getStopPositionPlacement(osmStop).segmentId, "201")
+})
+
+// Tan Rallt on route 4: a later download cut the way at a new junction, so the piece the
+// stop position was planned on no longer exists under that id
+test("a placement follows its way when the pieces are renumbered", () => {
+    const placement = planStopPosition([51.50009, 0.001], ways(road({ id: "201_1_1" })))
+    assert.equal(placement.segmentId, "201_1_1")
+
+    const recut = ways(
+        road({ id: "201_1_2", nodes: [10, 11], latLngs: road().latLngs.slice(0, 2) }),
+        road({ id: "201_2_2", nodes: [11, 12], latLngs: road().latLngs.slice(1) }),
+    )
+
+    assert.equal(currentSegmentId(placement, recut), "201_2_2")
+})
+
+test("a placement on a piece that still holds it stays put", () => {
+    const placement = planStopPosition([51.50009, 0.001], ways(road()))
+
+    assert.equal(currentSegmentId(placement, ways(road())), "201")
+})
+
+test("a placement whose way is gone has no piece", () => {
+    const placement = planStopPosition([51.50009, 0.001], ways(road()))
+
+    assert.equal(currentSegmentId(placement, ways(road({ id: "999" }))), null)
+})
+
+test("pending stop positions are moved onto the renumbered piece", () => {
+    clearStopPositions()
+    const platform = { type: "node", id: "5", member: true }
+    setStopPosition(platform, planStopPosition([51.50009, 0.001], ways(road({ id: "201_1_1" }))), "Tan Rallt")
+
+    followWaySegments(ways(road()))
+
+    assert.equal(getStopPositionPlacement(platform).segmentId, "201")
+    const inserted = insertStopPositionsIntoWays(ways(road()), [getStopPositionPlacement(platform)])
+    assert.equal(inserted["201"].latLngs.length, 4)
+    clearStopPositions()
 })

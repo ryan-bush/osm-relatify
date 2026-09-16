@@ -216,6 +216,38 @@ export function renameStopArea(members, name) {
     return true
 }
 
+// A group can grow after an area was queued for part of it, when a stop is renamed to
+// the name its neighbours have. What was queued for the part is moved over to the whole
+// group, which takes the existing relation's id and name if it has one; one already
+// queued for the whole group covers the part's members as it is.
+export function growStopArea(members, existingArea) {
+    const keys = new Set(members.map((member) => member.key))
+    const target = signatureOf(members)
+    let changed = false
+
+    for (const [key, area] of pending) {
+        if (key === target || area.members.length >= members.length) continue
+        if (!area.members.every((member) => keys.has(member.key))) continue
+        // queued against a relation other than the one the group is in
+        if (area.id !== null && area.id !== existingArea?.id) continue
+
+        pending.delete(key)
+        changed = true
+
+        if (pending.has(target)) continue
+
+        pending.set(target, {
+            ...area,
+            id: existingArea?.id ?? null,
+            name: existingArea?.name || area.name,
+            expectedName: area.id !== null ? area.expectedName : null,
+            members: members,
+        })
+    }
+
+    return changed
+}
+
 export const clearStopAreas = () => pending.clear()
 
 export const stopAreaCount = () => pending.size
