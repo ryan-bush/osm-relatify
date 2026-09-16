@@ -621,6 +621,10 @@ setRouteEditHandler((id) => editRoute(id))
 // Loading one relation in place of another, from wherever it was named: a variant picked
 // out of the master's list, one listed beside the route being edited, or the master of
 // the route being edited.
+// the placeholder ids of the stops and stop positions this upload creates
+const createdPlaceholders = () =>
+    new Set([...newStopsPayload(), ...stopPositionsPayload()].map((element) => element.id))
+
 function editRoute(id) {
     if (!confirmLeavingRoute() || !confirmLeavingMaster()) return
 
@@ -836,7 +840,7 @@ submitUploadBtn.onclick = async () => {
             comment: submitComment.value,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
-            stopAreas: stopAreasPayload(),
+            stopAreas: stopAreasPayload(createdPlaceholders()),
             naptanTagAdditions: tagAdditionsPayload(),
             ...routeMasterPayload(),
         }),
@@ -887,7 +891,7 @@ submitUploadBtn.onclick = async () => {
             // second relation for stops this upload has just grouped. The upload says
             // what ids OSM gave the relations it created, so they can be completed rather
             // than only left alone.
-            noteUploadedStopAreas(stopAreasPayload(), data.new_stop_areas ?? [])
+            noteUploadedStopAreas(stopAreasPayload(createdPlaceholders()), data.new_stop_areas ?? [])
 
             // back to the variants, with this one marked, so the next is one click away
             if (routeMasterViewId() !== null) {
@@ -928,7 +932,7 @@ submitDownloadBtn.onclick = async () => {
             tagsOriginal: relationTagsOriginal,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
-            stopAreas: stopAreasPayload(),
+            stopAreas: stopAreasPayload(createdPlaceholders()),
             naptanTagAdditions: tagAdditionsPayload(),
             ...routeMasterPayload(),
         }),

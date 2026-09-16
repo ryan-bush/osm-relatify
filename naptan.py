@@ -8,8 +8,8 @@ import time
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from itertools import chain
-from math import atan2, cos, degrees, radians
+from itertools import chain, pairwise
+from math import atan2, ceil, cos, degrees, hypot, radians
 from pathlib import Path
 
 import orjson
@@ -54,7 +54,8 @@ _TAG_COLUMNS = (
 # rather than serving stale tags until the next daily refresh
 DATA_VERSION = 5
 
-# a platform nearer than this to its stop position could be standing at either kerb
+# a platform nearer than this to its stop position, or to the road, could be standing at
+# either kerb
 _KERB_OFFSET = 2  # meters
 
 # NaPTAN positions are often tens of metres out
@@ -149,20 +150,107 @@ def build_database(csv_path: Path, db_path: Path) -> int:
     return count
 
 
-def travel_heading(collection: FetchRelationBusStopCollection) -> float | None:
+# a platform further than this from every road is not beside any of them
+_ROAD_REACH = 25  # meters
+# how often along a road a point is kept, for finding the roads near a stop
+_ROAD_SAMPLE = 20  # meters
+
+
+class Roads:
+    """The downloaded roads, to tell which side of one a stop stands on."""
+
+    def __init__(self, ways: Iterable[Sequence[tuple[float, float]]]):
+        self._ways = ways
+        self._segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        self._owners: list[int] = []
+        self._tree: BallTree | None = None
+        self._built = False
+
+    def _build(self) -> None:
+        """Only once a stop needs it, as a long route downloads a lot of road."""
+        self._built = True
+        samples = []
+
+        for lat_lngs in self._ways:
+            for a, b in pairwise(lat_lngs):
+                index = len(self._segments)
+                self._segments.append((a, b))
+                count = max(1, ceil(haversine_distance(a, b) / _ROAD_SAMPLE))
+
+                for k in range(count + 1):
+                    t = k / count
+                    samples.append(radians_tuple((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)))
+                    self._owners.append(index)
+
+        if samples:
+            self._tree = BallTree(samples, metric='haversine')
+
+    def travel_heading(self, lat_lng: tuple[float, float]) -> float | None:
+        """
+        Which way buses calling at a platform here travel, from the side of the nearest
+        road it stands on: buses keep left wherever NaPTAN applies.
+        """
+        if not self._built:
+            self._build()
+        if self._tree is None:
+            return None
+
+        [indices] = self._tree.query_radius(
+            [radians_tuple(lat_lng)], r=radians((_ROAD_REACH + _ROAD_SAMPLE / 2) / 111_111)
+        )
+
+        lat0, lon0 = lat_lng
+        x_scale = 111_320 * cos(radians(lat0))
+        y_scale = 110_540
+        nearest: tuple[float, float, float] | None = None  # distance, offset, bearing
+
+        for segment in {self._owners[i] for i in indices}:
+            (lat_a, lon_a), (lat_b, lon_b) = self._segments[segment]
+            ax, ay = (lon_a - lon0) * x_scale, (lat_a - lat0) * y_scale
+            dx, dy = (lon_b - lon_a) * x_scale, (lat_b - lat_a) * y_scale
+
+            length = hypot(dx, dy)
+            if not length:
+                continue
+
+            # the closest point of the segment to the stop, which sits at the origin
+            t = max(0.0, min(1.0, -(ax * dx + ay * dy) / (length * length)))
+            distance = hypot(ax + t * dx, ay + t * dy)
+
+            if nearest is None or distance < nearest[0]:
+                # positive when the stop stands to the left of travel from a to b
+                offset = (dy * ax - dx * ay) / length
+                nearest = (distance, offset, degrees(atan2(dx, dy)))
+
+        if nearest is None:
+            return None
+
+        distance, offset, bearing = nearest
+
+        # out on the carriageway names no side at all
+        if distance > _ROAD_REACH or abs(offset) < _KERB_OFFSET:
+            return None
+
+        return (bearing if offset > 0 else bearing + 180) % 360
+
+
+def travel_heading(collection: FetchRelationBusStopCollection, roads: Roads | None = None) -> float | None:
     """
     Which way the buses calling at an OSM stop travel, in degrees clockwise from north.
 
     Read from where the platform stands beside its stop position: buses keep left
-    wherever NaPTAN applies, so the platform is on their left. The stop's own
-    naptan:Bearing is not trusted for this, being copied onto the stop across the road
-    often enough.
+    wherever NaPTAN applies, so the platform is on their left. Without a stop position,
+    the nearest road stands in for it. The stop's own naptan:Bearing is not trusted for
+    this, being copied onto the stop across the road often enough.
     """
     platform = collection.platform
     stop = collection.stop
 
-    if platform is None or stop is None or haversine_distance(stop.latLng, platform.latLng) < _KERB_OFFSET:
+    if platform is None:
         return None
+
+    if stop is None or haversine_distance(stop.latLng, platform.latLng) < _KERB_OFFSET:
+        return roads.travel_heading(platform.latLng) if roads is not None else None
 
     dy = platform.latLng[0] - stop.latLng[0]
     dx = (platform.latLng[1] - stop.latLng[1]) * cos(radians(stop.latLng[0]))
@@ -219,6 +307,7 @@ def find_unmapped_stops(
 def match_stops(
     naptan_stops: Sequence[NaptanStop],
     bus_stop_collections: Sequence[FetchRelationBusStopCollection],
+    roads: Roads | None = None,
 ) -> StopMatches:
     naptan_by_code = {stop.atcoCode: stop for stop in naptan_stops}
     mapped_codes: set[str] = set()
@@ -246,7 +335,13 @@ def match_stops(
         r=radians(MATCH_DISTANCE / 111_111),
     )
 
-    headings = [travel_heading(c) for c in bus_stop_collections]
+    # worked out only for the stops a NaPTAN stop is near, as it can mean looking at roads
+    headings: dict[int, float | None] = {}
+
+    def heading(j: int) -> float | None:
+        if j not in headings:
+            headings[j] = travel_heading(bus_stop_collections[j], roads)
+        return headings[j]
 
     def comparable(name: str) -> str:
         return normalize_name(name, lower=True, special=True, whitespace=True)
@@ -268,7 +363,7 @@ def match_stops(
                 continue
 
             # and the two sides of a road by which way their buses go
-            if not _same_direction(stop, headings[j]):
+            if not _same_direction(stop, heading(j)):
                 continue
 
             # A stop matched by code only takes on a second record for the same letter,
@@ -425,6 +520,7 @@ class NaptanStore:
         self,
         download_hist: DownloadHistory,
         bus_stop_collections: Sequence[FetchRelationBusStopCollection],
+        roads: Roads | None = None,
     ) -> StopMatches:
         cells = tuple(set(chain.from_iterable(download_hist.history)))
         if not cells:
@@ -432,7 +528,7 @@ class NaptanStore:
 
         bbs, _ = optimize_cells_and_get_bbs(cells, start_horizontal=True)
         naptan_stops = await asyncio.to_thread(self.stops_within, bbs)
-        return match_stops(naptan_stops, bus_stop_collections)
+        return await asyncio.to_thread(match_stops, naptan_stops, bus_stop_collections, roads)
 
     def inactive_codes(self, codes: Iterable[str]) -> frozenset[str]:
         codes = tuple(set(codes))
