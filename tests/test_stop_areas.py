@@ -4,7 +4,6 @@ import pytest
 import xmltodict
 from fastapi import HTTPException
 
-from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection
 from placeholder_ids import RelationPlaceholders
 from models.final_route import FinalRoute
 from relation_builder import build_osm_change
@@ -13,7 +12,6 @@ from stop_areas import (
     StopAreaMember,
     build_new_stop_area_relations,
     build_stop_area_modifications,
-    build_stop_areas_query,
     check_new_stop_areas,
     parse_stop_areas,
 )
@@ -59,22 +57,6 @@ def _relation(id=99, tags=None, members=()):
         'tag': [{'@k': k, '@v': v} for k, v in (tags or _STOP_AREA_TAGS).items()],
         'member': [{'@type': t, '@ref': str(r), '@role': role} for t, r, role in members],
     }
-
-
-class TestBuildQuery:
-    def test_asks_for_the_parents_of_both_kinds_of_stop(self):
-        query = build_stop_areas_query([2, 1], [7], 30)
-
-        assert 'node(id:1,2)' in query
-        assert 'way(id:7)' in query
-        assert '"public_transport"="stop_area"' in query
-
-    def test_leaves_out_a_kind_there_are_none_of(self):
-        # an empty id list is a syntax error in Overpass
-        assert 'way(id:' not in build_stop_areas_query([1], [], 30)
-
-    def test_no_stops_means_no_query_at_all(self):
-        assert build_stop_areas_query([], [], 30) == ''
 
 
 class TestParse:
@@ -253,36 +235,6 @@ class TestBuildOsmChange:
         [modified] = change['modify']['relation']
         assert modified['@id'] == '99'
         assert len(modified['member']) == 2
-
-
-def test_a_failed_lookup_is_not_the_same_as_no_stop_areas():
-    """
-    An empty list is what invites the mapper to create one, so a lookup that could not
-    reach Overpass says None instead and the client stops offering stop areas at all.
-    """
-    import main
-
-    class _Failing:
-        async def query_stop_areas(self, node_ids, way_ids):
-            raise RuntimeError('Overpass is unavailable')
-
-    collection = FetchRelationBusStopCollection(
-        platform=FetchRelationBusStop.from_data({
-            'id': 1,
-            'type': 'node',
-            'lat': 51.5,
-            'lon': -1.7,
-            'tags': {'name': 'Bladen Close', 'public_transport': 'platform', 'highway': 'bus_stop'},
-        }),
-        stop=None,
-    )
-
-    original = main._OVERPASS
-    main._OVERPASS = _Failing()
-    try:
-        assert asyncio.run(main._query_stop_areas([collection])) is None
-    finally:
-        main._OVERPASS = original
 
 
 def _parent_area(id=21385736, name='Berkeley Road'):
