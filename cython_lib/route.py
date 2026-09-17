@@ -355,6 +355,7 @@ def modified_dfs_worker(
     max_length: cython.double,
     max_iter: cython.int,
     components: dict[GraphKey, int],
+    deadline: cython.double = float('inf'),
 ) -> tuple[list[StackElement], BestPathCollection]:
     message_ref = [f'Worker with {len(stack)} stack size']
     current_iter = 0
@@ -362,6 +363,12 @@ def modified_dfs_worker(
     with print_run_time(message_ref):
         for current_iter in range(1, max_iter + 1):  # noqa: B007
             if not stack:
+                break
+
+            # On a long route a single iteration can take a fraction of a millisecond, so
+            # max_iter alone let a batch run for seconds past the budget. The monotonic
+            # clock is system-wide, so the deadline set in the parent process holds here.
+            if not current_iter & 63 and time.monotonic() >= deadline:
                 break
 
             s = stack.pop()
@@ -569,6 +576,9 @@ async def modified_dfs(
 
     best_path = BestPathCollection(valid=BestPath.zero(), invalid=BestPath.zero())
 
+    # the head start below counts against the budget, but always runs in full
+    deadline = time.monotonic() + MAX_SEARCH_TIME
+
     # for reference:
     # AMD Ryzen 9 5950X: 10,000 iterations in ~ 0.1s
     sync_max_iter = 3000  # .03s
@@ -607,15 +617,14 @@ async def modified_dfs(
                 max_length=max_length,
                 max_iter=max_iter,
                 components=components,
+                deadline=deadline,
             ),
         )
-
-    deadline = time.monotonic() + MAX_SEARCH_TIME
 
     tasks: list[asyncio.Task] = []
     while stack or tasks:
         if time.monotonic() >= deadline:
-            # in-flight workers are capped at async_max_iter, so they land promptly
+            # in-flight workers stop at the deadline too, so they land promptly
             if tasks:
                 done, _ = await asyncio.wait(tasks)
                 for task in done:

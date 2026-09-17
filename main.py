@@ -530,7 +530,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                                 ),
                                 # MAX_SEARCH_TIME plus room for building the graph and
                                 # for the workers still running when the search stops
-                                timeout=11,
+                                timeout=4,
                             )
                         )
 
