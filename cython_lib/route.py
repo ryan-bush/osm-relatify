@@ -1,6 +1,5 @@
 import asyncio
 import time
-from collections import defaultdict
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
@@ -46,7 +45,7 @@ MAX_PATH_LENGTH_FACTOR = 2.2
 # The search is exhaustive, so anything that widens the graph - a U-turn most of
 # all - can grow it beyond what is searchable. Past this budget, return the best
 # route found so far instead of letting the request time out with nothing.
-MAX_SEARCH_TIME = 10.0  # seconds, must stay below the request timeout in main.py
+MAX_SEARCH_TIME = 2.0  # seconds, must stay below the request timeout in main.py
 
 
 class GraphKey(NamedTuple):
@@ -818,10 +817,11 @@ def insert_skipped_detours(
     def successors(key: GraphKey) -> tuple[GraphKey, ...]:
         return graph[exit_at(key)].connected_to
 
-    predecessors: dict[GraphKey, list[GraphKey]] = defaultdict(list)
+    # a plain dict: compiled, Cython rejects a defaultdict for a `dict` annotation
+    predecessors: dict[GraphKey, list[GraphKey]] = {}
     for key in graph:
         for neighbor in successors(key):
-            predecessors[neighbor].append(key)
+            predecessors.setdefault(neighbor, []).append(key)
 
     def preceding(key: GraphKey) -> list[GraphKey]:
         return predecessors.get(key, [])
