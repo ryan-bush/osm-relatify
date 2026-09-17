@@ -116,6 +116,12 @@ _STATUS_AFTER_RE = re.compile(r'in (-?\d+) seconds')
 # slots of its own.
 _MAX_SLOT_WAIT = 20.0
 
+# How long to spend reaching an instance before it counts as unreachable. A handshake
+# with a machine that is there takes a fraction of a second, and the transport tries
+# each address a few times over, so this is the length of a hang rather than of a
+# connection worth waiting for.
+_CONNECT_TIMEOUT = 5.0
+
 
 async def slot_wait(url: str) -> float | None:
     """
@@ -142,8 +148,58 @@ async def slot_wait(url: str) -> float | None:
     return max(0.0, float(min(waits))) if waits else None
 
 
+def describe_transport_error(error: BaseException) -> str:
+    """
+    What actually went wrong underneath an httpx error, in as few words as it takes.
+
+    httpx says the same thing whatever the reason - "All connection attempts failed"
+    covers a name that would not resolve, a machine that refused the connection and a
+    network that has gone away - and the reason is what says whether to look at the
+    instance or at the connection here. It is the far end of the __cause__ chain, or the
+    ends of all of them when the addresses failed for different reasons.
+    """
+    reasons: list[str] = []
+    seen: set[int] = set()
+
+    def walk(e: BaseException | None, depth: int = 0) -> None:
+        if e is None or id(e) in seen or depth > 10:
+            return
+
+        seen.add(id(e))
+
+        if isinstance(e, BaseExceptionGroup):
+            for sub in e.exceptions:
+                walk(sub, depth + 1)
+            return
+
+        deeper = e.__cause__ or e.__context__
+        if deeper is not None:
+            walk(deeper, depth + 1)
+            return
+
+        # A timeout ends in the cancellation that enforced it, which describes the
+        # machinery rather than what happened; the httpx error itself says it better.
+        if isinstance(e, asyncio.CancelledError):
+            return
+
+        # the end of the chain: the OSError the operating system raised
+        reason = f'{type(e).__name__}: {e}' if str(e) else type(e).__name__
+        if reason not in reasons:
+            reasons.append(reason)
+
+    walk(error)
+
+    if reasons:
+        return ', '.join(reasons)
+
+    return f'{type(error).__name__}: {error}' if str(error) else type(error).__name__
+
+
 async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
     last_error: Exception | None = None
+    # whether any instance answered at all, whatever it said: none did points at the
+    # connection here rather than at instances that are merely busy
+    answered = False
     # the least far behind of the instances that answered but are too old to use
     stale: tuple[float, str] | None = None
 
@@ -154,11 +210,20 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
             wait_for_slot: float | None = None
 
             try:
-                r = await HTTP.post(url, data={'data': query}, timeout=query_timeout * 2)
+                # the query's own allowance covers reading the answer; reaching the
+                # machine at all is quick or not happening, and a connect left to the
+                # allowance of a large download would hang on it for minutes
+                r = await HTTP.post(
+                    url,
+                    data={'data': query},
+                    timeout=httpx.Timeout(query_timeout * 2, connect=_CONNECT_TIMEOUT),
+                )
             except httpx.HTTPError as e:
                 last_error = e
-                print(f'[OVERPASS] ⚠️ {url} unreachable (attempt {attempt}): {e!r}')
+                print(f'[OVERPASS] ⚠️ {url} unreachable (attempt {attempt}): {describe_transport_error(e)}')
             else:
+                answered = True
+
                 if r.status_code in _RETRY_STATUS_CODES:
                     last_error = httpx.HTTPStatusError(
                         f'{url} returned {r.status_code}', request=r.request, response=r
@@ -211,6 +276,13 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
             f'{_describe_age(stale[0])} behind. Editing from data that old would recreate stops '
             'that already exist, so please try again later.',
         )
+
+    if not answered:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            'Could not reach any Overpass instance. None of them answered at all, which is '
+            'usually this connection rather than Overpass - check the network and try again.',
+        ) from last_error
 
     raise HTTPException(
         status.HTTP_503_SERVICE_UNAVAILABLE,
