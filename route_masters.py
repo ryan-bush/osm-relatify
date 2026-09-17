@@ -8,7 +8,7 @@ from models.route_master import RouteMaster, RouteMasterRoute, RouteMasterView
 from placeholder_ids import RelationPlaceholders
 from route_types import get_route_type
 from tag_editing import apply_tag_changes, normalize_tags, validate_tag
-from utils import ensure_list
+from utils import ensure_list, overpass_settings
 
 # a route master collects every variant of one line; anything else is not one
 ROUTE_MASTER_TYPE = 'route_master'
@@ -47,8 +47,8 @@ def build_route_master_candidates_query(
     filters = f'["type"="route"]["route"="{escape_overpass_value(route_value)}"]["ref"="{escape_overpass_value(ref)}"]'
 
     return (
-        f'[out:json][timeout:{timeout}];'
-        f'rel{filters}({bounds})->.r;'
+        overpass_settings(timeout, 128)
+        + f'rel{filters}({bounds})->.r;'
         f'rel(br.r)["type"="{ROUTE_MASTER_TYPE}"];'
         f'out meta;'
     )

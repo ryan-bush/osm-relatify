@@ -15,26 +15,6 @@ from utils import ensure_list
 STOP_AREA_TAGS = {'type': 'public_transport', 'public_transport': 'stop_area'}
 
 
-def build_stop_areas_query(node_ids: Iterable[int], way_ids: Iterable[int], timeout: int) -> str:
-    """Overpass query for the stop_area relations the given stops already belong to."""
-    node_ids = tuple(sorted(set(node_ids)))
-    way_ids = tuple(sorted(set(way_ids)))
-
-    filters = '["type"="public_transport"]["public_transport"="stop_area"]'
-    parts = []
-
-    # an empty id list is a syntax error, so each kind is only asked for when there is one
-    if node_ids:
-        parts.append(f'node(id:{",".join(map(str, node_ids))})->.n;rel(bn.n){filters};')
-    if way_ids:
-        parts.append(f'way(id:{",".join(map(str, way_ids))})->.w;rel(bw.w){filters};')
-
-    if not parts:
-        return ''
-
-    return f'[out:json][timeout:{timeout}];(' + ''.join(parts) + ');out meta;'
-
-
 def parse_stop_areas(elements: Iterable[dict]) -> list[StopArea]:
     """The stop_area relations an Overpass reply describes."""
     result = []

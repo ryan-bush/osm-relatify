@@ -31,8 +31,8 @@ from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopColl
 from models.route_master import RouteMaster
 from models.stop_area import StopArea
 from route_masters import build_route_master_candidates_query, parse_route_masters
-from stop_areas import build_stop_areas_query, parse_stop_areas
-from utils import HTTP
+from stop_areas import parse_stop_areas
+from utils import HTTP, overpass_settings
 from xmltodict_postprocessor import postprocessor
 
 # TODO: right hand side detection by querying roundabouts, and first/last bus stop
@@ -107,6 +107,41 @@ def _describe_age(age: float) -> str:
     return f'{age / 60:.0f} minutes'
 
 
+# A 429 means every query slot this instance gives an address is busy: a slot is held
+# for the length of the query that used it, so a fixed short backoff retries into the
+# same refusal. The status endpoint says when the next one frees up.
+_STATUS_FREE_RE = re.compile(r'(\d+)\s+slots? available now')
+_STATUS_AFTER_RE = re.compile(r'in (-?\d+) seconds')
+# Waiting longer than this for a slot is slower than asking the next instance, which has
+# slots of its own.
+_MAX_SLOT_WAIT = 20.0
+
+
+async def slot_wait(url: str) -> float | None:
+    """
+    How many seconds until this instance has a free query slot, or None when it cannot say.
+
+    0 means one is free already, which happens when the slot that refused the query has
+    since been given back.
+    """
+    status_url = url.removesuffix('/').removesuffix('interpreter') + 'status'
+
+    try:
+        r = await HTTP.get(status_url, timeout=10)
+        r.raise_for_status()
+    except httpx.HTTPError:
+        return None
+
+    text = r.text
+    # both lines appear together when some slots are free and others are not
+    free = _STATUS_FREE_RE.search(text)
+    if free is not None and int(free[1]) > 0:
+        return 0.0
+
+    waits = [int(m) for m in _STATUS_AFTER_RE.findall(text)]
+    return max(0.0, float(min(waits))) if waits else None
+
+
 async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
     last_error: Exception | None = None
     # the least far behind of the instances that answered but are too old to use
@@ -114,6 +149,10 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
 
     for url in OVERPASS_API_INTERPRETERS:
         for attempt in range(1, OVERPASS_API_ATTEMPTS + 1):
+            # how long this instance said to wait for a free slot, used in place of the
+            # backoff below once it has answered a 429
+            wait_for_slot: float | None = None
+
             try:
                 r = await HTTP.post(url, data={'data': query}, timeout=query_timeout * 2)
             except httpx.HTTPError as e:
@@ -125,6 +164,21 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                         f'{url} returned {r.status_code}', request=r.request, response=r
                     )
                     print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
+
+                    if r.status_code == 429:
+                        wait_for_slot = await slot_wait(url)
+
+                        # Another instance is quicker than sitting out a long query
+                        # someone else is running, and an instance that will not say is
+                        # no better than one that says too long.
+                        if wait_for_slot is None or wait_for_slot > _MAX_SLOT_WAIT:
+                            said = (
+                                'did not say when a slot frees up'
+                                if wait_for_slot is None
+                                else f'has no slot for another {wait_for_slot:.0f}s'
+                            )
+                            print(f'[OVERPASS] ⚠️ {url} {said}, trying another instance')
+                            break
 
                 elif (reported := reply_error(r)) is not None:
                     last_error = OverpassReplyError(f'{url} reported: {reported}')
@@ -146,7 +200,9 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                     break
 
             if attempt < OVERPASS_API_ATTEMPTS:
-                await asyncio.sleep(2 ** (attempt - 1))
+                # a second past the slot, so the retry does not race the release
+                delay = wait_for_slot + 1 if wait_for_slot is not None else 2 ** (attempt - 1)
+                await asyncio.sleep(delay)
 
     if stale is not None:
         raise HTTPException(
@@ -182,8 +238,20 @@ def split_by_count(elements: Iterable[dict]) -> list[list[dict]]:
     return result
 
 
+def download_maxsize_mib(cells: int) -> int:
+    """
+    How much memory an area download says it may need, for the number of areas it covers.
+
+    A cell is about a kilometre square, and one dense with roads and stops takes a few
+    tens of megabytes to work through. Asking for what the download plausibly needs
+    rather than the 512 MiB default gets it past a busy instance's admission check,
+    while still leaving room for a city centre.
+    """
+    return min(512, max(128, 32 * cells))
+
+
 def build_bb_query(relation_id: int, timeout: int) -> str:
-    return f'[out:json][timeout:{timeout}];rel({relation_id});way(r);out ids bb qt;'
+    return overpass_settings(timeout, 64) + f'rel({relation_id});way(r);out ids bb qt;'
 
 
 def build_query(
@@ -192,10 +260,12 @@ def build_query(
     timeout: int,
     route_type: str,
 ) -> str:
+    settings = overpass_settings(timeout, download_maxsize_mib(len(cell_bbs)))
+
     if route_type == 'bus':
         return (
-            f'[out:json][timeout:{timeout}];'
-            f'(' + ''.join(f'way[highway][!footway]({bb});' for bb in cell_bbs) + ');'
+            settings
+            + '(' + ''.join(f'way[highway][!footway]({bb});' for bb in cell_bbs) + ');'
             'out body qt;'
             'out count;'
             '>;'
@@ -237,8 +307,8 @@ def build_query(
 
     if route_type == 'tram':
         return (
-            f'[out:json][timeout:{timeout}];'
-            f'(' + ''.join(f'way[railway=tram]({bb});' for bb in cell_bbs) + ');'
+            settings
+            + '(' + ''.join(f'way[railway=tram]({bb});' for bb in cell_bbs) + ');'
             'out body qt;'
             'out count;'
             '>;'
@@ -282,8 +352,8 @@ def build_parents_query(way_ids: Iterable[int], timeout: int) -> str:
         return f'way({way_id});(rel(bw);.r;)->.r;'
 
     return (
-        f'[out:xml][timeout:{timeout}];'
-        f'._->.r;' + ''.join(_parents(way_id) for way_id in way_ids) + '.r out meta qt;'
+        overpass_settings(timeout, 128, out='xml')
+        + '._->.r;' + ''.join(_parents(way_id) for way_id in way_ids) + '.r out meta qt;'
         'way(r.r);'
         'out skel qt;'
     )
@@ -540,6 +610,34 @@ def organize_ways(ways: list[dict], turn_in_place_nodes: set[int]) -> tuple[list
     return split_ways, connected_ways_map, id_map
 
 
+def existing_stop_areas(
+    relations: Iterable[dict],
+    collections: Iterable[FetchRelationBusStopCollection],
+) -> list[StopArea]:
+    """
+    The stop areas the downloaded stops are already in, so none of them is duplicated.
+
+    Read out of the download itself: it already asks for every stop_area relation in the
+    area, to name the stops that take their name from one. Asking Overpass a second time
+    told us no more than this does, and each query is another chance of being turned away
+    by a busy instance.
+    """
+    stop_keys = {stop.nice_id for c in collections for stop in (c.platform, c.stop) if stop is not None}
+
+    result = []
+    seen: set[int] = set()
+
+    # the same relation comes back once per area it reaches into
+    for area in parse_stop_areas(relations):
+        if area.id in seen or not any(member in stop_keys for member in area.members):
+            continue
+
+        seen.add(area.id)
+        result.append(area)
+
+    return result
+
+
 def preprocess_elements(elements: Iterable[dict]) -> tuple[dict, ...]:
     # deduplicate by type/id
     result: tuple[dict, ...] = tuple({(e['type'], e['id']): e for e in elements}.values())
@@ -641,7 +739,11 @@ class Overpass:
         session: str,  # cache busting  # noqa: ARG002
         query: str,
         http_timeout: float,
+        describe: str,
     ) -> list[list[dict]]:
+        # here rather than at the call site, so an area already downloaded in this
+        # session says nothing: it is answered from the cache without asking Overpass
+        print(f'[OVERPASS] {describe}')
         r = await overpass_post(query, http_timeout)
         elements: list[dict] = r.json()['elements']
         return split_by_count(elements)
@@ -667,11 +769,18 @@ class Overpass:
             cell_bbs, cell_bbs_expand = cell_bbs_t
             all_bbs.extend(cell_bbs)
 
-            print(f'[OVERPASS] Downloading {len(cell_bbs)} cells for relation {relation_id}')
-
-            timeout = 180
+            # A cell is about a kilometre square and takes seconds to answer, so the
+            # allowance grows with the area rather than always claiming the three
+            # minutes the largest download might want. A busy instance weighs what a
+            # query asks for when deciding whether to run it at all.
+            timeout = min(180, 30 + 15 * len(cell_bbs))
             query = build_query(cell_bbs, cell_bbs_expand, timeout, route_type)
-            elements_split = await self._query_relation_history_post(download_hist.session, query, timeout)
+            elements_split = await self._query_relation_history_post(
+                download_hist.session,
+                query,
+                timeout,
+                f'Downloading {len(cell_bbs)} cells for relation {relation_id}',
+            )
 
             if all_elements_split is None:
                 all_elements_split = elements_split
@@ -808,21 +917,12 @@ class Overpass:
         bus_stop_collections = build_bus_stop_collections(stops, headings)
         bus_stop_collections = tuple(c for c in bus_stop_collections if bbc.contains(c.best.latLng))
 
+        stop_areas = existing_stop_areas(stop_area_relations, bus_stop_collections)
+
         global_bb = BoundingBox(*bbc.idx.bounds)
         download_triggers = get_download_triggers(bbc, union_grid_cells, ways)
 
-        return global_bb, download_hist, download_triggers, ways, id_map, bus_stop_collections
-
-    @cached(TTLCache(maxsize=128, ttl=60))
-    async def query_stop_areas(self, node_ids: frozenset[int], way_ids: frozenset[int]) -> list[StopArea]:
-        """The stop_area relations the given stops are already in, so none is duplicated."""
-        timeout = 30
-        query = build_stop_areas_query(node_ids, way_ids, timeout)
-        if not query:
-            return []
-
-        r = await overpass_post(query, timeout)
-        return parse_stop_areas(r.json().get('elements', ()))
+        return global_bb, download_hist, download_triggers, ways, id_map, bus_stop_collections, stop_areas
 
     @cached(TTLCache(maxsize=1024, ttl=24 * 3600))
     async def query_driving_side(self, lat: float, lon: float) -> DrivingSide | None:

@@ -38,7 +38,7 @@ from cython_lib.route import calc_bus_route
 from deflate_middleware import DeflateRoute
 from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
-from models.element_id import ElementId, split_element_id
+from models.element_id import ElementId
 from models.fetch_relation import (
     FetchRelation,
     FetchRelationBusStopCollection,
@@ -49,7 +49,6 @@ from models.fetch_relation import (
 )
 from models.final_route import FinalRoute, WarningSeverity
 from models.route_master import RouteMaster
-from models.stop_area import StopArea
 from naptan import NAPTAN, Roads
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
@@ -271,7 +270,15 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
             if route_type is None:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Relation must be a PTv2 bus/tram/trolleybus route')
 
-        bounds, download_hist, download_triggers, ways, id_map, bus_stop_collections = await _OVERPASS.query_relation(
+        (
+            bounds,
+            download_hist,
+            download_triggers,
+            ways,
+            id_map,
+            bus_stop_collections,
+            stop_areas,
+        ) = await _OVERPASS.query_relation(
             relation_id=model.relationId,
             download_hist=download_hist,
             download_targets=download_targets,
@@ -297,17 +304,20 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         naptan_tags = matches.tag_suggestions
         naptan_matched = matches.matched
 
-    with print_run_time('Finding existing stop areas'):
-        stop_areas = await _query_stop_areas(bus_stop_collections)
-
     with print_run_time('Finding route masters'):
         route_masters, route_master_candidates = await _query_route_masters(
             model.relationId, relation_tags, bounds
         )
 
     with print_run_time('Finding the driving side'):
-        # NaPTAN only covers Great Britain, where traffic keeps left
-        driving_side = await _query_driving_side(bounds) or ('left' if naptan_stops or naptan_matched else None)
+        # A further download of the same route is the same country, and the client keeps
+        # what the first answer said, so this is asked once per route rather than once
+        # per area panned into.
+        if len(download_hist.history) > 1:
+            driving_side = None
+        else:
+            # NaPTAN only covers Great Britain, where traffic keeps left
+            driving_side = await _query_driving_side(bounds) or ('left' if naptan_stops or naptan_matched else None)
 
     return FetchRelation(
         fetchMerge=len(download_hist.history) > 1 or model.reload,
@@ -339,32 +349,6 @@ async def _query_driving_side(bounds: BoundingBox) -> str | None:
     except Exception as e:
         # the mapper can still say which side, and the route is worked out regardless
         print(f'🚧 Warning: Could not look up the driving side: {e!r}')
-        return None
-
-
-async def _query_stop_areas(bus_stop_collections) -> list[StopArea] | None:
-    """
-    The stop areas the downloaded stops already belong to.
-
-    None when Overpass could not say, which is not the same as there being none: an empty
-    list is what invites the mapper to create one, and doing that unknowingly would put a
-    second relation beside the one the stops are already in.
-    """
-    node_ids: set[int] = set()
-    way_ids: set[int] = set()
-
-    for collection in bus_stop_collections:
-        for stop in (collection.platform, collection.stop):
-            if stop is None:
-                continue
-            target = node_ids if stop.type == 'node' else way_ids
-            target.add(split_element_id(stop.id).id)
-
-    try:
-        return await _OVERPASS.query_stop_areas(frozenset(node_ids), frozenset(way_ids))
-    except Exception as e:
-        # the download still works without them, and the client stops offering stop areas
-        print(f'🚧 Warning: Could not look up stop areas: {e!r}')
         return None
 
 
