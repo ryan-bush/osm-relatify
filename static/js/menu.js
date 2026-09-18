@@ -774,6 +774,19 @@ function stopAreaLetter(area) {
     return summaryLink("stop-info-area", title, `https://www.openstreetmap.org/relation/${area.id}`, "A")
 }
 
+const ZOOM_ICON = `
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.5"/>
+        <line x1="15.5" y1="15.5" x2="21" y2="21"/>
+    </svg>`
+
+// The summary is where a stop on the wrong side of the road is spotted, and the map
+// behind the menu is already showing the route - so the check is one click away.
+const zoomButton = () =>
+    `<button type="button" class="stop-info-zoom btn btn-link p-0 border-0 align-baseline"
+        title="Zoom the map to this stop">${ZOOM_ICON}</button>`
+
 function naptanLetter(code) {
     if (code === null) return ""
 
@@ -818,10 +831,17 @@ export const processRouteStops = (data) => {
                         : ""
                 }<!--
                 -->${stopAreaLetter(area)}<!--
-                -->${naptanLetter(naptan)}
+                -->${naptanLetter(naptan)}<!--
+                -->${zoomButton()}
             </div>
         </div>`),
         )
+
+        const latLng = collection.platform?.latLng ?? collection.stop?.latLng
+
+        const zoomBtn = routeSummary.lastElementChild.querySelector(".stop-info-zoom")
+        if (latLng) zoomBtn.onclick = () => map.setView(latLng, 19)
+        else zoomBtn.remove()
     }
 
     const allItems = Array.from(
@@ -833,7 +853,7 @@ export const processRouteStops = (data) => {
         outerItem.onclick = (e) => {
             e.stopPropagation()
 
-            if (e.target.tagName === "A") return
+            if (e.target.closest("a, .stop-info-zoom")) return
 
             for (const [index, item] of allItems.entries()) {
                 if (index <= outerIndex) {
