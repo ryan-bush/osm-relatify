@@ -481,6 +481,17 @@
   border-bottom: 1px solid #ccc;
 }
 
+/* An instance behind the latest release says so where the version already sits, in the
+   navbar, rather than in a banner someone has to close. */
+#app-version.app-version-outdated {
+  color: #842029;
+  background: #f8d7da;
+  border-radius: 3px;
+  padding-left: .5em;
+  padding-right: .5em;
+  font-weight: 600;
+}
+
 .navbar-brand-sub {
   font-size: 0.7em;
   color: #333;

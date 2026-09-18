@@ -47,6 +47,16 @@
                         Bug report
                     </a>
                 </li>
+                {% if app_version %}
+                <li class="nav-item d-none d-lg-inline">
+                    <span class="nav-link px-0">・</span>
+                </li>
+                <li class="nav-item">
+                    <a id="app-version" class="nav-link"
+                        href="https://github.com/ryan-bush/osm-relatify/releases" target="_blank"
+                        title="Running version {{ app_version }}">{{ app_version }}</a>
+                </li>
+                {% endif %}
             </ul>
         </div>
 
