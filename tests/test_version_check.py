@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import version_check
-from config import APP_VERSION, CREATED_BY, make_created_by
+from config import APP_VERSION, CREATED_BY, USER_AGENT, make_created_by, make_user_agent
 from main import app
 
 # no context manager: the lifespan's NaPTAN download has nothing to do with this
@@ -47,6 +47,25 @@ def test_a_changeset_stamp_leaves_out_what_it_does_not_know():
     assert make_created_by('1.1.0', '') == 'Relatify 1.1.0'
     assert make_created_by('', 'ff422gu') == 'Relatify #ff422gu'
     assert make_created_by('', '') == 'Relatify'
+
+
+# a server log and a changeset name the same release and the same build
+def test_the_user_agent_carries_the_release_and_the_build():
+    assert (
+        make_user_agent('1.1.0', 'ff422gu', 'https://example.test')
+        == 'Relatify/1.1.0 #ff422gu (+https://example.test)'
+    )
+
+
+def test_a_user_agent_leaves_out_what_it_does_not_know():
+    assert make_user_agent('1.1.0', '', 'https://example.test') == 'Relatify/1.1.0 (+https://example.test)'
+    assert make_user_agent('', 'ff422gu', 'https://example.test') == 'Relatify #ff422gu (+https://example.test)'
+
+
+# OSM asks for a contact address in the user agent, whatever else is known
+def test_the_running_user_agent_points_somewhere():
+    assert USER_AGENT.startswith('Relatify')
+    assert '(+http' in USER_AGENT
 
 
 def test_the_running_stamp_names_the_running_version():

@@ -62,11 +62,21 @@ def make_created_by(version: str, revision: str) -> str:
     return ' '.join(filter(None, ('Relatify', version, f'#{revision}' if revision else '')))
 
 
-CREATED_BY = make_created_by(APP_VERSION, GIT_REVISION)
+def make_user_agent(version: str, revision: str, website: str) -> str:
+    """
+    What Overpass and OSM see: "Relatify/1.1.0 #ff422gu (+https://github.com/...)".
 
-# the user agent keeps the bare revision: it is what identifies a build to Overpass and
-# OSM when one misbehaves, which a release number is too coarse to pin down
-USER_AGENT = f'osm-relatify/{VERSION} (+{WEBSITE})'
+    The same release and build as the changeset stamp, spelled the way a user agent is:
+    an operator reading a server log and an operator reading a changeset are looking at
+    the same two identifiers.
+    """
+    product = f'Relatify/{version}' if version else 'Relatify'
+    parts = (product, f'#{revision}' if revision else '', f'(+{website})')
+    return ' '.join(filter(None, parts))
+
+
+CREATED_BY = make_created_by(APP_VERSION, GIT_REVISION)
+USER_AGENT = make_user_agent(APP_VERSION, GIT_REVISION, WEBSITE)
 
 TEST_ENV = os.getenv('TEST_ENV', '0').strip().lower() in ('1', 'true', 'yes')
 if TEST_ENV:
