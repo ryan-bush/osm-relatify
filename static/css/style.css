@@ -333,6 +333,99 @@
   background-color: #f8d7da;
 }
 
+#edit-route-master {
+  background: #f2f2f2;
+  padding: 6px 6px 6px 10px;
+  border-radius: 5px;
+  font-size: .875em;
+}
+
+.route-master-title {
+  font-weight: 600;
+}
+
+.route-master-heading {
+  margin-top: .25em;
+}
+
+.route-master-id {
+  color: #666;
+}
+
+.route-master-note {
+  color: #444;
+}
+
+.route-master-note::before {
+  content: "🛈 ";
+}
+
+.route-master-routes {
+  margin: .25em 0 0;
+  padding-left: 1.25em;
+}
+
+.route-master-route-current {
+  font-weight: 600;
+}
+
+.master-name {
+  font-weight: 600;
+  margin-bottom: .25em;
+}
+
+.master-route {
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 6px 8px;
+  margin-bottom: .5em;
+  font-size: .875em;
+}
+
+.master-route-done {
+  background: #f2f2f2;
+}
+
+.master-route-name {
+  font-weight: 600;
+}
+
+.master-route-ends {
+  color: #444;
+}
+
+.master-route-actions {
+  display: flex;
+  gap: .75em;
+  align-items: center;
+  margin-top: .35em;
+}
+
+.master-route-id {
+  color: #666;
+}
+
+.route-master-block:not(:first-of-type) {
+  margin-top: .5em;
+  padding-top: .5em;
+  border-top: 1px solid #ddd;
+}
+
+.route-master-pending {
+  border-top-style: dashed;
+}
+
+.route-master-actions {
+  display: flex;
+  gap: .75em;
+  align-items: center;
+  margin-top: .25em;
+}
+
+.route-master-actions .form-select {
+  margin-bottom: .25em;
+}
+
 .warning {
   background: #f2f2f2;
   padding: 6px 6px 6px 10px;
@@ -388,14 +481,20 @@
   border-bottom: 1px solid #ccc;
 }
 
+/* An instance behind the latest release says so where the version already sits, in the
+   navbar, rather than in a banner someone has to close. */
+#app-version.app-version-outdated {
+  color: #842029;
+  background: #f8d7da;
+  border-radius: 3px;
+  padding-left: .5em;
+  padding-right: .5em;
+  font-weight: 600;
+}
+
 .navbar-brand-sub {
   font-size: 0.7em;
   color: #333;
-}
-
-.repo-stars {
-  position: relative;
-  top: -1px;
 }
 
 #licenses-modal tbody pre {
@@ -445,6 +544,25 @@
 
 .route-summary-item .stop-info-stop {
   color: #2a2;
+}
+
+.route-summary-item .stop-info-area {
+  color: #a52;
+}
+
+.route-summary-item .stop-info-naptan {
+  color: #726;
+}
+
+.route-summary-item .stop-info-zoom {
+  color: #555;
+  line-height: 1;
+  margin-left: .25em;
+  vertical-align: -.15em;
+}
+
+.route-summary-item .stop-info-zoom:hover {
+  color: #000;
 }
 
 .digit {
@@ -560,4 +678,14 @@
 
 .icon.bus-stop img {
   width: 100%;
+}
+
+.travel-marker {
+  color: #7b2ff7;
+  filter: drop-shadow(0 0 1px white) drop-shadow(0 0 1px white);
+}
+
+.travel-either {
+  font-size: 1.25rem;
+  line-height: 24px;
 }

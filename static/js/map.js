@@ -123,8 +123,13 @@ class DownloadBar extends L.Control {
 
 new DownloadBar({ position: "bottomright" }).addTo(map)
 
-export const showDownloadBar = () => {
-    document.getElementById("download-bar").classList.remove("d-none")
+// The bar over the map, which is the one place a wait is visible wherever it started:
+// panning to grow the area, or loading a relation from the menu or a route master's list.
+export const showDownloadBar = (message = "Downloading map data...") => {
+    const bar = document.getElementById("download-bar")
+
+    bar.querySelector("p").textContent = message
+    bar.classList.remove("d-none")
 }
 
 export const hideDownloadBar = () => {

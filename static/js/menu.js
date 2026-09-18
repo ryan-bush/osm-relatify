@@ -1,8 +1,9 @@
-import { busStopData, processBusStopData, undecidedDisagreementStops } from "./busStopsLayer.js"
+import { busStopData, processBusStopData, stopSummary, undecidedDisagreementStops } from "./busStopsLayer.js"
 import { isNewStop, newStopCount, newStopsPayload } from "./busStopsNew.js"
 import {
     completedStopAreaCount,
     newStopAreaCount,
+    noteUploadedStopAreas,
     stopAreaCount,
     stopAreasKnown,
     stopAreasPayload,
@@ -13,29 +14,53 @@ import {
     downloadHistoryData,
     processRelationDownloadTriggers,
 } from "./downloadTriggers.js"
-import { map } from "./map.js"
+import {
+    markRouteUploaded,
+    renderMasterPicker,
+    routeMasterTagsEdited,
+    routeMasterTagsPayload,
+    routeMasterViewId,
+    setRouteEditHandler,
+    setRouteMasterView,
+} from "./masterPicker.js"
+import { hideDownloadBar, map, showDownloadBar } from "./map.js"
+import {
+    detachingRouteMasters,
+    pendingRouteMaster,
+    routeMasterChangeCount,
+    routeMasterPayload,
+} from "./routeMasters.js"
+import {
+    noteRouteTags,
+    processRouteMasters,
+    setRouteMasterChangeHandler,
+    setRouteNavigationHandlers,
+} from "./routeMastersView.js"
 import { showMessage } from "./messageBox.js"
 import {
     processRelationTags,
     relationTags,
     relationTagsOriginal,
     setRecalcHandler,
+    setTagsChangedHandler,
     unloadRelationTags,
-} from "./tagEditor.js"
+} from "./relationTagEditor.js"
 import {
     createElementFromHTML,
     deflateCompress,
+    escapeHtml,
     getBusCollectionName,
     osmIsLive,
     osmUrl,
 } from "./utils.js"
+import { processDrivingSide } from "./drivingSide.js"
 import { processRelationEndpointData } from "./waysEndpoint.js"
 import {
     processRelationWaysData,
     removeMembersList,
     waysData,
 } from "./waysLayer.js"
-import { requestCalcBusRoute, routeData } from "./waysRoute.js"
+import { clearRouteData, requestCalcBusRoute, routeData } from "./waysRoute.js"
 
 const busAnimationElement = document.getElementById("bus-animation")
 const loadRelationForm = document.getElementById("load-relation-form")
@@ -71,10 +96,28 @@ export let isCreating = false
 // is on every /query, not just the first
 export let newRouteType = null
 
-// tagEditor.js cannot import the route module directly without closing an import cycle,
+// relationTagEditor.js cannot import the route module directly without closing an import cycle,
 // so the dependency is registered from here instead. The call is wrapped rather than
 // passed by reference so the binding is only read once the modules have finished loading.
 setRecalcHandler(() => requestCalcBusRoute())
+
+// A route master queued or undone is a change to the changeset without being a change to
+// the route, so the warnings are rebuilt from the calculation already in hand rather than
+// asking for another one.
+// a route's siblings are found by its ref, so an edit to it makes whatever was found for
+// the old one no longer an answer; looking again is the mapper's to ask for
+setTagsChangedHandler((tags) => noteRouteTags(tags))
+
+// a variant listed beside the route being edited is as often the next thing to edit as
+// it is something to go and look at
+setRouteNavigationHandlers({
+    editRoute: (id) => editRoute(id),
+    showMaster: (id) => showMaster(id),
+})
+
+setRouteMasterChangeHandler(() => {
+    if (routeData !== null) processRouteWarnings(routeData)
+})
 
 let activeView = "load"
 
@@ -114,22 +157,18 @@ relationIdInput.addEventListener("input", (e) => {
     e.target.value = match !== null ? match[0] : ""
 })
 
-loadRelationForm.addEventListener("submit", (e) => {
-    e.preventDefault()
-
-    if (loadRelationBtn.classList.contains("is-loading")) return
-
-    relationId = Number.parseInt(relationIdInput.value)
-    relationIdInput.disabled = true
-    loadRelationBtn.classList.add("btn-secondary")
-    loadRelationBtn.classList.add("is-loading")
-    loadRelationBtn.innerHTML = busAnimationElement.innerHTML
-
+// Loads a relation by id. A route is opened for editing; a route master is not the thing
+// that gets edited, so its variants are listed for one to be picked instead.
+const loadRelation = (id, setBusy) => {
+    relationId = id
     isCreating = false
     newRouteType = null
     showRelationIdentity()
+    setBusy(true)
+    // a download takes seconds, and the button that started it is not always in view
+    showDownloadBar(`Loading relation #${id}...`)
 
-    fetch("/query", {
+    return fetch("/query", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -153,6 +192,16 @@ loadRelationForm.addEventListener("submit", (e) => {
         .then((data) => {
             if (!data) return
 
+            if (data.kind === "route_master") {
+                // nothing is loaded for a master itself, so the id it was given is not
+                // the relation being edited
+                relationId = null
+                showRelationIdentity()
+                setRouteMasterView(data)
+                showMasterPicker()
+                return
+            }
+
             processFetchRelationData(data)
         })
         .catch((error) => {
@@ -160,12 +209,63 @@ loadRelationForm.addEventListener("submit", (e) => {
             showMessage("danger", "❌ Relation load failed", error)
         })
         .finally(() => {
-            relationIdInput.disabled = false
-            loadRelationBtn.classList.remove("btn-secondary")
-            loadRelationBtn.classList.remove("is-loading")
-            loadRelationBtn.innerHTML = "Load"
+            hideDownloadBar()
+            setBusy(false)
         })
+}
+
+const setLoadButtonBusy = (busy) => {
+    relationIdInput.disabled = busy
+    loadRelationBtn.classList.toggle("btn-secondary", busy)
+    loadRelationBtn.classList.toggle("is-loading", busy)
+    loadRelationBtn.innerHTML = busy ? busAnimationElement.innerHTML : "Load"
+}
+
+loadRelationForm.addEventListener("submit", (e) => {
+    e.preventDefault()
+
+    if (loadRelationBtn.classList.contains("is-loading")) return
+
+    loadRelation(Number.parseInt(relationIdInput.value), setLoadButtonBusy)
 })
+
+const showMasterPicker = () => {
+    renderMasterPicker()
+    switchView("master")
+}
+
+// Everything queued for the route being edited, which leaving it would throw away. The
+// picker makes hopping between variants easy, and losing an afternoon's work to a stray
+// click with it.
+const hasPendingChanges = () =>
+    newStopCount() > 0 ||
+    stopPositionCount() > 0 ||
+    tagChangeCount() > 0 ||
+    stopAreaCount() > 0 ||
+    routeMasterChangeCount() > 0 ||
+    relationTagsEdited() ||
+    routeMembersEdited()
+
+const relationTagsEdited = () => {
+    if (relationTags === null || relationTagsOriginal === null) return false
+
+    const keys = new Set([...Object.keys(relationTags), ...Object.keys(relationTagsOriginal)])
+    return [...keys].some((key) => (relationTags[key] ?? "") !== (relationTagsOriginal[key] ?? ""))
+}
+
+// The calculation says so itself: a route whose members match the relation warns that
+// nothing about it changed, and one that has been edited does not.
+const routeMembersEdited = () => {
+    if (routeData === null) return false
+    if (isCreating) return true
+
+    return !routeData.warnings.some((warning) => warning.severity === 10)
+}
+
+const confirmLeavingRoute = () =>
+    !hasPendingChanges() ||
+    window.confirm("This route has changes that have not been uploaded. Leave and lose them?")
+
 
 createRelationForm.addEventListener("submit", (e) => {
     e.preventDefault()
@@ -184,6 +284,7 @@ createRelationForm.addEventListener("submit", (e) => {
     createRelationBtn.classList.add("is-loading")
     const defaultInnerText = createRelationBtn.innerText
     createRelationBtn.innerText = "Creating..."
+    showDownloadBar("Downloading map data...")
 
     fetch("/query", {
         method: "POST",
@@ -234,6 +335,7 @@ createRelationForm.addEventListener("submit", (e) => {
             showMessage("danger", "❌ Could not start a new relation", error)
         })
         .finally(() => {
+            hideDownloadBar()
             createRouteType.disabled = false
             createRelationBtn.classList.remove("is-loading")
             createRelationBtn.innerText = defaultInnerText
@@ -245,12 +347,14 @@ export const processFetchRelationData = (data) => {
     switchView("edit")
 
     // order is important here
+    processDrivingSide(data)
     processRelationEndpointData(data)
     processRelationWaysData(data)
 
     // order is not important here
     processRelationDownloadTriggers(data)
     processBusStopData(data)
+    processRouteMasters(data, { relationId, isCreating })
 }
 
 export const processRouteWarnings = (data) => {
@@ -262,8 +366,10 @@ export const processRouteWarnings = (data) => {
     let highestSeverityLevel = 0
 
     for (const warning of data.warnings) {
-        // the relation is untouched, but the changeset still has stop tags to add
-        if (warning.severity === 10 && (tagChangeCount() > 0 || stopAreaCount() > 0)) continue
+        // the relation is untouched, but the changeset still has stop tags to add, or a
+        // route master to put it in
+        if (warning.severity === 10 && (tagChangeCount() > 0 || stopAreaCount() > 0 || routeMasterChangeCount() > 0))
+            continue
 
         const severityLevel = warning.severity
         const severityText = {
@@ -387,22 +493,158 @@ export const processRouteWarnings = (data) => {
     if (highestSeverityLevel === 0) editSubmitBtn.classList.remove("d-none")
 }
 
-const unload = () => {
-    switchView("load")
-
+// Everything belonging to the route being edited. The master it was picked from is not
+// part of that: going back to the list is not leaving it.
+const unloadRoute = () => {
+    processDrivingSide(null)
     processRelationEndpointData(null)
     processRelationWaysData(null)
     processRelationDownloadTriggers(null)
     processBusStopData(null)
+    processRouteMasters(null)
     unloadRelationTags()
     submitComment.value = ""
 
     relationId = null
     isCreating = false
     newRouteType = null
+    clearRouteData()
 }
 
-editBackBtn.onclick = unload
+const unload = () => {
+    unloadRoute()
+    setRouteMasterView(null)
+    switchView("load")
+}
+
+editBackBtn.onclick = () => {
+    if (!confirmLeavingRoute()) return
+
+    // back where the route was picked, when it was picked rather than typed in
+    if (routeMasterViewId() !== null) {
+        unloadRoute()
+        showMasterPicker()
+        return
+    }
+
+    unload()
+}
+
+const masterBackBtn = document.querySelector("#view-master .btn-master-back")
+const masterReloadBtn = document.querySelector("#view-master .btn-master-reload")
+
+masterBackBtn.onclick = () => {
+    if (!confirmLeavingMaster()) return
+
+    setRouteMasterView(null)
+    unload()
+}
+
+const masterComment = document.getElementById("master-comment")
+const masterUploadBtn = document.getElementById("master-upload")
+const masterDownloadBtn = document.getElementById("master-download")
+
+const confirmLeavingMaster = () =>
+    !routeMasterTagsEdited() ||
+    window.confirm("This route master has tag changes that have not been uploaded. Leave and lose them?")
+
+// The master's own tags go up as a changeset of their own: edited from the list of a
+// line's variants, there is no route being edited to carry them along.
+const sendRouteMasterTags = (path, onDone) => {
+    const payload = routeMasterTagsPayload()
+    if (payload === null) return
+
+    masterUploadBtn.disabled = true
+    masterDownloadBtn.disabled = true
+
+    fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, comment: masterComment.value }),
+    })
+        .then(async (resp) => {
+            if (!resp.ok) {
+                showMessage("danger", `❌ Upload failed - ${resp.status}`, await resp.text())
+                return
+            }
+
+            return onDone(resp)
+        })
+        .catch((error) => {
+            console.error(error)
+            showMessage("danger", "❌ Upload failed", error)
+        })
+        .finally(() => {
+            masterUploadBtn.disabled = false
+            masterDownloadBtn.disabled = false
+        })
+}
+
+masterUploadBtn.onclick = () =>
+    sendRouteMasterTags("/upload_route_master", async (resp) => {
+        const data = await resp.json()
+
+        if (!data.ok) {
+            showMessage("danger", `❌ Upload failed - ${data.error_code}`, data.error_message)
+            return
+        }
+
+        showMessage(
+            "success",
+            "✅ Upload successful",
+            `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.`,
+        )
+
+        // loaded again so the list shows what was just uploaded, not what it replaced
+        masterComment.value = ""
+        masterReloadBtn.click()
+    })
+
+masterDownloadBtn.onclick = () =>
+    sendRouteMasterTags("/download_route_master_change", async (resp) => {
+        const a = document.createElement("a")
+        a.href = URL.createObjectURL(await resp.blob())
+        a.download = `relatify_master_${routeMasterViewId()}_${new Date().toISOString().replace(/:/g, "_")}.osc`
+        a.click()
+    })
+
+masterReloadBtn.onclick = () => {
+    const id = routeMasterViewId()
+    if (id === null) return
+
+    loadRelation(id, (busy) => {
+        masterBackBtn.disabled = busy
+        masterReloadBtn.disabled = busy
+        masterReloadBtn.innerText = busy ? "Reloading..." : "↻ Reload"
+    })
+}
+
+// picking a variant loads it the way any route is loaded
+setRouteEditHandler((id) => editRoute(id))
+
+// Loading one relation in place of another, from wherever it was named: a variant picked
+// out of the master's list, one listed beside the route being edited, or the master of
+// the route being edited.
+// the placeholder ids of the stops and stop positions this upload creates
+const createdPlaceholders = () =>
+    new Set([...newStopsPayload(), ...stopPositionsPayload()].map((element) => element.id))
+
+function editRoute(id) {
+    if (!confirmLeavingRoute() || !confirmLeavingMaster()) return
+
+    loadRelation(id, (busy) => {
+        for (const button of document.querySelectorAll("#master-routes button, .route-master-routes button"))
+            button.disabled = busy
+    })
+}
+
+function showMaster(id) {
+    if (!confirmLeavingRoute()) return
+
+    loadRelation(id, (busy) => {
+        for (const button of document.querySelectorAll(".route-master-actions button")) button.disabled = busy
+    })
+}
 
 editReloadBtn.onclick = async () => {
     editBackBtn.disabled = true
@@ -410,6 +652,7 @@ editReloadBtn.onclick = async () => {
 
     const defaultInnerText = editReloadBtn.innerText
     editReloadBtn.innerText = "Reloading..."
+    showDownloadBar("Reloading map data...")
 
     fetch("/query", {
         method: "POST",
@@ -445,6 +688,7 @@ editReloadBtn.onclick = async () => {
             showMessage("danger", "❌ Relation reload failed", error)
         })
         .finally(() => {
+            hideDownloadBar()
             editReloadBtn.innerText = defaultInnerText
 
             editBackBtn.disabled = false
@@ -471,7 +715,17 @@ const makeDefaultComment = () => {
     const tagged = taggedCount
         ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
         : ""
-    return makeRouteComment() + added + positions + areas + tagged
+    const pendingMaster = pendingRouteMaster()
+    const master = !pendingMaster
+        ? ""
+        : pendingMaster.id === null
+          ? "; created route master"
+          : `; added to route master #${pendingMaster.id}`
+    const detachedCount = detachingRouteMasters().length
+    const detached = detachedCount
+        ? `; removed from ${detachedCount} route master${plural(detachedCount)}`
+        : ""
+    return makeRouteComment() + added + positions + areas + tagged + master + detached
 }
 
 const makeRouteComment = () => {
@@ -505,10 +759,46 @@ const styleStopName = (name) => {
     })
 }
 
+const summaryLink = (className, title, href, letter) =>
+    `<a class="${className} link-underline link-underline-opacity-0 link-underline-opacity-100-hover"
+        title="${escapeHtml(title)}" href="${href}" target="_blank">${letter}</a>`
+
+function stopAreaLetter(area) {
+    if (!area) return ""
+
+    const title = area.queued
+        ? `Joins the stop area “${area.name}” when you upload`
+        : `In the stop area “${area.name}”`
+
+    if (area.id === null) return `<span class="stop-info-area" title="${escapeHtml(title)}">A</span>`
+    return summaryLink("stop-info-area", title, `https://www.openstreetmap.org/relation/${area.id}`, "A")
+}
+
+const ZOOM_ICON = `
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.5"/>
+        <line x1="15.5" y1="15.5" x2="21" y2="21"/>
+    </svg>`
+
+// The summary is where a stop on the wrong side of the road is spotted, and the map
+// behind the menu is already showing the route - so the check is one click away.
+const zoomButton = () =>
+    `<button type="button" class="stop-info-zoom btn btn-link p-0 border-0 align-baseline"
+        title="Zoom the map to this stop">${ZOOM_ICON}</button>`
+
+function naptanLetter(code) {
+    if (code === null) return ""
+
+    const title = code ? `Matches NaPTAN stop ${code}` : "Matches a NaPTAN stop by name"
+    return `<span class="stop-info-naptan" title="${escapeHtml(title)}">N</span>`
+}
+
 export const processRouteStops = (data) => {
     routeSummary.innerHTML = ""
 
     for (const collection of data.busStops) {
+        const { area, naptan } = stopSummary(collection)
         const isPlatform = collection.platform != null
         const isStop = collection.stop != null
         // not in OSM until upload, so there is nothing to link to yet
@@ -539,10 +829,19 @@ export const processRouteStops = (data) => {
                     href="https://www.openstreetmap.org/${collection.stop.type}/${collection.stop.id}"
                     target="_blank">S</a>`
                         : ""
-                }
+                }<!--
+                -->${stopAreaLetter(area)}<!--
+                -->${naptanLetter(naptan)}<!--
+                -->${zoomButton()}
             </div>
         </div>`),
         )
+
+        const latLng = collection.platform?.latLng ?? collection.stop?.latLng
+
+        const zoomBtn = routeSummary.lastElementChild.querySelector(".stop-info-zoom")
+        if (latLng) zoomBtn.onclick = () => map.setView(latLng, 19)
+        else zoomBtn.remove()
     }
 
     const allItems = Array.from(
@@ -554,7 +853,7 @@ export const processRouteStops = (data) => {
         outerItem.onclick = (e) => {
             e.stopPropagation()
 
-            if (e.target.tagName === "A") return
+            if (e.target.closest("a, .stop-info-zoom")) return
 
             for (const [index, item] of allItems.entries()) {
                 if (index <= outerIndex) {
@@ -590,8 +889,9 @@ submitUploadBtn.onclick = async () => {
             comment: submitComment.value,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
-            stopAreas: stopAreasPayload(),
+            stopAreas: stopAreasPayload(createdPlaceholders()),
             naptanTagAdditions: tagAdditionsPayload(),
+            ...routeMasterPayload(),
         }),
     })
         .then(async (resp) => {
@@ -634,6 +934,26 @@ submitUploadBtn.onclick = async () => {
                 "✅ Upload successful",
                 `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}${revert}`,
             )
+
+            // Stop areas are read back from Overpass, which is minutes behind: the next
+            // variant of this line calls at the same places, and would be offered a
+            // second relation for stops this upload has just grouped. The upload says
+            // what ids OSM gave the relations it created, so they can be completed rather
+            // than only left alone.
+            noteUploadedStopAreas(stopAreasPayload(createdPlaceholders()), data.new_stop_areas ?? [])
+
+            // back to the variants, with this one marked, so the next is one click away
+            if (routeMasterViewId() !== null) {
+                if (relationId !== null) markRouteUploaded(relationId)
+                unloadRoute()
+                showMasterPicker()
+                // the list in hand was an answer from before this upload, so the variant
+                // just uploaded would be named after the tags it no longer has. Asking
+                // again reads the relations back from the OSM API, which is current.
+                masterReloadBtn.click()
+                return
+            }
+
             unload()
         })
         .catch((error) => {
@@ -661,8 +981,9 @@ submitDownloadBtn.onclick = async () => {
             tagsOriginal: relationTagsOriginal,
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
-            stopAreas: stopAreasPayload(),
+            stopAreas: stopAreasPayload(createdPlaceholders()),
             naptanTagAdditions: tagAdditionsPayload(),
+            ...routeMasterPayload(),
         }),
     })
         .then(async (resp) => {

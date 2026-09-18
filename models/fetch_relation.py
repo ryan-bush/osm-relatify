@@ -4,11 +4,13 @@ from enum import Enum
 from itertools import pairwise
 from typing import Self
 
+from config import STOP_AREA_SEARCH_AREA
 from cython_lib.geoutils import haversine_distance
 from models.bounding_box import BoundingBox
 from models.download_history import Cell, DownloadHistory
 from models.element_id import ElementId, element_id
 from models.naptan_stop import NaptanStop, NaptanTagSuggestion
+from models.route_master import RouteMaster
 from models.stop_area import StopArea
 from utils import normalize_name
 
@@ -54,6 +56,9 @@ class FetchRelationElement:  # more like FetchRelationWay
     connectedTo: list[ElementId]
     turn_in_place_start: bool
     turn_in_place_end: bool
+    # "forward" or "backward" when the mapper has said which way buses use the way,
+    # relative to its own direction; None to let the route use it either way
+    travel: str | None = None
 
     # automatically calculated
     length: float = None
@@ -80,6 +85,9 @@ class FetchRelationBusStop:
     groupName: str
     highway: str | None
     public_transport: PublicTransport
+    # what the place is called: the stop's own name, or its stop area's for one without.
+    # Kept apart from the tags, which are only ever what OSM holds.
+    placeName: str = ''  # noqa: N815
 
     @property
     def typed_id(self) -> tuple[str, ElementId]:
@@ -90,10 +98,12 @@ class FetchRelationBusStop:
         return f'{self.type}/{self.id}'
 
     @classmethod
-    def from_data(cls, data: dict) -> Self:
+    def from_data(cls, data: dict, place=None) -> Self:
+        """`place` is the StopAreaPlace the stop takes from its stop area, if any."""
         tags: dict[str, str] = data['tags']
 
-        name = tags.get('name', '').strip()
+        name = tags.get('name', '').strip() or (place.name if place is not None else '')
+        place_name = name
         local_ref = tags.get('local_ref', '').strip()
 
         ref_parts: dict[str, None] = {}
@@ -122,7 +132,10 @@ class FetchRelationBusStop:
             name=name,
             groupName=group_name,
             highway=tags.get('highway'),
-            public_transport=PublicTransport(tags['public_transport']),
+            public_transport=PublicTransport(
+                tags['public_transport'] if place is None or 'public_transport' in tags else place.public_transport
+            ),
+            placeName=place_name,
         )
 
 
@@ -168,9 +181,23 @@ class FetchRelation:
     naptanStops: list[NaptanStop] = field(default_factory=list)
     # stops in OSM that are missing tags NaPTAN has for them, offered for filling in
     naptanTags: list[NaptanTagSuggestion] = field(default_factory=list)
+    # the OSM stops that stand for a NaPTAN stop, as "type,id", with the NaPTAN code
+    naptanMatched: dict[str, str] = field(default_factory=dict)
     # stop_area relations the downloaded stops are already in, so none is duplicated.
     # None when the lookup failed, which is not the same as there being none of them.
     stopAreas: list[StopArea] | None = field(default_factory=list)
+    # how far apart the stops of one place can be, which the page groups renamed stops by
+    stopAreaSearchArea: float = STOP_AREA_SEARCH_AREA
+    # which side of the road traffic keeps to where the route runs, for working out which
+    # way round it goes; None when it could not be found out
+    drivingSide: str | None = None
+    # the route_master relations this route is already a member of. None when the lookup
+    # failed: "not in one" is what invites linking it into one, and guessing that wrongly
+    # would put the route in a second master beside the one it already belongs to.
+    routeMasters: list[RouteMaster] | None = field(default_factory=list)
+    # route masters that other routes with the same ref belong to, offered to link into.
+    # None, again, when they could not be looked up.
+    routeMasterCandidates: list[RouteMaster] | None = field(default_factory=list)
 
 
 def find_start_stop_ways(

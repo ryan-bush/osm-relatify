@@ -16,10 +16,18 @@ from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id, split_element_id
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute
+from models.osm_change import OsmChange
 from models.relation_member import RelationMember
+from placeholder_ids import RelationPlaceholders
 from naptan_tags import StopTagAddition, build_tag_addition_elements
 from openstreetmap import OpenStreetMap
 from overpass import Overpass, QueryParentsResult
+from route_masters import (
+    RouteMasterChange,
+    build_new_route_master,
+    build_route_master_modifications,
+    check_new_route_master,
+)
 from stop_areas import (
     StopAreaChange,
     build_new_stop_area_relations,
@@ -35,7 +43,9 @@ class SortedBusEntry(NamedTuple):
     sort_index: int
     neighbor_id: ElementId
     distance_from_neighbor: float
-    right_hand_side: bool | None
+    # Whether a bus driving the way forwards has the stop on its kerb side: the right
+    # where traffic keeps right, the left where it keeps left. None when it is not known.
+    kerb_side_forward: bool | None
 
 
 def is_right_hand_side(
@@ -69,7 +79,9 @@ def interpolate_latLng(
 
 
 def sort_bus_on_path(
-    bus_stop_collections: Sequence[FetchRelationBusStopCollection], ways: Iterable[FetchRelationElement]
+    bus_stop_collections: Sequence[FetchRelationBusStopCollection],
+    ways: Iterable[FetchRelationElement],
+    driving_side: str = 'right',
 ) -> list[SortedBusEntry]:
     if not bus_stop_collections:
         return []
@@ -118,13 +130,20 @@ def sort_bus_on_path(
         else:
             right_hand_side = None
 
+        if right_hand_side is None:
+            kerb_side_forward = None
+        elif driving_side == 'left':
+            kerb_side_forward = not right_hand_side
+        else:
+            kerb_side_forward = right_hand_side
+
         result.append(
             SortedBusEntry(
                 bus_stop_collection=collection,
                 sort_index=idx,
                 neighbor_id=neighbor_way.id,
                 distance_from_neighbor=distance,
-                right_hand_side=right_hand_side,
+                kerb_side_forward=kerb_side_forward,
             )
         )
 
@@ -426,9 +445,28 @@ def _update_relations_after_split(
     return result.values()
 
 
-# the id a relation being created carries inside the changeset, until OSM assigns a
-# real one; way placeholders count down from -1 separately, in their own element type
-NEW_RELATION_PLACEHOLDER_ID = -1
+# kept as a name of its own, RelationPlaceholders being where the numbering now lives
+NEW_RELATION_PLACEHOLDER_ID = RelationPlaceholders.ROUTE
+
+
+async def build_route_master_only_change(
+    change: RouteMasterChange,
+    include_changeset_id: bool,
+    osm: OpenStreetMap,
+) -> str:
+    """
+    A changeset that edits a route master's own tags and nothing else.
+
+    What the master holds is not in question here: this is the tags of one relation, asked
+    for from the list of a line's variants rather than from inside one of them.
+    """
+    result = _initialize_osm_change_structure()
+
+    for relation_data in await build_route_master_modifications(change, (), None, osm):
+        _set_changeset_placeholder(relation_data, include_changeset_id)
+        result['osmChange']['modify']['relation'].append(relation_data)
+
+    return xmltodict.unparse(result, pretty=not include_changeset_id)
 
 
 async def build_osm_change(
@@ -443,7 +481,9 @@ async def build_osm_change(
     new_stop_positions: Sequence[NewStopPosition] = (),
     tag_additions: Sequence[StopTagAddition] = (),
     stop_areas: Sequence[StopAreaChange] = (),
-) -> str:
+    route_master: RouteMasterChange | None = None,
+    route_master_detach: Sequence[int] = (),
+) -> OsmChange:
     split_ways_mutable: set[int] = set()
     native_id_element_ids_map: dict[int, dict[int, ElementId]] = defaultdict(dict)
     element_id_unique_map: dict[ElementId, int] = {}
@@ -492,15 +532,34 @@ async def build_osm_change(
     # a stop area may group stops this very changeset is creating
     created_node_ids = {node['@id'] for node in new_nodes}
 
-    # asked of OSM rather than of the download, which may have come from an instance that
-    # does not know about a stop area created since it last caught up
-    await check_new_stop_areas(stop_areas, osm)
+    # every relation this changeset creates is numbered from here, so no two of them can
+    # be given the same placeholder and refer to each other's members by mistake
+    placeholders = RelationPlaceholders()
 
-    for relation_data in build_new_stop_area_relations(stop_areas, created_node_ids):
-        _set_changeset_placeholder(relation_data, include_changeset_id)
-        result['osmChange']['create']['relation'].append(relation_data)
+    # asked of OSM rather than of the download, which may have come from an instance that
+    # does not know about a stop area, or a route master, created since it last caught up
+    await check_new_stop_areas(stop_areas, osm)
+    await check_new_route_master(route_master, relation_id, osm)
+
+    new_stop_area_plans = build_new_stop_area_relations(stop_areas, created_node_ids, placeholders)
+
+    for plan in new_stop_area_plans:
+        _set_changeset_placeholder(plan.element, include_changeset_id)
+        result['osmChange']['create']['relation'].append(plan.element)
 
     for relation_data in await build_stop_area_modifications(stop_areas, created_node_ids, osm):
+        _set_changeset_placeholder(relation_data, include_changeset_id)
+        result['osmChange']['modify']['relation'].append(relation_data)
+
+    # A route being created is referred to by its placeholder, by the master that holds it
+    # and by any master it is added to, exactly as the route relation itself is written.
+    route_ref = relation_id if relation_id is not None else RelationPlaceholders.ROUTE
+
+    # taken now so the master keeps its place in the numbering, though it is only written
+    # at the end, after the route it refers to
+    new_master = build_new_route_master(route_master, tags_edited or route.tags, route_ref, placeholders)
+
+    for relation_data in await build_route_master_modifications(route_master, route_master_detach, route_ref, osm):
         _set_changeset_placeholder(relation_data, include_changeset_id)
         result['osmChange']['modify']['relation'].append(relation_data)
 
@@ -614,7 +673,7 @@ async def build_osm_change(
     else:
         # nothing on the server to merge with, so the edited tags are the whole relation
         relation_data = {
-            '@id': NEW_RELATION_PLACEHOLDER_ID,
+            '@id': RelationPlaceholders.ROUTE,
             'tag': [{'@k': k, '@v': v} for k, v in normalize_tags(tags_edited or {}).items()],
         }
         relation_action = 'create'
@@ -637,7 +696,17 @@ async def build_osm_change(
     if not unchanged:
         result['osmChange'][relation_action]['relation'].append(relation_data)
 
-    return xmltodict.unparse(result, pretty=not include_changeset_id)
+    # Last, because the API resolves placeholders strictly in document order: a master
+    # written before the route it holds refers to an id that does not exist yet, and the
+    # upload is rejected rather than reordered.
+    if new_master is not None:
+        _set_changeset_placeholder(new_master, include_changeset_id)
+        result['osmChange']['create']['relation'].append(new_master)
+
+    return OsmChange(
+        xml=xmltodict.unparse(result, pretty=not include_changeset_id),
+        new_stop_areas=tuple(new_stop_area_plans),
+    )
 
 
 def _relation_tags(relation_data: dict) -> dict[str, str]:

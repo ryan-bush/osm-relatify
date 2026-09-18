@@ -93,6 +93,33 @@ export function planStopPosition(latLng, waysData) {
     return best
 }
 
+const holdsPair = (way, placement) =>
+    way.nodes.some((node, i) => node === placement.afterNode && way.nodes[i + 1] === placement.beforeNode)
+
+// The piece of its way a placement sits in now, or null when `ways` has none holding it.
+// Ways are cut up afresh by every download, at every junction the download brings in, so
+// the piece a stop position was planned on can have been renumbered since. The two nodes
+// it goes between are what stay put, and the upload works from those.
+export function currentSegmentId(placement, ways) {
+    const planned = ways[placement.segmentId]
+    if (planned && holdsPair(planned, placement)) return placement.segmentId
+
+    for (const [id, way] of Object.entries(ways)) {
+        if (idParts(id).wayId === placement.wayId && holdsPair(way, placement)) return id
+    }
+
+    return null
+}
+
+// Moves every pending placement onto the piece of its way that holds it now, so the
+// route calculation and the direction worked out from it both find it again.
+export function followWaySegments(ways) {
+    for (const { placement } of pending.values()) {
+        const segmentId = currentSegmentId(placement, ways)
+        if (segmentId) placement.segmentId = segmentId
+    }
+}
+
 // The ways to send for the route calculation, with each new stop position put in as a
 // vertex. Without it the calculation drops a stop position it cannot find on the route.
 // The originals are left alone, so planning stays based on what OSM actually has.

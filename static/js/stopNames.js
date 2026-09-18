@@ -13,3 +13,13 @@ export function effectiveName(stop, naptanName, decision, edited = undefined) {
 
     return stop?.tags?.name?.trim() ?? ""
 }
+
+// What makes two stops' names the same place, whatever the punctuation and case. Mirrors
+// normalize_name(lower, special, whitespace) in utils.py: "Carreg-Bran" is "Carreg Bran".
+export const placeKey = (name) =>
+    (name ?? "")
+        .toLowerCase()
+        .replace(/[-\u2010-\u2015/]/gu, " ")
+        .replace(/[^\p{L}\p{N}\p{M}_\s]/gu, "")
+        .replace(/\s+/gu, " ")
+        .trim()

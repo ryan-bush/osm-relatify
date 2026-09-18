@@ -1,5 +1,6 @@
 import os
 import secrets
+import tomllib
 from pathlib import Path
 
 import sentry_sdk
@@ -12,13 +13,70 @@ from githead import githead
 load_dotenv()
 
 try:
-    VERSION = 'git#' + githead()[:7]
+    GIT_REVISION = githead()[:7]
 except OSError:
     # inside a git worktree .git is a file rather than a directory, which githead cannot read
-    VERSION = 'git#unknown'
+    GIT_REVISION = ''
+
+VERSION = f'git#{GIT_REVISION}' if GIT_REVISION else 'git#unknown'
+
+
+def _read_project_version() -> str:
+    """The released version, from the one place it is written down."""
+    try:
+        with (Path(__file__).parent / 'pyproject.toml').open('rb') as f:
+            return str(tomllib.load(f)['project']['version'])
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        # a deployment that ships without the manifest still runs; it just cannot say
+        # which release it is, so the navbar leaves the version out and the update check
+        # below stays quiet rather than comparing against a made-up number
+        return ''
+
+
+# What the navbar shows, what the changeset's created_by tag names, and what the latest
+# GitHub release is compared against. A release is the thing anyone reading a changeset
+# can go and look up; the revision beside it says exactly which build wrote it.
+APP_VERSION = _read_project_version()
+
 WEBSITE = os.getenv('WEBSITE', 'https://github.com/ryan-bush/osm-relatify')
-CREATED_BY = f'osm-relatify {VERSION}'
-USER_AGENT = f'osm-relatify/{VERSION} (+{WEBSITE})'
+
+# owner/repo whose releases are checked for something newer than APP_VERSION. Empty
+# turns the check off, which is what a fork with no releases of its own wants.
+UPDATE_CHECK_REPO = os.getenv('UPDATE_CHECK_REPO', 'ryan-bush/osm-relatify').strip()
+
+# How long an answer from GitHub is reused. The unauthenticated API allows 60 requests
+# an hour per address, and a new release is not something anyone needs within minutes.
+UPDATE_CHECK_TTL = int(os.getenv('UPDATE_CHECK_TTL', str(6 * 3600)))
+
+# A failed check is retried sooner than that, but not on every page load
+UPDATE_CHECK_RETRY_TTL = int(os.getenv('UPDATE_CHECK_RETRY_TTL', '600'))
+def make_created_by(version: str, revision: str) -> str:
+    """
+    What a changeset says wrote it: "Relatify 1.1.0 #ff422gu".
+
+    The release is the thing a reader can go and look up; the revision beside it says
+    exactly which build wrote the changeset. Either half is left out rather than guessed
+    at when it cannot be read, so the tag never names a release or a build that does not
+    exist.
+    """
+    return ' '.join(filter(None, ('Relatify', version, f'#{revision}' if revision else '')))
+
+
+def make_user_agent(version: str, revision: str, website: str) -> str:
+    """
+    What Overpass and OSM see: "Relatify/1.1.0 #ff422gu (+https://github.com/...)".
+
+    The same release and build as the changeset stamp, spelled the way a user agent is:
+    an operator reading a server log and an operator reading a changeset are looking at
+    the same two identifiers.
+    """
+    product = f'Relatify/{version}' if version else 'Relatify'
+    parts = (product, f'#{revision}' if revision else '', f'(+{website})')
+    return ' '.join(filter(None, parts))
+
+
+CREATED_BY = make_created_by(APP_VERSION, GIT_REVISION)
+USER_AGENT = make_user_agent(APP_VERSION, GIT_REVISION, WEBSITE)
 
 TEST_ENV = os.getenv('TEST_ENV', '0').strip().lower() in ('1', 'true', 'yes')
 if TEST_ENV:
@@ -67,7 +125,7 @@ OVERPASS_MAX_DATA_AGE = float(os.getenv('OVERPASS_MAX_DATA_AGE', '3600'))  # sec
 TAG_MAX_LENGTH = 255
 
 # Tags the application interprets when loading a relation; editing them would change
-# whether the relation can be loaded at all. See get_route_type() in main.py.
+# whether the relation can be loaded at all. See get_route_type() in route_types.py.
 PROTECTED_TAG_KEYS = frozenset(
     {
         'type',

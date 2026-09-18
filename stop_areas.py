@@ -1,36 +1,18 @@
 import asyncio
 from collections.abc import Container, Iterable, Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 
 from models.stop_area import StopArea
+from placeholder_ids import RelationPlaceholders
 from tag_editing import validate_tag
 from utils import ensure_list
 
 # a stop area groups the stops of one place; anything else is not ours to touch
 STOP_AREA_TAGS = {'type': 'public_transport', 'public_transport': 'stop_area'}
-
-
-def build_stop_areas_query(node_ids: Iterable[int], way_ids: Iterable[int], timeout: int) -> str:
-    """Overpass query for the stop_area relations the given stops already belong to."""
-    node_ids = tuple(sorted(set(node_ids)))
-    way_ids = tuple(sorted(set(way_ids)))
-
-    filters = '["type"="public_transport"]["public_transport"="stop_area"]'
-    parts = []
-
-    # an empty id list is a syntax error, so each kind is only asked for when there is one
-    if node_ids:
-        parts.append(f'node(id:{",".join(map(str, node_ids))})->.n;rel(bn.n){filters};')
-    if way_ids:
-        parts.append(f'way(id:{",".join(map(str, way_ids))})->.w;rel(bw.w){filters};')
-
-    if not parts:
-        return ''
-
-    return f'[out:json][timeout:{timeout}];(' + ''.join(parts) + ');out meta;'
 
 
 def parse_stop_areas(elements: Iterable[dict]) -> list[StopArea]:
@@ -81,10 +63,6 @@ class StopAreaChange(BaseModel):
     # One that says something else by now is a conflict rather than an overwrite.
     expectedName: str | None = Field(default=None)  # noqa: N815
     members: list[StopAreaMember] = Field(min_length=1)
-
-
-# the route relation being created takes -1, so stop areas start below it
-FIRST_STOP_AREA_PLACEHOLDER_ID = -2
 
 
 def _check_members(changes: Sequence[StopAreaChange], created_node_ids: Container[int]) -> None:
@@ -144,15 +122,32 @@ async def check_new_stop_areas(changes: Sequence[StopAreaChange], osm) -> None:
                 )
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class NewStopAreaPlan:
+    """
+    A stop_area relation this changeset creates.
+
+    The element is what goes into the change; the rest is what the real relation will be
+    once OSM has assigned it an id, which the upload reads back out of the diffResult. The
+    client learns which stop areas exist from Overpass, and Overpass runs minutes behind,
+    so a relation created now is told to it here or not at all.
+    """
+
+    placeholder_id: int
+    name: str
+    members: tuple[StopAreaMember, ...]
+    element: dict
+
+
 def build_new_stop_area_relations(
     changes: Sequence[StopAreaChange],
     created_node_ids: Container[int],
-) -> list[dict]:
+    placeholders: RelationPlaceholders,
+) -> list[NewStopAreaPlan]:
     """The stop_area relations to create, each with its own placeholder id."""
     _check_members(changes, created_node_ids)
 
     result = []
-    next_id = FIRST_STOP_AREA_PLACEHOLDER_ID
 
     for change in changes:
         if change.id is not None:
@@ -164,16 +159,20 @@ def build_new_stop_area_relations(
         for key, value in tags.items():
             validate_tag(key, value)
 
+        placeholder_id = placeholders.take()
+
         result.append(
-            {
-                '@id': next_id,
-                'tag': [{'@k': k, '@v': v} for k, v in tags.items()],
-                'member': [
-                    {'@type': m.type, '@ref': m.id, '@role': m.role} for m in change.members
-                ],
-            }
+            NewStopAreaPlan(
+                placeholder_id=placeholder_id,
+                name=name,
+                members=tuple(change.members),
+                element={
+                    '@id': placeholder_id,
+                    'tag': [{'@k': k, '@v': v} for k, v in tags.items()],
+                    'member': [{'@type': m.type, '@ref': m.id, '@role': m.role} for m in change.members],
+                },
+            )
         )
-        next_id -= 1
 
     return result
 
@@ -251,7 +250,9 @@ async def build_stop_area_modifications(
         relation.pop('@user', None)
         relation.pop('@uid', None)
         relation['member'] = [
-            *members,
+            # stop_position is what older areas call a stop; PTv2 says stop, and as the
+            # relation is being changed anyway it is put right on the way
+            *({**m, '@role': 'stop'} if m.get('@role') == 'stop_position' else m for m in members),
             *({'@type': m.type, '@ref': m.id, '@role': m.role} for m in added),
         ]
         result.append(relation)

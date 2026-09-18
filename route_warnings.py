@@ -1,25 +1,24 @@
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from itertools import pairwise, zip_longest
-from math import atan2, cos, degrees, hypot, radians
+from math import atan2, cos, degrees, hypot, radians, sqrt
 
 from sentry_sdk import trace
 
+from compass import OPPOSITE_HEADING_ANGLE, angle_between, compass_degrees
 from models.element_id import ElementId
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute, FinalRouteWarning, WarningSeverity
 from models.relation_member import RelationMember
 from relation_builder import sort_bus_on_path
 
-# NaPTAN gives the direction buses travel when calling at a stop as a compass point
-_COMPASS_DEGREES = {'N': 0, 'NE': 45, 'E': 90, 'SE': 135, 'S': 180, 'SW': 225, 'W': 270, 'NW': 315}
-# compass points are 45° apart and roads bend, so only a clearly opposite heading counts
-_OPPOSITE_HEADING_ANGLE = 120  # degrees
 # a route can pass a stop in both directions; stretches this much further away than the
 # nearest still count as passing it
 _PASSING_TOLERANCE = 20  # meters
 # a stop further than this from the route is reported as far away instead
 _PASSING_MAX_DISTANCE = 120  # meters
+# a platform mapped nearer than this to the carriageway could be standing at either kerb
+_KERB_OFFSET = 2  # meters
 
 
 @trace
@@ -94,21 +93,56 @@ def _check_for_bus_stop_inactive_in_naptan(
 
 def _naptan_bearing(collection: FetchRelationBusStopCollection) -> int | None:
     for stop in (collection.platform, collection.stop):
-        if stop is not None and (bearing := stop.tags.get('naptan:Bearing', '').strip().upper()) in _COMPASS_DEGREES:
-            return _COMPASS_DEGREES[bearing]
+        if stop is not None and (bearing := compass_degrees(stop.tags.get('naptan:Bearing', ''))) is not None:
+            return bearing
     return None
 
 
-def _headings_passing(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[float, float]]) -> list[float]:
-    """The route's headings where it passes a point, in degrees clockwise from north."""
+@dataclass(frozen=True, slots=True)
+class _RoutePass:
+    """One place the route comes close to a stop."""
+
+    distance: float
+    # degrees clockwise from north
+    heading: float
+    # signed meters from the route, positive when the stop stands to the left of travel,
+    # which is the kerb a bus pulls in at wherever NaPTAN applies
+    offset: float
+    # on a road only driven one way, or round a roundabout, where a stop can stand at
+    # either kerb
+    one_way: bool = False
+
+
+_Segment = tuple[tuple[float, float], tuple[float, float], bool]
+
+
+def _route_segments(route: FinalRoute) -> list[_Segment]:
+    """The route as it is driven, a pair of points at a time, each saying if it is one-way."""
+    segments: list[_Segment] = []
+
+    for route_way in route.ways:
+        way = route_way.way
+        lat_lngs = way.latLngs[::-1] if route_way.reversed_latLngs else way.latLngs
+        one_way = way.oneway or way.roundabout or way.travel is not None
+        segments.extend((a, b, one_way) for a, b in pairwise(lat_lngs))
+
+    return segments
+
+
+def _route_passes(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tuple[float, float]]) -> list[_RoutePass]:
+    """Where the route passes a point, nearest first."""
+    return _passes_along(lat_lng, [(a, b, False) for a, b in pairwise(route_lat_lngs)])
+
+
+def _passes_along(lat_lng: tuple[float, float], segments: Sequence[_Segment]) -> list[_RoutePass]:
     lat0, lon0 = lat_lng
     # flat enough over the few hundred metres that matter
     x_scale = 111_320 * cos(radians(lat0))
     y_scale = 110_540
 
-    passes: list[tuple[float, float]] = []
+    passes: list[_RoutePass] = []
 
-    for (lat_a, lon_a), (lat_b, lon_b) in pairwise(route_lat_lngs):
+    for (lat_a, lon_a), (lat_b, lon_b), one_way in segments:
         ax, ay = (lon_a - lon0) * x_scale, (lat_a - lat0) * y_scale
         dx, dy = (lon_b - lon_a) * x_scale, (lat_b - lat_a) * y_scale
 
@@ -118,26 +152,35 @@ def _headings_passing(lat_lng: tuple[float, float], route_lat_lngs: Sequence[tup
 
         # the closest point of the segment to the stop, which sits at the origin
         t = max(0.0, min(1.0, -(ax * dx + ay * dy) / length_sq))
-        passes.append((hypot(ax + t * dx, ay + t * dy), degrees(atan2(dx, dy)) % 360))
+        passes.append(
+            _RoutePass(
+                distance=hypot(ax + t * dx, ay + t * dy),
+                heading=degrees(atan2(dx, dy)) % 360,
+                # the travel direction crossed with the way to the stop
+                offset=(dy * ax - dx * ay) / sqrt(length_sq),
+                one_way=one_way,
+            )
+        )
 
     if not passes:
         return []
 
-    nearest = min(distance for distance, _ in passes)
-    if nearest > _PASSING_MAX_DISTANCE:
+    passes.sort(key=lambda route_pass: route_pass.distance)
+
+    if passes[0].distance > _PASSING_MAX_DISTANCE:
         return []
 
-    return [heading for distance, heading in passes if distance <= nearest + _PASSING_TOLERANCE]
-
-
-def _angle_between(a: float, b: float) -> float:
-    difference = abs(a - b) % 360
-    return min(difference, 360 - difference)
+    limit = passes[0].distance + _PASSING_TOLERANCE
+    return [route_pass for route_pass in passes if route_pass.distance <= limit]
 
 
 @trace
 def _check_for_bus_stop_serving_other_direction(route: FinalRoute) -> FinalRouteWarning | None:
-    """Catches the stop across the road being picked, using the bearing NaPTAN gives it."""
+    """Catches the stop across the road being picked.
+
+    A stop is only reported when both the bearing NaPTAN gives it and the kerb it stands
+    at say the route runs the other way.
+    """
     other_direction = []
 
     for collection in route.busStops:
@@ -145,16 +188,61 @@ def _check_for_bus_stop_serving_other_direction(route: FinalRoute) -> FinalRoute
         if bearing is None:
             continue
 
-        headings = _headings_passing(collection.best.latLng, route.latLngs)
+        passes = _route_passes(collection.best.latLng, route.latLngs)
+        if not passes:
+            continue
 
-        if headings and all(_angle_between(bearing, heading) > _OPPOSITE_HEADING_ANGLE for heading in headings):
-            other_direction.append(collection.best.id)
+        if not all(angle_between(bearing, route_pass.heading) > OPPOSITE_HEADING_ANGLE for route_pass in passes):
+            continue
+
+        # The bearing of one stop of a pair gets copied onto the other often enough that
+        # it cannot convict on its own. A platform standing at the near kerb is the
+        # better evidence, so let it clear the stop; one out on the carriageway, which
+        # names no side, leaves the bearing to decide as before.
+        if passes[0].offset > _KERB_OFFSET:
+            continue
+
+        other_direction.append(collection.best.id)
 
     if other_direction:
         return FinalRouteWarning(
             severity=WarningSeverity.LOW,
             message='Some stops serve the other direction',
             extra=tuple(other_direction),
+        )
+
+
+@trace
+def _check_for_bus_stop_on_far_kerb(route: FinalRoute, driving_side: str) -> FinalRouteWarning | None:
+    """Catches a route driving past its stops on the wrong side of the road.
+
+    Most often a loop driven the wrong way round: every stop on it ends up across the
+    road. Only two-way roads count, as a one-way street can have its stops at either kerb,
+    and only a stop the route passes on no side but the far one.
+    """
+    kerb = 1 if driving_side == 'left' else -1
+    segments = _route_segments(route)
+    far = []
+
+    for collection in route.busStops:
+        if collection.platform is None:
+            continue
+
+        passes = _passes_along(collection.platform.latLng, segments)
+        if not passes or any(route_pass.one_way for route_pass in passes):
+            continue
+
+        if all(route_pass.offset * kerb < -_KERB_OFFSET for route_pass in passes):
+            far.append(collection.best.id)
+
+    if far:
+        return FinalRouteWarning(
+            severity=WarningSeverity.LOW,
+            message=(
+                f'Some stops are on the far side of the road for traffic keeping {driving_side} '
+                '- is a loop driven the wrong way round?'
+            ),
+            extra=tuple(far),
         )
 
 
@@ -197,6 +285,7 @@ def check_for_issues(
     relation_members: list[RelationMember],
     # empty unless NaPTAN is enabled
     inactive_naptan_codes: frozenset[str] = frozenset(),
+    driving_side: str = 'right',
 ) -> FinalRoute:
     warnings = (
         _check_for_unused_ways(route, ways),
@@ -205,6 +294,7 @@ def check_for_issues(
         _check_for_bus_stop_not_reached(route, bus_stop_collections),
         _check_for_bus_stop_inactive_in_naptan(route, inactive_naptan_codes),
         _check_for_bus_stop_serving_other_direction(route),
+        _check_for_bus_stop_on_far_kerb(route, driving_side),
         _check_for_not_enough_bus_stops(route),
         _check_for_roundtrip_not_roundtrip(route),
         _check_for_members_unchanged(route, relation_members),

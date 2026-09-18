@@ -1,221 +1,257 @@
-const menu = document.getElementById("menu")
-const editTags = document.getElementById("edit-tags")
-const editTagsToggle = document.getElementById("edit-tags-toggle")
-const editTagsAdd = document.getElementById("edit-tags-add")
+// An editable table of a relation's tags. One relation, one editor: the route being
+// edited has one, and so does anything else whose tags are edited alongside it, which is
+// why this is a factory over the elements it draws into rather than a single instance.
 
-// tags exactly as loaded from OSM - the baseline the edits are diffed against server-side
-export let relationTagsOriginal = null
-// working copy - what gets submitted and what the route calculation reads
-export let relationTags = null
+import {
+    buildEntries,
+    isDuplicate,
+    isModified,
+    tagsFromEntries,
+    visibleEntries,
+} from "./tagEntries.js"
 
-// always offered, in this order; an empty field means the tag is absent
-const FEATURED_KEYS = ["name", "ref", "from", "via", "to", "network", "operator", "colour", "roundtrip"]
-// interpreted server-side when loading the relation, so they are shown but not editable
-const LOCKED_KEYS = new Set(["type", "route", "disused:route", "was:route", "public_transport:version"])
-// changing these changes the calculated route, not just the tags that get uploaded
-const RECALC_KEYS = new Set(["roundtrip"])
+/**
+ * @param tableBody      the <tbody> the rows are drawn into
+ * @param toggleButton   reveals the tags that are not featured
+ * @param addButton      appends an empty row
+ * @param featuredKeys   always offered, in this order; an empty field means absent
+ * @param lockedKeys     shown but not editable, being interpreted server-side
+ * @param recalcKeys     changing one of these changes the calculated route, not just the
+ *                       tags that get uploaded
+ * @param enumKeys       keys whose value is a fixed set, drawn as a select rather than a
+ *                       free-text field that invites typos
+ * @param wideElement    gets the menu-wide class while every tag is shown, the full list
+ *                       needing room for an editable key and value on every row
+ * @param onChange       called with the working copy whenever it changes
+ * @param onRecalcNeeded called when a recalc key changes
+ */
+export function createTagEditor({
+    tableBody,
+    toggleButton,
+    addButton,
+    featuredKeys = [],
+    lockedKeys = new Set(),
+    recalcKeys = new Set(),
+    enumKeys = {},
+    wideElement = null,
+    onChange = () => {},
+    onRecalcNeeded = () => {},
+}) {
+    // tags exactly as loaded from OSM - the baseline the edits are diffed against server-side
+    let tagsOriginal = null
+    // ordered source of truth for the editor; the working copy is derived from it
+    let entries = []
+    let showAll = false
+    // rendered rows paired with the entry each one edits
+    let rows = []
 
-// ordered source of truth for the editor; relationTags is derived from it
-let entries = []
-let showAll = false
+    const isFeatured = (key) => featuredKeys.includes(key)
 
-// set by menu.js - avoids importing the route module and closing an import cycle
-let onRecalcNeeded = () => {}
+    const syncWorkingCopy = () => onChange(tagsFromEntries(entries))
 
-export const setRecalcHandler = (handler) => {
-    onRecalcNeeded = handler
-}
-
-const isFeatured = (key) => FEATURED_KEYS.includes(key)
-
-const buildEntries = (tags) => {
-    const result = FEATURED_KEYS.map((key) => ({ key, value: tags[key] ?? "" }))
-
-    for (const key of Object.keys(tags).sort()) {
-        if (!isFeatured(key)) result.push({ key, value: tags[key] })
+    const markRow = (tr, entry) => {
+        tr.classList.toggle("tag-modified", isModified(entry, tagsOriginal))
+        tr.classList.toggle("tag-duplicate", isDuplicate(entry, entries))
     }
 
-    return result
-}
-
-const syncWorkingCopy = () => {
-    const next = {}
-
-    for (const { key, value } of entries) {
-        const trimmedKey = key.trim()
-        const trimmedValue = value.trim()
-        if (trimmedKey && trimmedValue) next[trimmedKey] = trimmedValue
+    const markAllRows = () => {
+        for (const { tr, entry } of rows) markRow(tr, entry)
     }
 
-    relationTags = next
-}
+    const makeValueInput = (entry) => {
+        const options = enumKeys[entry.key]
 
-const isModified = (entry) => {
-    const key = entry.key.trim()
-    if (!key) return entry.value.trim() !== ""
-    return (relationTagsOriginal[key] ?? "") !== entry.value.trim()
-}
+        if (options) {
+            const select = document.createElement("select")
+            select.className = "form-select form-select-sm"
 
-// a key typed into two rows at once would silently lose one of them
-const isDuplicate = (entry) => {
-    const key = entry.key.trim()
-    if (!key) return false
-    return entries.filter((other) => other.key.trim() === key).length > 1
-}
+            // never silently drop a value we do not recognize
+            const shown = options.includes(entry.value)
+                ? options
+                : [...options, entry.value]
 
-// rendered rows paired with the entry each one edits
-let rows = []
+            for (const option of shown) {
+                const el = document.createElement("option")
+                el.value = option
+                el.textContent = option || "—"
+                select.appendChild(el)
+            }
 
-const markRow = (tr, entry) => {
-    tr.classList.toggle("tag-modified", isModified(entry))
-    tr.classList.toggle("tag-duplicate", isDuplicate(entry))
-}
-
-const markAllRows = () => {
-    for (const { tr, entry } of rows) markRow(tr, entry)
-}
-
-const makeValueInput = (entry) => {
-    // roundtrip is effectively an enum; a free-text field invites typos that change routing
-    if (entry.key === "roundtrip") {
-        const select = document.createElement("select")
-        select.className = "form-select form-select-sm"
-
-        const options = ["", "yes", "no"]
-        // never silently drop a value we do not recognize
-        if (entry.value && !options.includes(entry.value)) options.push(entry.value)
-
-        for (const option of options) {
-            const el = document.createElement("option")
-            el.value = option
-            el.textContent = option || "—"
-            select.appendChild(el)
+            select.value = entry.value
+            return select
         }
 
-        select.value = entry.value
-        return select
+        const input = document.createElement("input")
+        input.type = "text"
+        input.className = "form-control form-control-sm"
+        input.value = entry.value
+        input.maxLength = 255
+        return input
     }
 
-    const input = document.createElement("input")
-    input.type = "text"
-    input.className = "form-control form-control-sm"
-    input.value = entry.value
-    input.maxLength = 255
-    return input
-}
+    const makeRow = (entry) => {
+        const tr = document.createElement("tr")
+        const locked = lockedKeys.has(entry.key)
 
-const makeRow = (entry) => {
-    const tr = document.createElement("tr")
-    const locked = LOCKED_KEYS.has(entry.key)
+        const keyCell = document.createElement("td")
+        keyCell.className = "key"
 
-    const keyCell = document.createElement("td")
-    keyCell.className = "key"
+        if (isFeatured(entry.key) || locked) {
+            keyCell.textContent = entry.key
+        } else {
+            const keyInput = document.createElement("input")
+            keyInput.type = "text"
+            keyInput.className = "form-control form-control-sm"
+            keyInput.value = entry.key
+            keyInput.maxLength = 255
+            keyInput.placeholder = "key"
+            keyInput.oninput = () => {
+                entry.key = keyInput.value
+                syncWorkingCopy()
+                // a renamed key can collide with another row, so refresh every marker
+                markAllRows()
+            }
+            keyCell.appendChild(keyInput)
+        }
 
-    if (isFeatured(entry.key) || locked) {
-        keyCell.textContent = entry.key
-    } else {
-        const keyInput = document.createElement("input")
-        keyInput.type = "text"
-        keyInput.className = "form-control form-control-sm"
-        keyInput.value = entry.key
-        keyInput.maxLength = 255
-        keyInput.placeholder = "key"
-        keyInput.oninput = () => {
-            entry.key = keyInput.value
+        const valueCell = document.createElement("td")
+        valueCell.className = "value"
+
+        const valueInput = makeValueInput(entry)
+        valueInput.disabled = locked
+        valueInput.oninput = () => {
+            entry.value = valueInput.value
             syncWorkingCopy()
-            // a renamed key can collide with another row, so refresh every marker
-            markAllRows()
+            markRow(tr, entry)
+            if (recalcKeys.has(entry.key)) onRecalcNeeded()
         }
-        keyCell.appendChild(keyInput)
-    }
+        valueCell.appendChild(valueInput)
 
-    const valueCell = document.createElement("td")
-    valueCell.className = "value"
+        tr.append(keyCell, valueCell)
 
-    const valueInput = makeValueInput(entry)
-    valueInput.disabled = locked
-    valueInput.oninput = () => {
-        entry.value = valueInput.value
-        syncWorkingCopy()
+        if (!isFeatured(entry.key) && !locked) {
+            const removeCell = document.createElement("td")
+            removeCell.className = "remove"
+
+            const removeBtn = document.createElement("button")
+            removeBtn.type = "button"
+            removeBtn.className = "btn btn-link btn-sm p-0"
+            removeBtn.textContent = "✕"
+            removeBtn.title = `Remove ${entry.key}`
+            removeBtn.onclick = () => {
+                entries.splice(entries.indexOf(entry), 1)
+                syncWorkingCopy()
+                render()
+                if (recalcKeys.has(entry.key)) onRecalcNeeded()
+            }
+
+            removeCell.appendChild(removeBtn)
+            tr.appendChild(removeCell)
+        }
+
+        if (locked) tr.classList.add("tag-locked")
         markRow(tr, entry)
-        if (RECALC_KEYS.has(entry.key)) onRecalcNeeded()
+
+        return tr
     }
-    valueCell.appendChild(valueInput)
 
-    tr.append(keyCell, valueCell)
+    const render = () => {
+        const shown = visibleEntries(entries, featuredKeys, showAll)
 
-    if (!isFeatured(entry.key) && !locked) {
-        const removeCell = document.createElement("td")
-        removeCell.className = "remove"
+        const hiddenCount = entries.length - shown.length
 
-        const removeBtn = document.createElement("button")
-        removeBtn.type = "button"
-        removeBtn.className = "btn btn-link btn-sm p-0"
-        removeBtn.textContent = "✕"
-        removeBtn.title = `Remove ${entry.key}`
-        removeBtn.onclick = () => {
-            entries.splice(entries.indexOf(entry), 1)
+        rows = shown.map((entry) => ({ tr: makeRow(entry), entry }))
+        tableBody.replaceChildren(...rows.map(({ tr }) => tr))
+        toggleButton.textContent = showAll
+            ? "Show fewer tags"
+            : `Show all tags (${hiddenCount})`
+        // nothing to reveal, but stay available while expanded so the view can be collapsed again
+        toggleButton.classList.toggle("d-none", !showAll && hiddenCount === 0)
+        wideElement?.classList.toggle("menu-wide", showAll)
+    }
+
+    toggleButton.onclick = () => {
+        showAll = !showAll
+        render()
+    }
+
+    addButton.onclick = () => {
+        // a new row has no key yet, so it is only reachable in the full view
+        showAll = true
+        entries.push({ key: "", value: "" })
+        render()
+
+        tableBody.lastElementChild?.querySelector("input")?.focus()
+    }
+
+    return {
+        load(tags) {
+            tagsOriginal = { ...tags }
+            entries = buildEntries(tags, featuredKeys)
+            showAll = false
+
             syncWorkingCopy()
             render()
-            if (RECALC_KEYS.has(entry.key)) onRecalcNeeded()
-        }
+        },
 
-        removeCell.appendChild(removeBtn)
-        tr.appendChild(removeCell)
+        /**
+         * Sets one tag from outside the table, as an edit made here would.
+         *
+         * `load` is not the way to do this: it would take the new tags for the ones the
+         * relation was loaded with, and the baseline the edits are diffed against server
+         * side would go with them.
+         *
+         * Returns whether anything changed.
+         */
+        setTag(key, value) {
+            if (tagsOriginal === null) return false
+
+            const entry = entries.find(
+                (candidate) => candidate.key.trim() === key,
+            )
+
+            if (entry === undefined) {
+                entries.push({ key, value })
+                syncWorkingCopy()
+                render()
+                return true
+            }
+
+            if (entry.value === value) return false
+            entry.value = value
+            syncWorkingCopy()
+
+            const row = rows.find((candidate) => candidate.entry === entry)
+
+            if (row === undefined) {
+                // not on screen: there is no field to keep in step, and the row may need
+                // to appear at all
+                render()
+            } else {
+                // Written where it stands rather than rebuilt. A table redrawn under a
+                // field being typed in replaces that field, and the caret goes with it —
+                // which is a tag that can only be given one character at a time.
+                const input = row.tr.querySelector("input, select")
+                if (input) input.value = value
+                markRow(row.tr, entry)
+            }
+
+            return true
+        },
+
+        unload() {
+            tagsOriginal = null
+            entries = []
+            showAll = false
+
+            onChange(null)
+            tableBody.replaceChildren()
+            // render() is not reached from here, so the widened menu is put back by hand
+            wideElement?.classList.remove("menu-wide")
+        },
+
+        get tagsOriginal() {
+            return tagsOriginal
+        },
     }
-
-    if (locked) tr.classList.add("tag-locked")
-    markRow(tr, entry)
-
-    return tr
-}
-
-const visibleEntries = () => entries.filter((entry) => showAll || isFeatured(entry.key))
-
-const render = () => {
-    const shown = visibleEntries()
-
-    const hiddenCount = entries.length - shown.length
-
-    rows = shown.map((entry) => ({ tr: makeRow(entry), entry }))
-    editTags.replaceChildren(...rows.map(({ tr }) => tr))
-    editTagsToggle.textContent = showAll ? "Show fewer tags" : `Show all tags (${hiddenCount})`
-    // nothing to reveal, but stay available while expanded so the view can be collapsed again
-    editTagsToggle.classList.toggle("d-none", !showAll && hiddenCount === 0)
-    // the full list needs room for an editable key and value on every row
-    menu.classList.toggle("menu-wide", showAll)
-}
-
-editTagsToggle.onclick = () => {
-    showAll = !showAll
-    render()
-}
-
-editTagsAdd.onclick = () => {
-    // a new row has no key yet, so it is only reachable in the full view
-    showAll = true
-    entries.push({ key: "", value: "" })
-    render()
-
-    editTags.lastElementChild?.querySelector("input")?.focus()
-}
-
-export const processRelationTags = (data) => {
-    relationTagsOriginal = { ...data.tags }
-    entries = buildEntries(data.tags)
-    showAll = false
-
-    syncWorkingCopy()
-    render()
-}
-
-export const unloadRelationTags = () => {
-    relationTagsOriginal = null
-    relationTags = null
-    entries = []
-    showAll = false
-
-    editTags.replaceChildren()
-    // render() is not reached from here, so the widened menu is put back by hand
-    menu.classList.remove("menu-wide")
 }

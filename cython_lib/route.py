@@ -1,6 +1,5 @@
 import asyncio
 import time
-from collections import defaultdict
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
@@ -46,7 +45,7 @@ MAX_PATH_LENGTH_FACTOR = 2.2
 # The search is exhaustive, so anything that widens the graph - a U-turn most of
 # all - can grow it beyond what is searchable. Past this budget, return the best
 # route found so far instead of letting the request time out with nothing.
-MAX_SEARCH_TIME = 10.0  # seconds, must stay below the request timeout in main.py
+MAX_SEARCH_TIME = 2.0  # seconds, must stay below the request timeout in main.py
 
 
 class GraphKey(NamedTuple):
@@ -159,6 +158,16 @@ class BestPathCollection(NamedTuple):
         )
 
 
+# `travel` is the direction the mapper said the buses use a way in, where the data alone
+# would let the route go either way round
+def drivable_forward(way: FetchRelationElement) -> bool:
+    return way.travel != 'backward'
+
+
+def drivable_backward(way: FetchRelationElement) -> bool:
+    return not way.oneway and way.travel != 'forward'
+
+
 def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, GraphValue]:
     convert_graph: dict[GraphKey, list[GraphKey]] = {}
 
@@ -172,9 +181,9 @@ def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, G
                     continue
                 connected_start = connected_way.latLngs[0]
                 connected_end = connected_way.latLngs[-1]
-                if latlon == connected_start:
+                if latlon == connected_start and drivable_forward(connected_way):
                     connections.append(GraphKey(connected_way_id, BOOL_START))
-                elif latlon == connected_end and not connected_way.oneway:
+                elif latlon == connected_end and drivable_backward(connected_way):
                     connections.append(GraphKey(connected_way_id, BOOL_END))
             return connections
 
@@ -185,12 +194,12 @@ def build_graph(ways: dict[ElementId, FetchRelationElement]) -> dict[GraphKey, G
 
         # Build neighbors for START
         start_neighbors = find_connections_at(way.latLngs[0])
-        if way.turn_in_place_start and not way.oneway:
+        if way.turn_in_place_start and drivable_forward(way) and drivable_backward(way):
             start_neighbors.append(GraphKey(way_id, BOOL_START))
 
         # Build neighbors for END
         end_neighbors = find_connections_at(way.latLngs[-1])
-        if way.turn_in_place_end and not way.oneway:
+        if way.turn_in_place_end and drivable_forward(way) and drivable_backward(way):
             end_neighbors.append(GraphKey(way_id, BOOL_END))
 
         convert_graph[GraphKey(way_id, BOOL_START)] = start_neighbors
@@ -324,7 +333,7 @@ def get_bus_stops_at(
     almost_visited = []
 
     for sorted_bus in id_sorted_bus_map.get(neighbor.way_id, []):
-        if sorted_bus.right_hand_side is None or neighbor_is_forward == sorted_bus.right_hand_side:
+        if sorted_bus.kerb_side_forward is None or neighbor_is_forward == sorted_bus.kerb_side_forward:
             visited.append(sorted_bus)
         else:
             almost_visited.append(sorted_bus)
@@ -346,6 +355,7 @@ def modified_dfs_worker(
     max_length: cython.double,
     max_iter: cython.int,
     components: dict[GraphKey, int],
+    deadline: cython.double = float('inf'),
 ) -> tuple[list[StackElement], BestPathCollection]:
     message_ref = [f'Worker with {len(stack)} stack size']
     current_iter = 0
@@ -353,6 +363,12 @@ def modified_dfs_worker(
     with print_run_time(message_ref):
         for current_iter in range(1, max_iter + 1):  # noqa: B007
             if not stack:
+                break
+
+            # On a long route a single iteration can take a fraction of a millisecond, so
+            # max_iter alone let a batch run for seconds past the budget. The monotonic
+            # clock is system-wide, so the deadline set in the parent process holds here.
+            if not current_iter & 63 and time.monotonic() >= deadline:
                 break
 
             s = stack.pop()
@@ -550,12 +566,18 @@ async def modified_dfs(
             complete_length=ways[start_way].length,
         )
 
-    stack: list[StackElement] = [
-        init_stack_element(start_start_key),
-        init_stack_element(start_end_key),
-    ]
+    # entered at its start is driven forwards, and at its end backwards; only a direction
+    # the mapper set rules one out, as the route has always been free to start either way
+    stack: list[StackElement] = []
+    if ways[start_way].travel != 'backward':
+        stack.append(init_stack_element(start_start_key))
+    if ways[start_way].travel != 'forward':
+        stack.append(init_stack_element(start_end_key))
 
     best_path = BestPathCollection(valid=BestPath.zero(), invalid=BestPath.zero())
+
+    # the head start below counts against the budget, but always runs in full
+    deadline = time.monotonic() + MAX_SEARCH_TIME
 
     # for reference:
     # AMD Ryzen 9 5950X: 10,000 iterations in ~ 0.1s
@@ -595,15 +617,14 @@ async def modified_dfs(
                 max_length=max_length,
                 max_iter=max_iter,
                 components=components,
+                deadline=deadline,
             ),
         )
-
-    deadline = time.monotonic() + MAX_SEARCH_TIME
 
     tasks: list[asyncio.Task] = []
     while stack or tasks:
         if time.monotonic() >= deadline:
-            # in-flight workers are capped at async_max_iter, so they land promptly
+            # in-flight workers stop at the deadline too, so they land promptly
             if tasks:
                 done, _ = await asyncio.wait(tasks)
                 for task in done:
@@ -805,10 +826,11 @@ def insert_skipped_detours(
     def successors(key: GraphKey) -> tuple[GraphKey, ...]:
         return graph[exit_at(key)].connected_to
 
-    predecessors: dict[GraphKey, list[GraphKey]] = defaultdict(list)
+    # a plain dict: compiled, Cython rejects a defaultdict for a `dict` annotation
+    predecessors: dict[GraphKey, list[GraphKey]] = {}
     for key in graph:
         for neighbor in successors(key):
-            predecessors[neighbor].append(key)
+            predecessors.setdefault(neighbor, []).append(key)
 
     def preceding(key: GraphKey) -> list[GraphKey]:
         return predecessors.get(key, [])
@@ -923,9 +945,10 @@ async def calc_bus_route(
     tags: dict[str, str],
     executor: ProcessPoolExecutor,
     n_processes: cython.int,
+    driving_side: str = 'right',
 ) -> FinalRoute:
     with print_run_time('Sorting bus stops'):
-        sorted_buses = sort_bus_on_path(bus_stop_collections, ways_members.values())
+        sorted_buses = sort_bus_on_path(bus_stop_collections, ways_members.values(), driving_side)
 
     id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]] = {}
 

@@ -31,6 +31,39 @@
         </div>
     </div>
 
+    <div class="view d-none" id="view-master">
+        <h5 class="title">
+            Route master
+            <b>#<span class="master-id"></span></b>
+            <a class="master-url" target="_blank">🔗</a>
+        </h5>
+        <div class="body">
+            <div class="d-flex justify-content-between mb-2">
+                <button class="btn btn-link btn-master-back p-0">« Change route</button>
+                <button class="btn btn-link btn-master-reload p-0">↻ Reload</button>
+            </div>
+
+            <div id="master-summary"></div>
+
+            <table class="table table-sm table-bordered table-tags mb-2 d-none" id="master-tags-table">
+                <tbody id="master-tags"></tbody>
+            </table>
+            <div class="d-flex justify-content-between mb-2 d-none" id="master-tags-controls">
+                <button type="button" class="btn btn-link btn-sm p-0" id="master-tags-toggle">Show all tags</button>
+                <button type="button" class="btn btn-link btn-sm p-0" id="master-tags-add">+ Add tag</button>
+            </div>
+            <div class="mb-2 d-none" id="master-tags-actions">
+                <label class="form-label small mb-1" for="master-comment">Changeset comment</label>
+                <input type="text" class="form-control form-control-sm mb-1" id="master-comment" maxlength="255">
+                <button class="btn btn-sm btn-primary w-100 mb-1" id="master-upload">Upload route master</button>
+                <button class="btn btn-sm btn-secondary w-100" id="master-download">💾 Download .osc</button>
+            </div>
+
+            <div id="master-issues"></div>
+            <div id="master-routes"></div>
+        </div>
+    </div>
+
     <div class="view d-none" id="view-edit">
         <h5 class="title">
             <span class="editing-label">Editing relation</span>
@@ -52,6 +85,26 @@
                 <button type="button" class="btn btn-link btn-sm p-0" id="edit-tags-add">+ Add tag</button>
             </div>
 
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <label for="edit-driving-side" class="small text-nowrap"
+                    title="Which side of the road buses drive on. A loop is driven the way that keeps its stops on that side.">Traffic keeps</label>
+                <select class="form-select form-select-sm" id="edit-driving-side"></select>
+            </div>
+
+            <div class="d-none" id="edit-route-master"></div>
+
+            <div class="d-none" id="edit-route-master-tags-wrap">
+                <table class="table table-sm table-bordered table-tags mb-2">
+                    <tbody id="edit-route-master-tags"></tbody>
+                </table>
+                <div class="d-flex justify-content-between mb-2">
+                    <button type="button" class="btn btn-link btn-sm p-0"
+                        id="edit-route-master-tags-toggle">Show all tags</button>
+                    <button type="button" class="btn btn-link btn-sm p-0"
+                        id="edit-route-master-tags-add">+ Add tag</button>
+                </div>
+            </div>
+
             <div id="edit-warnings"></div>
 
             <div class="actions text-end">
@@ -69,8 +122,8 @@
             <button class="btn btn-link btn-back p-0 mb-2">« Go back</button>
 
             <div class="alert alert-light text-center small py-1 px-2 mb-2">
-                Clicking on the stops doesn't do anything.<br>
-                It's just to help you check the route.
+                Clicking on the stops doesn't do anything, it's just to<br>
+                help you check the route. Use 🔍 to zoom to a stop.
             </div>
 
             <div id="route-summary"></div>

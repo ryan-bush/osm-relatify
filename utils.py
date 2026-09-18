@@ -31,6 +31,18 @@ def get_http_client(base_url: str = '', *, headers: dict | None = None) -> Async
 HTTP = get_http_client()
 
 
+def overpass_settings(timeout: int, maxsize_mib: int, *, out: str = 'json') -> str:
+    """
+    The settings line every Overpass query starts with.
+
+    A busy instance decides whether to run a query from what the query says it needs, and
+    turns away with a 504 anything it cannot promise. The default allowance is 512 MiB,
+    far more than any query here uses, so each one says how much it actually needs and is
+    refused that much less often.
+    """
+    return f'[out:{out}][timeout:{timeout}][maxsize:{maxsize_mib * 1024 * 1024}];'
+
+
 @contextmanager
 def print_run_time(message: str | list):
     start_time = time.monotonic()
@@ -68,6 +80,8 @@ def normalize_name(
         name = re.sub(r'\b(\d\d)\b', r'0\1', name)
         name = re.sub(r'\b(\d)\b', r'00\1', name)
     if special:
+        # "Carreg-Bran" and "Carreg Bran" are one name, so a hyphen separates words
+        name = re.sub(r'[-\u2010-\u2015/]', ' ', name)
         name = re.sub(r'[^\w\s]', '', name)
     if whitespace:
         name = re.sub(r'\s+', ' ', name).strip()

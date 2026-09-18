@@ -10,6 +10,7 @@ import {
     existingAreasFor,
     getPendingStopArea,
     groupMembers,
+    growStopArea,
     newStopAreaCount,
     reconcileStopAreas,
     removeStopArea,
@@ -217,4 +218,74 @@ test("a new area never carries a name to replace", () => {
     addStopArea(groupMembers([northbound, southbound]), "The Station", null)
 
     assert.equal(stopAreasPayload()[0].expectedName, null)
+})
+
+// Llys Watling on route 4: an area was queued for one side, then the other side was
+// renamed to match, bringing its existing area into the group
+test("an area queued for part of a group grows into the group's existing relation", () => {
+    const watlingCourt = { platform: stop(3, "Watling Court"), stop: stop(4, "Watling Court") }
+    setExistingStopAreas([{ id: 77, name: "Watling Court", members: ["node/3", "node/4"] }])
+
+    const part = groupMembers([northbound])
+    addStopArea(part, "Llys Watling", null)
+
+    const whole = groupMembers([northbound, watlingCourt])
+    assert.equal(growStopArea(whole, existingAreaFor(whole)), true)
+
+    assert.equal(getPendingStopArea(part), null)
+    assert.deepEqual(
+        stopAreasPayload().map((area) => [area.id, area.name, area.members.length]),
+        [[77, "Watling Court", 4]],
+    )
+})
+
+test("a part already covered by an area queued for the whole group is dropped", () => {
+    const part = groupMembers([northbound])
+    const whole = groupMembers([northbound, southbound])
+    addStopArea(part, "The Station", null)
+    addStopArea(whole, "The Station", null)
+
+    assert.equal(growStopArea(whole, null), true)
+    assert.equal(stopAreasPayload().length, 1)
+    assert.equal(stopAreasPayload()[0].members.length, 4)
+})
+
+test("an area for a different group is left alone", () => {
+    const other = groupMembers([{ platform: stop(8, "Elsewhere"), stop: null }, { platform: stop(9, "Elsewhere") }])
+    addStopArea(other, "Elsewhere", null)
+
+    assert.equal(growStopArea(groupMembers([northbound, southbound]), null), false)
+    assert.ok(getPendingStopArea(other))
+})
+
+// "A stop area refers to node/-17, which is not being created": the far side's new stop
+// position is not uploaded once the route stops calling there, but the area still had it
+test("a new stop the upload does not create is left out of its area", () => {
+    const newNorth = { platform: stop(-1, "The Station"), stop: stop(-2, "The Station") }
+    addStopArea(groupMembers([newNorth, southbound]), "The Station", null)
+
+    const [payload] = stopAreasPayload(new Set([-1]))
+
+    assert.deepEqual(
+        payload.members.map((member) => member.id),
+        [-1, 3, 4],
+    )
+})
+
+test("a new area left with a single member is not sent", () => {
+    const newNorth = { platform: stop(-1, "The Station"), stop: null }
+    const newSouth = { platform: stop(-3, "The Station"), stop: null }
+    addStopArea(groupMembers([newNorth, newSouth]), "The Station", null)
+
+    assert.deepEqual(stopAreasPayload(new Set([-1])), [])
+})
+
+test("an existing area left with nothing to add is not sent", () => {
+    setExistingStopAreas([{ id: 77, name: "The Station", members: ["node/1", "node/2"] }])
+    const newStop = { platform: null, stop: stop(-2, "The Station") }
+    const members = groupMembers([northbound, newStop])
+    addStopArea(members, "The Station", existingAreaFor(members))
+
+    assert.equal(stopAreasPayload(new Set()).length, 0)
+    assert.equal(stopAreasPayload(new Set([-2])).length, 1)
 })

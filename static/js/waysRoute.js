@@ -1,9 +1,10 @@
 import { clearAntPath, processRouteAntPath } from "./antPathLayer.js"
 import { busStopData, refreshStopPositionDirections } from "./busStopsLayer.js"
 import { processRouteStops, processRouteWarnings, relationId } from "./menu.js"
-import { relationTags } from "./tagEditor.js"
+import { relationTags } from "./relationTagEditor.js"
 import { deflateCompress, deflateDecompress } from "./utils.js"
-import { insertStopPositionsIntoWays, stopPositionPlacements } from "./stopPositions.js"
+import { followWaySegments, insertStopPositionsIntoWays, stopPositionPlacements } from "./stopPositions.js"
+import { drivingSide } from "./drivingSide.js"
 import { startWay, stopWay } from "./waysEndpoint.js"
 import { waysData } from "./waysLayer.js"
 
@@ -56,6 +57,7 @@ export function requestCalcBusRoute() {
 
     // a new stop position is only a vertex of the road once it is put there; without it
     // the calculation cannot find it on the route and drops it
+    followWaySegments(waysData)
     const waysWithStopPositions = insertStopPositionsIntoWays(ways, stopPositionPlacements())
 
     calcBusRoute(startWay.id, stopWay.id, waysWithStopPositions, busStops, relationTags)
@@ -85,6 +87,7 @@ const onopen = async () => {
         ways: ways,
         busStops: busStops,
         tags: tags,
+        drivingSide: drivingSide(),
     })
 
     ws.send(body)
@@ -135,4 +138,10 @@ const calcBusRoute = async (...args) => {
 
 function processRouteData(route) {
     routeData = route
+}
+
+// A route put away leaves no calculation behind. It is what says whether the members were
+// edited, and the last answer it gave is not an answer about a route that is no longer open.
+export function clearRouteData() {
+    routeData = null
 }

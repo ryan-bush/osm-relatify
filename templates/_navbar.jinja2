@@ -9,6 +9,10 @@
             <span class="navbar-brand-sub">
                 by
                 <a class="link-dark link-offset-1 link-underline-opacity-25 link-underline-opacity-75-hover"
+                    href="https://github.com/ryan-bush" target="_blank">
+                    Ryan Bush</a>,
+                forked from
+                <a class="link-dark link-offset-1 link-underline-opacity-25 link-underline-opacity-75-hover"
                     href="https://monicz.dev" target="_blank">
                     Kamil Monicz</a>
             </span>
@@ -27,31 +31,32 @@
                     <span class="nav-link px-0">・</span>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="https://monicz.dev/#get-in-touch" target="_blank">Contact</a>
+                    <a class="nav-link" href="https://github.com/ryan-bush/osm-relatify" target="_blank">Contact</a>
                 </li>
                 <li class="nav-item d-none d-lg-inline">
                     <span class="nav-link px-0">・</span>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="https://monicz.dev/#support-my-work" target="_blank">Donate</a>
+                    <a class="nav-link" href="https://github.com/ryan-bush/osm-relatify/wiki" target="_blank">Help &amp; docs</a>
                 </li>
                 <li class="nav-item d-none d-lg-inline">
                     <span class="nav-link px-0">・</span>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="https://github.com/Zaczero/osm-relatify/issues" target="_blank">
+                    <a class="nav-link" href="https://github.com/ryan-bush/osm-relatify/issues" target="_blank">
                         Bug report
                     </a>
                 </li>
+                {% if app_version %}
                 <li class="nav-item d-none d-lg-inline">
                     <span class="nav-link px-0">・</span>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="https://github.com/Zaczero/osm-relatify" target="_blank">
-                        <img class="repo-stars" alt="GitHub Repo stars"
-                            src="https://shields.monicz.dev/github/stars/Zaczero/osm-relatify?style=social">
-                    </a>
+                    <a id="app-version" class="nav-link"
+                        href="https://github.com/ryan-bush/osm-relatify/releases" target="_blank"
+                        title="Running version {{ app_version }}">{{ app_version }}</a>
                 </li>
+                {% endif %}
             </ul>
         </div>
 

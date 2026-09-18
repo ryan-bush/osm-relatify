@@ -2,7 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from config import TAG_MAX_LENGTH
-from main import PostDownloadOsmChangeModel
+from main import PostDownloadOsmChangeModel, PostRouteMasterOnlyModel
+from route_masters import RouteMasterChange
 
 
 def make(tags: dict[str, str] | None = None, **kwargs) -> PostDownloadOsmChangeModel:
@@ -153,3 +154,82 @@ def test_naptan_is_still_credited_when_it_supplied_something():
     )
 
     assert model.make_changeset_tags()['source'] == 'NaPTAN'
+
+
+MASTER_TAGS = {'type': 'route_master', 'route_master': 'bus', 'ref': '12', 'name': 'Bus 12'}
+
+
+def _master(**kwargs):
+    return RouteMasterChange(**kwargs)
+
+
+def test_comment_says_a_route_master_was_created():
+    comment = make({'name': 'Bus 12'}, routeMaster=_master(tags={'name': 'Bus 12'})).make_comment()
+
+    assert comment == 'Updated route: Bus 12, #7; created route master'
+
+
+def test_comment_names_the_route_master_joined():
+    comment = make({'name': 'Bus 12'}, routeMaster=_master(id=100)).make_comment()
+
+    assert comment == 'Updated route: Bus 12, #7; added to route master #100'
+
+
+def test_comment_says_when_the_master_was_edited_too():
+    comment = make(
+        {'name': 'Bus 12'},
+        routeMaster=_master(id=100, tags={**MASTER_TAGS, 'operator': 'Alpha'}, tagsOriginal=MASTER_TAGS),
+    ).make_comment()
+
+    assert comment == 'Updated route: Bus 12, #7; added to route master #100 and edited its tags'
+
+
+def test_comment_does_not_claim_an_edit_that_was_not_made():
+    comment = make(
+        {'name': 'Bus 12'},
+        routeMaster=_master(id=100, tags={**MASTER_TAGS, 'name': '  Bus 12  '}, tagsOriginal=MASTER_TAGS),
+    ).make_comment()
+
+    assert comment == 'Updated route: Bus 12, #7; added to route master #100'
+
+
+def test_comment_counts_the_masters_left():
+    assert make({'name': 'Bus 12'}, routeMasterDetach=[100]).make_comment().endswith(
+        '; removed from 1 route master'
+    )
+    assert make({'name': 'Bus 12'}, routeMasterDetach=[100, 101]).make_comment().endswith(
+        '; removed from 2 route masters'
+    )
+
+
+def test_comment_says_nothing_about_masters_when_none_changed():
+    assert make({'name': 'Bus 12'}).make_comment() == 'Updated route: Bus 12, #7'
+
+
+class TestRouteMasterOnlyComment:
+    """A master edited from the list of a line's variants goes up on its own."""
+
+    def _model(self, tags, comment=None):
+        return PostRouteMasterOnlyModel(id=100, tags=tags, tagsOriginal={}, comment=comment)
+
+    def test_it_names_the_master(self):
+        assert self._model({'name': 'Bus 9'}).make_comment() == 'Updated route master: Bus 9, #100'
+
+    def test_it_falls_back_to_the_ref(self):
+        assert self._model({'ref': '9'}).make_comment() == 'Updated route master: 9, #100'
+
+    def test_it_still_says_which_one_without_either(self):
+        assert self._model({}).make_comment() == 'Updated route master #100'
+
+    def test_a_comment_of_the_mapper_s_own_wins(self):
+        assert self._model({'name': 'Bus 9'}, comment='  Fixed the operator  ').make_comment() == 'Fixed the operator'
+
+    def test_a_blank_comment_falls_back(self):
+        assert self._model({'name': 'Bus 9'}, comment='   ').make_comment() == 'Updated route master: Bus 9, #100'
+
+    def test_the_changeset_says_what_made_it(self):
+        tags = self._model({'name': 'Bus 9'}).make_changeset_tags()
+
+        assert tags['comment'] == 'Updated route master: Bus 9, #100'
+        assert tags['created_by']
+        assert tags['host']

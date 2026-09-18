@@ -2,7 +2,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { effectiveName } from "../../static/js/stopNames.js"
+import { effectiveName, placeKey } from "../../static/js/stopNames.js"
 
 const stop = (name) => ({ tags: name === undefined ? {} : { name: name } })
 
@@ -36,4 +36,20 @@ test("surrounding whitespace is trimmed", () => {
 
 test("an accepted rename wins even over a blank name", () => {
     assert.equal(effectiveName(stop(), "The Orchards", "naptan"), "The Orchards")
+})
+
+test("a hyphen and a space name the same place", () => {
+    assert.equal(placeKey("Carreg-Bran"), placeKey("Carreg Bran"))
+})
+
+test("punctuation and case do not tell places apart", () => {
+    assert.equal(placeKey("St. Mary's  Church"), "st marys church")
+})
+
+test("letters beyond ASCII are kept", () => {
+    assert.equal(placeKey("Pen Lôn Llan"), "pen lôn llan")
+})
+
+test("no name is no place", () => {
+    assert.equal(placeKey(undefined), "")
 })

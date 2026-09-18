@@ -79,6 +79,7 @@ Everything below has a working default and can be set in `.env`:
 | --- | --- |
 | `OVERPASS_API_INTERPRETER` | Comma-separated Overpass endpoints, tried in order. |
 | `OVERPASS_API_ATTEMPTS` | Attempts per endpoint before moving to the next one. |
+| `OVERPASS_MAX_DATA_AGE` | How far behind live OSM an instance may be before its answers are refused. Seconds; defaults to an hour, and 0 turns the check off. |
 | `WEBSITE` | The URL recorded in changesets and the user agent. |
 | `SENTRY_DSN` | Enables error reporting, off unless set. |
 | `OSM_URL` | The OSM instance to sign in to and upload to. Defaults to live OSM. |
@@ -86,6 +87,9 @@ Everything below has a working default and can be set in `.env`:
 | `STOP_AREA_SEARCH_AREA` | How far apart the stops of one place can be, for stop areas. Metres; defaults to 150. |
 | `NAPTAN_ENABLED` | Suggests and checks stops using NaPTAN. On by default; set to `0` to turn off. |
 | `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
+| `UPDATE_CHECK_REPO` | The `owner/repo` whose releases are checked for a newer version. Leave empty to turn the check off. |
+| `UPDATE_CHECK_TTL` | How long an answer from GitHub is reused. Seconds; defaults to six hours. |
+| `UPDATE_CHECK_RETRY_TTL` | How long to wait before asking again after a failed check. Seconds; defaults to ten minutes. |
 
 ### Running the tests
 
@@ -120,6 +124,8 @@ There are several additions from the Planned section, plus others that help with
 - Improved overpass resilience
 - NaPTAN support in UK
 - Stop Locations & Areas
+- Route masters
+- The running version in the navbar, which says when a newer one has been released
 
 For detailed guides on new features, see the wiki.
 
@@ -150,11 +156,14 @@ this fork makes, listed above, are documented there too.
 - ✅ Custom changeset comment
 - ✅ Creating new relations
 - ✅ U-turns without `highway=turning_circle`
+- ✅ Loops driven the right way round for left- and right-hand traffic, with per-road direction overrides
 - ✅ Creating new bus stops (platforms)
 - ✅ Suggesting missing stops from NaPTAN (optional, Great Britain)
 - ✅ Stop positions on the road, for new and existing stops
 - ✅ Reviewing tags NaPTAN and OSM disagree on
 - ✅ `stop_area` relations for grouped stops
+- ✅ `route_master` relations: viewing, linking and editing
+- ✅ Working through every variant of a line from its `route_master`
 
 
 ### Planned

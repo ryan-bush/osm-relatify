@@ -77,7 +77,7 @@ def _change(members, new_stops, osm, positions=(), tags=BUS_TAGS) -> dict:
             new_stops=new_stops,
             new_stop_positions=positions,
         )
-    )
+    ).xml
     return xmltodict.parse(xml, force_list=('node', 'way', 'member', 'tag', 'nd'))['osmChange']
 
 
@@ -164,6 +164,14 @@ class TestBuildNewStopNodes:
 
         assert e.value.status_code == 400
         assert 'distinct ids' in e.value.detail
+
+    def test_a_stop_position_the_route_does_not_call_at_is_refused(self):
+        # Tan Rallt on route 4: put on the road, but lost from the route before upload
+        with pytest.raises(HTTPException) as e:
+            build_new_stop_nodes([_stop()], [_position()], 'bus', [PLATFORM, WAY])
+
+        assert e.value.status_code == 400
+        assert 'High Street' in e.value.detail
 
     def test_the_route_may_refer_to_the_stop_position(self):
         # it is sent, so it is not reported as a member nothing creates

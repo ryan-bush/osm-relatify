@@ -72,6 +72,12 @@ def test_the_name_is_compared_loosely_enough_for_punctuation_and_case():
     assert groups[0] == groups[1] != -1
 
 
+def test_a_hyphen_joins_words_rather_than_running_them_together():
+    groups = _groups([_collection('Carreg-Bran', 1), _collection('Carreg Bran', 2, lon=0.0003)])
+
+    assert groups[0] == groups[1] != -1
+
+
 def test_an_unnamed_stop_belongs_to_nothing():
     groups = _groups([_collection('', 1), _collection('The Orchards', 2, lon=0.0003)])
 

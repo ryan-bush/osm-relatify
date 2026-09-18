@@ -1,6 +1,6 @@
 import asyncio
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import replace
 
 import pytest
@@ -157,11 +157,10 @@ def _oneway_network(way_nodes, coords, roundabouts=()):
 DIAMONDS = 16
 
 
-def test_detour_off_the_main_road_is_tried_before_carrying_on(monkeypatch):
+def _m5_j24_network():
     """M5 J24 on the Falcon: off the motorway, round the interchange, along to the next
     roundabout to serve a stop and back, round the interchange again and back on.
 
-    A long route runs out of search time, and then only what was tried first comes back.
     The run of forks after the junction stands in for the rest of the way to Plymouth,
     with more alternatives than the search gets through before it would backtrack.
     """
@@ -213,7 +212,12 @@ def test_detour_off_the_main_road_is_tried_before_carrying_on(monkeypatch):
     coords['end'] = (coords[previous][0] - 0.002, coords[previous][1] - 0.002)
     way_nodes['mot_end'] = [previous, 'end']
 
-    ways = _oneway_network(way_nodes, coords, roundabouts={'i12', 'i23', 'i34', 'i45', 'i67', 'i71'})
+    return _oneway_network(way_nodes, coords, roundabouts={'i12', 'i23', 'i34', 'i45', 'i67', 'i71'})
+
+
+def test_detour_off_the_main_road_is_tried_before_carrying_on(monkeypatch):
+    """A long route runs out of search time, and then only what was tried first comes back."""
+    ways = _m5_j24_network()
 
     # only the head start the search always gets, as when a long route hits the budget
     monkeypatch.setattr(route_module, 'MAX_SEARCH_TIME', 0)
@@ -313,3 +317,35 @@ def test_a_loop_that_is_the_only_pass_over_its_ways_stays():
     ways = _junction_loops()
 
     assert _drop_loops(ways, ['in', 'a', 'b', 'c', 'd', 'e', 'out']) == ['in', 'a', 'b', 'c', 'd', 'e', 'out']
+
+
+def test_workers_stop_at_the_deadline_rather_than_their_iteration_cap(monkeypatch):
+    # a single iteration on a long route can be slow enough that max_iter alone let a
+    # batch run for seconds past the budget, so a worker handed a deadline already
+    # gone must stop there, even with no iteration cap to stop it
+    real_worker = route_module.modified_dfs_worker
+    worker_stacks = []
+
+    def past_deadline(*args, **kwargs):
+        if 'deadline' not in kwargs:
+            return real_worker(*args, **kwargs)
+        stack, best_path = real_worker(*args, **(kwargs | {'max_iter': 1 << 30, 'deadline': 0.0}))
+        worker_stacks.append(len(stack))
+        return stack, best_path
+
+    # threads, so the patched worker is the one that runs
+    monkeypatch.setattr(route_module, 'modified_dfs_worker', past_deadline)
+    monkeypatch.setattr(route_module, 'MAX_SEARCH_TIME', 0.5)
+
+    ways = _m5_j24_network()
+
+    async def run():
+        with ThreadPoolExecutor(2) as executor:
+            return await modified_dfs(
+                build_graph(ways), ways, ElementId('mot_in'), ElementId('mot_end'), {}, executor, n_processes=2
+            )
+
+    assert asyncio.run(run()).path
+    # the workers ran, and handed back unexplored work instead of finishing it
+    assert worker_stacks
+    assert all(worker_stacks)

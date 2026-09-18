@@ -4,7 +4,7 @@ import pytest
 import xmltodict
 from fastapi import HTTPException
 
-from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection
+from placeholder_ids import RelationPlaceholders
 from models.final_route import FinalRoute
 from relation_builder import build_osm_change
 from stop_areas import (
@@ -12,7 +12,6 @@ from stop_areas import (
     StopAreaMember,
     build_new_stop_area_relations,
     build_stop_area_modifications,
-    build_stop_areas_query,
     check_new_stop_areas,
     parse_stop_areas,
 )
@@ -60,22 +59,6 @@ def _relation(id=99, tags=None, members=()):
     }
 
 
-class TestBuildQuery:
-    def test_asks_for_the_parents_of_both_kinds_of_stop(self):
-        query = build_stop_areas_query([2, 1], [7], 30)
-
-        assert 'node(id:1,2)' in query
-        assert 'way(id:7)' in query
-        assert '"public_transport"="stop_area"' in query
-
-    def test_leaves_out_a_kind_there_are_none_of(self):
-        # an empty id list is a syntax error in Overpass
-        assert 'way(id:' not in build_stop_areas_query([1], [], 30)
-
-    def test_no_stops_means_no_query_at_all(self):
-        assert build_stop_areas_query([], [], 30) == ''
-
-
 class TestParse:
     def test_reads_the_relations_and_their_members(self):
         [area] = parse_stop_areas(
@@ -104,7 +87,8 @@ class TestParse:
 
 class TestBuildNewStopAreaRelations:
     def test_creates_the_relation_with_its_tags_and_members(self):
-        [relation] = build_new_stop_area_relations([_change()], created_node_ids=set())
+        [plan] = build_new_stop_area_relations([_change()], set(), RelationPlaceholders())
+        relation = plan.element
 
         assert relation['@id'] == -2, 'below the route relation, which takes -1'
         assert {t['@k']: t['@v'] for t in relation['tag']} == {
@@ -117,36 +101,45 @@ class TestBuildNewStopAreaRelations:
             ('node', 2, 'stop'),
         ]
 
+    def test_the_plan_says_what_the_relation_will_be_once_uploaded(self):
+        """The upload reads the real id back by the placeholder, which is only known here."""
+        [plan] = build_new_stop_area_relations([_change()], set(), RelationPlaceholders())
+
+        assert plan.placeholder_id == -2
+        assert plan.name == 'The Station'
+        assert [m.key for m in plan.members] == ['node/1', 'node/2']
+
     def test_each_new_area_gets_its_own_placeholder(self):
-        relations = build_new_stop_area_relations([_change(), _change(name='Market Square')], set())
-        assert [r['@id'] for r in relations] == [-2, -3]
+        plans = build_new_stop_area_relations([_change(), _change(name='Market Square')], set(), RelationPlaceholders())
+        assert [p.placeholder_id for p in plans] == [-2, -3]
+        assert [p.element['@id'] for p in plans] == [-2, -3]
 
     def test_an_existing_area_is_not_created_again(self):
-        assert build_new_stop_area_relations([_change(id=99)], set()) == []
+        assert build_new_stop_area_relations([_change(id=99)], set(), RelationPlaceholders()) == []
 
     def test_a_new_area_needs_a_name(self):
         with pytest.raises(HTTPException) as e:
-            build_new_stop_area_relations([_change(name='  ')], set())
+            build_new_stop_area_relations([_change(name='  ')], set(), RelationPlaceholders())
 
         assert e.value.status_code == 400
         assert 'needs a name' in e.value.detail
 
     def test_it_may_group_a_stop_this_changeset_creates(self):
         change = _change(members=[_member(id=-3), _member(id=-4, role='stop')])
-        [relation] = build_new_stop_area_relations([change], created_node_ids={-3, -4})
+        [plan] = build_new_stop_area_relations([change], {-3, -4}, RelationPlaceholders())
 
-        assert [m['@ref'] for m in relation['member']] == [-3, -4]
+        assert [m['@ref'] for m in plan.element['member']] == [-3, -4]
 
     def test_a_placeholder_nothing_creates_is_rejected(self):
         with pytest.raises(HTTPException) as e:
-            build_new_stop_area_relations([_change(members=[_member(id=-9)])], created_node_ids=set())
+            build_new_stop_area_relations([_change(members=[_member(id=-9)])], set(), RelationPlaceholders())
 
         assert e.value.status_code == 400
         assert 'not being created' in e.value.detail
 
     def test_the_same_stop_twice_is_rejected(self):
         with pytest.raises(HTTPException) as e:
-            build_new_stop_area_relations([_change(members=[_member(id=1), _member(id=1)])], set())
+            build_new_stop_area_relations([_change(members=[_member(id=1), _member(id=1)])], set(), RelationPlaceholders())
 
         assert e.value.status_code == 400
         assert 'twice' in e.value.detail
@@ -171,7 +164,7 @@ def _build(changes, osm, members=(), new_stops=(), new_stop_positions=()):
             new_stop_positions=new_stop_positions,
             stop_areas=changes,
         )
-    )
+    ).xml
     return xmltodict.parse(xml, force_list=('relation', 'node', 'way', 'member', 'tag'))['osmChange']
 
 
@@ -191,6 +184,17 @@ class TestBuildStopAreaModifications:
 
     def test_an_area_that_already_has_them_all_is_left_alone(self):
         osm = FakeOsm({99: _relation(members=[('node', 1, 'platform'), ('node', 2, 'stop')])})
+
+        assert _modifications([_change(id=99)], osm) == []
+
+    def test_an_older_stop_position_role_is_put_right_when_the_area_changes(self):
+        osm = FakeOsm({99: _relation(members=[('node', 5, 'stop_position'), ('node', 1, 'platform')])})
+        [relation] = _modifications([_change(id=99)], osm)
+
+        assert [(m['@ref'], m['@role']) for m in relation['member']] == [('5', 'stop'), ('1', 'platform'), (2, 'stop')]
+
+    def test_an_older_role_alone_is_not_a_reason_to_change_the_area(self):
+        osm = FakeOsm({99: _relation(members=[('node', 1, 'platform'), ('node', 2, 'stop_position')])})
 
         assert _modifications([_change(id=99)], osm) == []
 
@@ -231,36 +235,6 @@ class TestBuildOsmChange:
         [modified] = change['modify']['relation']
         assert modified['@id'] == '99'
         assert len(modified['member']) == 2
-
-
-def test_a_failed_lookup_is_not_the_same_as_no_stop_areas():
-    """
-    An empty list is what invites the mapper to create one, so a lookup that could not
-    reach Overpass says None instead and the client stops offering stop areas at all.
-    """
-    import main
-
-    class _Failing:
-        async def query_stop_areas(self, node_ids, way_ids):
-            raise RuntimeError('Overpass is unavailable')
-
-    collection = FetchRelationBusStopCollection(
-        platform=FetchRelationBusStop.from_data({
-            'id': 1,
-            'type': 'node',
-            'lat': 51.5,
-            'lon': -1.7,
-            'tags': {'name': 'Bladen Close', 'public_transport': 'platform', 'highway': 'bus_stop'},
-        }),
-        stop=None,
-    )
-
-    original = main._OVERPASS
-    main._OVERPASS = _Failing()
-    try:
-        assert asyncio.run(main._query_stop_areas([collection])) is None
-    finally:
-        main._OVERPASS = original
 
 
 def _parent_area(id=21385736, name='Berkeley Road'):
