@@ -2,11 +2,12 @@
   "data_format": 1,
   "project": {
     "contact_email": "contact.via.website@invalid.localhost",
-    "contact_name": "Kamil Monicz (Zaczero)",
+    "contact_name": "Ryan Bush",
     "description": "OpenStreetMap Public Transport Made Easy!",
-    "icon_url": "https://raw.githubusercontent.com/Zaczero/osm-relatify/main/static/img/favicon/256.png",
-    "name": "OSM Relatify",
-    "project_url": "https://relatify.monicz.dev"
+    "doc_url": "https://wiki.openstreetmap.org/wiki/Relatify",
+    "icon_url": "https://raw.githubusercontent.com/ryan-bush/osm-relatify/main/static/img/favicon/256.png",
+    "name": "Relatify",
+    "project_url": "https://github.com/ryan-bush/osm-relatify"
   },
   "tags": [
     {
@@ -42,6 +43,27 @@
     {
       "key": "type",
       "value": "was:route",
+      "object_types": ["relation"]
+    },
+    {
+      "key": "type",
+      "value": "route_master",
+      "object_types": ["relation"],
+      "description": "Used to read and write the route master a line's variants belong to."
+    },
+    {
+      "key": "route_master",
+      "value": "bus",
+      "object_types": ["relation"]
+    },
+    {
+      "key": "route_master",
+      "value": "tram",
+      "object_types": ["relation"]
+    },
+    {
+      "key": "route_master",
+      "value": "trolleybus",
       "object_types": ["relation"]
     },
     {
@@ -100,6 +122,41 @@
     {
       "key": "local_ref",
       "object_types": ["node", "relation", "way"]
+    },
+    {
+      "key": "naptan:AtcoCode",
+      "object_types": ["node", "way"],
+      "description": "Filled in on a stop matched to NaPTAN, in Great Britain only."
+    },
+    {
+      "key": "naptan:NaptanCode",
+      "object_types": ["node", "way"],
+      "description": "Filled in on a stop matched to NaPTAN, in Great Britain only."
+    },
+    {
+      "key": "naptan:CommonName",
+      "object_types": ["node", "way"],
+      "description": "Filled in on a stop matched to NaPTAN, in Great Britain only."
+    },
+    {
+      "key": "naptan:Indicator",
+      "object_types": ["node", "way"],
+      "description": "Filled in on a stop matched to NaPTAN, in Great Britain only."
+    },
+    {
+      "key": "naptan:Street",
+      "object_types": ["node", "way"],
+      "description": "Filled in on a stop matched to NaPTAN, in Great Britain only."
+    },
+    {
+      "key": "naptan:Bearing",
+      "object_types": ["node", "way"],
+      "description": "Filled in on a stop matched to NaPTAN, in Great Britain only."
+    },
+    {
+      "key": "naptan:BusStopType",
+      "object_types": ["node", "way"],
+      "description": "Filled in on a stop matched to NaPTAN, in Great Britain only."
     },
     {
       "key": "roundtrip",
