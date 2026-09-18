@@ -2,7 +2,6 @@ import asyncio
 import csv
 import fcntl
 import os
-import re
 import sqlite3
 import time
 from collections import Counter
@@ -23,7 +22,7 @@ from models.bounding_box import BoundingBox
 from models.download_history import DownloadHistory
 from models.fetch_relation import FetchRelationBusStopCollection
 from models.naptan_stop import NaptanStop, NaptanTagSuggestion
-from naptan_tags import differing_tags, missing_tags
+from naptan_tags import differing_tags, indicator_letter, missing_tags, stop_letter
 from overpass import optimize_cells_and_get_bbs
 from utils import HTTP, normalize_name
 
@@ -36,10 +35,6 @@ _POLELESS_BUS_STOP_TYPES = frozenset(('HAR', 'FLX'))
 # an unmarked stop, where buses halt on request with no pole or sign; still a place on
 # the map, but tagged so nobody goes looking for a pole
 _UNMARKED_BUS_STOP_TYPE = 'CUS'
-
-# "Stop A", "Stop P1", "Stance 1", "Bay 12"; other indicators ("opp", "o/s 103", "->N")
-# describe where the stop is rather than naming it
-_LOCAL_REF_RE = re.compile(r'^(?:stop|stand|stance|bay)\s+([a-z0-9]{1,4})$', re.IGNORECASE)
 
 _TAG_COLUMNS = (
     ('naptan:AtcoCode', 'ATCOCode'),
@@ -85,8 +80,8 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     indicator = row['Indicator'].strip()
     tags = {'name': name}
 
-    if match := _LOCAL_REF_RE.match(indicator):
-        tags['local_ref'] = match.group(1).upper()
+    if letter := indicator_letter(indicator):
+        tags['local_ref'] = letter
 
     for key, column in _TAG_COLUMNS:
         if value := row[column].strip():
@@ -361,11 +356,11 @@ def match_stops(
 
     for i, (stop, indices) in enumerate(zip(candidates, nearby, strict=True)):
         stop_name = comparable(stop.name)
-        stop_ref = stop.tags.get('local_ref', '').upper()
+        stop_ref = stop_letter(stop.tags.get('local_ref', ''))
 
         for j in indices:
             collection = bus_stop_collections[j]
-            osm_ref = collection.best.tags.get('local_ref', '').strip().upper()
+            osm_ref = stop_letter(collection.best.tags.get('local_ref', ''))
 
             # a group of stops sharing a name is told apart by their letters
             if stop_ref and osm_ref and stop_ref != osm_ref:
@@ -406,8 +401,8 @@ def match_stops(
 
         stop = candidates[i]
         collection = bus_stop_collections[j]
-        stop_ref = stop.tags.get('local_ref', '').upper()
-        osm_ref = collection.best.tags.get('local_ref', '').strip().upper()
+        stop_ref = stop_letter(stop.tags.get('local_ref', ''))
+        osm_ref = stop_letter(collection.best.tags.get('local_ref', ''))
 
         # NaPTAN positions are too rough to tell same-named twins apart by distance, so
         # codes are only copied from a match the stop letters confirm, or that no other
