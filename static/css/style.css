@@ -543,6 +543,17 @@
   color: #726;
 }
 
+.route-summary-item .stop-info-zoom {
+  color: #555;
+  line-height: 1;
+  margin-left: .25em;
+  vertical-align: -.15em;
+}
+
+.route-summary-item .stop-info-zoom:hover {
+  color: #000;
+}
+
 .digit {
   font-family: monospace;
   font-weight: bold;
