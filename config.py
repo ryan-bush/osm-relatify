@@ -13,10 +13,12 @@ from githead import githead
 load_dotenv()
 
 try:
-    VERSION = 'git#' + githead()[:7]
+    GIT_REVISION = githead()[:7]
 except OSError:
     # inside a git worktree .git is a file rather than a directory, which githead cannot read
-    VERSION = 'git#unknown'
+    GIT_REVISION = ''
+
+VERSION = f'git#{GIT_REVISION}' if GIT_REVISION else 'git#unknown'
 
 
 def _read_project_version() -> str:
@@ -25,16 +27,15 @@ def _read_project_version() -> str:
         with (Path(__file__).parent / 'pyproject.toml').open('rb') as f:
             return str(tomllib.load(f)['project']['version'])
     except (OSError, KeyError, tomllib.TOMLDecodeError):
-        # a deployment that ships without the manifest still runs, and still names
-        # itself honestly in a changeset - it just cannot say which release it is,
-        # so the update check below stays quiet rather than comparing against a made-up
-        # number
-        return VERSION
+        # a deployment that ships without the manifest still runs; it just cannot say
+        # which release it is, so the navbar leaves the version out and the update check
+        # below stays quiet rather than comparing against a made-up number
+        return ''
 
 
 # What the navbar shows, what the changeset's created_by tag names, and what the latest
-# GitHub release is compared against. VERSION above identifies a build; this identifies
-# a release, which is the thing anyone reading a changeset can go and look up.
+# GitHub release is compared against. A release is the thing anyone reading a changeset
+# can go and look up; the revision beside it says exactly which build wrote it.
 APP_VERSION = _read_project_version()
 
 WEBSITE = os.getenv('WEBSITE', 'https://github.com/ryan-bush/osm-relatify')
@@ -49,8 +50,21 @@ UPDATE_CHECK_TTL = int(os.getenv('UPDATE_CHECK_TTL', str(6 * 3600)))
 
 # A failed check is retried sooner than that, but not on every page load
 UPDATE_CHECK_RETRY_TTL = int(os.getenv('UPDATE_CHECK_RETRY_TTL', '600'))
-CREATED_BY = f'osm-relatify {APP_VERSION}'
-# the user agent keeps the git revision: it is what identifies a build to Overpass and
+def make_created_by(version: str, revision: str) -> str:
+    """
+    What a changeset says wrote it: "Relatify 1.1.0 #ff422gu".
+
+    The release is the thing a reader can go and look up; the revision beside it says
+    exactly which build wrote the changeset. Either half is left out rather than guessed
+    at when it cannot be read, so the tag never names a release or a build that does not
+    exist.
+    """
+    return ' '.join(filter(None, ('Relatify', version, f'#{revision}' if revision else '')))
+
+
+CREATED_BY = make_created_by(APP_VERSION, GIT_REVISION)
+
+# the user agent keeps the bare revision: it is what identifies a build to Overpass and
 # OSM when one misbehaves, which a release number is too coarse to pin down
 USER_AGENT = f'osm-relatify/{VERSION} (+{WEBSITE})'
 

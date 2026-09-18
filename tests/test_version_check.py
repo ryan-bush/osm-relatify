@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import version_check
-from config import APP_VERSION, CREATED_BY
+from config import APP_VERSION, CREATED_BY, make_created_by
 from main import app
 
 # no context manager: the lifespan's NaPTAN download has nothing to do with this
@@ -36,9 +36,21 @@ def test_the_running_version_is_a_release_number():
     assert version_check.parse_version(APP_VERSION) is not None
 
 
-# a changeset names the release it came from, which is a thing a reader can look up
-def test_changesets_are_stamped_with_the_same_version_the_navbar_shows():
-    assert CREATED_BY == f'osm-relatify {APP_VERSION}'
+# a changeset names the release it came from, which is a thing a reader can look up,
+# and the build that wrote it
+def test_changesets_are_stamped_with_the_release_and_the_build():
+    assert make_created_by('1.1.0', 'ff422gu') == 'Relatify 1.1.0 #ff422gu'
+
+
+# neither half is invented when it cannot be read
+def test_a_changeset_stamp_leaves_out_what_it_does_not_know():
+    assert make_created_by('1.1.0', '') == 'Relatify 1.1.0'
+    assert make_created_by('', 'ff422gu') == 'Relatify #ff422gu'
+    assert make_created_by('', '') == 'Relatify'
+
+
+def test_the_running_stamp_names_the_running_version():
+    assert CREATED_BY.startswith(f'Relatify {APP_VERSION}' if APP_VERSION else 'Relatify')
 
 
 def test_version_endpoint_reports_an_available_update(monkeypatch):
