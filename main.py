@@ -21,6 +21,7 @@ from starlette.websockets import WebSocketState
 from bus_stop_creation import NewBusStop, NewStopPosition
 from compression import deflate_compress, deflate_decompress
 from config import (
+    APP_VERSION,
     CALC_ROUTE_MAX_PROCESSES,
     CALC_ROUTE_N_PROCESSES,
     CREATED_BY,
@@ -76,10 +77,11 @@ from stop_areas import StopAreaChange
 from tag_editing import normalize_tags
 from user_session import fetch_user_details, require_user_access_token, require_user_details
 from utils import HTTP, print_run_time
+from version_check import get_version_status
 
 _SESSION_MAX_AGE = 31536000  # 1 year
 _TEMPLATES = Jinja2Templates(directory='templates', auto_reload=TEST_ENV)
-_TEMPLATES.env.globals.update(osm_url=OSM_URL, osm_is_live=OSM_IS_LIVE)
+_TEMPLATES.env.globals.update(osm_url=OSM_URL, osm_is_live=OSM_IS_LIVE, app_version=APP_VERSION)
 
 _PROCESS_EXECUTOR = ProcessPoolExecutor(CALC_ROUTE_MAX_PROCESSES)
 _OSM = OpenStreetMap()
@@ -137,6 +139,12 @@ async def index(request: Request, user=Depends(fetch_user_details)):
         return _TEMPLATES.TemplateResponse('authorized.jinja2', {'request': request, 'user': user})
     else:
         return _TEMPLATES.TemplateResponse('index.jinja2', {'request': request})
+
+
+@app.get('/version')
+async def get_version():
+    """What is running, and whether GitHub has published something newer."""
+    return await get_version_status()
 
 
 @app.post('/login')

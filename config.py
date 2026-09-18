@@ -1,5 +1,6 @@
 import os
 import secrets
+import tomllib
 from pathlib import Path
 
 import sentry_sdk
@@ -16,7 +17,35 @@ try:
 except OSError:
     # inside a git worktree .git is a file rather than a directory, which githead cannot read
     VERSION = 'git#unknown'
+
+
+def _read_project_version() -> str:
+    """The released version, from the one place it is written down."""
+    try:
+        with (Path(__file__).parent / 'pyproject.toml').open('rb') as f:
+            return str(tomllib.load(f)['project']['version'])
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        # a deployment that ships without the manifest still runs; it just cannot
+        # say which release it is, and the update check below stays quiet
+        return '0.0.0'
+
+
+# What the navbar shows, and what the latest GitHub release is compared against. The git
+# revision in VERSION above identifies a build; this identifies a release.
+APP_VERSION = _read_project_version()
+
 WEBSITE = os.getenv('WEBSITE', 'https://github.com/ryan-bush/osm-relatify')
+
+# owner/repo whose releases are checked for something newer than APP_VERSION. Empty
+# turns the check off, which is what a fork with no releases of its own wants.
+UPDATE_CHECK_REPO = os.getenv('UPDATE_CHECK_REPO', 'ryan-bush/osm-relatify').strip()
+
+# How long an answer from GitHub is reused. The unauthenticated API allows 60 requests
+# an hour per address, and a new release is not something anyone needs within minutes.
+UPDATE_CHECK_TTL = int(os.getenv('UPDATE_CHECK_TTL', str(6 * 3600)))
+
+# A failed check is retried sooner than that, but not on every page load
+UPDATE_CHECK_RETRY_TTL = int(os.getenv('UPDATE_CHECK_RETRY_TTL', '600'))
 CREATED_BY = f'osm-relatify {VERSION}'
 USER_AGENT = f'osm-relatify/{VERSION} (+{WEBSITE})'
 
