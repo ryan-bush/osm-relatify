@@ -25,13 +25,16 @@ def _read_project_version() -> str:
         with (Path(__file__).parent / 'pyproject.toml').open('rb') as f:
             return str(tomllib.load(f)['project']['version'])
     except (OSError, KeyError, tomllib.TOMLDecodeError):
-        # a deployment that ships without the manifest still runs; it just cannot
-        # say which release it is, and the update check below stays quiet
-        return '0.0.0'
+        # a deployment that ships without the manifest still runs, and still names
+        # itself honestly in a changeset - it just cannot say which release it is,
+        # so the update check below stays quiet rather than comparing against a made-up
+        # number
+        return VERSION
 
 
-# What the navbar shows, and what the latest GitHub release is compared against. The git
-# revision in VERSION above identifies a build; this identifies a release.
+# What the navbar shows, what the changeset's created_by tag names, and what the latest
+# GitHub release is compared against. VERSION above identifies a build; this identifies
+# a release, which is the thing anyone reading a changeset can go and look up.
 APP_VERSION = _read_project_version()
 
 WEBSITE = os.getenv('WEBSITE', 'https://github.com/ryan-bush/osm-relatify')
@@ -46,7 +49,9 @@ UPDATE_CHECK_TTL = int(os.getenv('UPDATE_CHECK_TTL', str(6 * 3600)))
 
 # A failed check is retried sooner than that, but not on every page load
 UPDATE_CHECK_RETRY_TTL = int(os.getenv('UPDATE_CHECK_RETRY_TTL', '600'))
-CREATED_BY = f'osm-relatify {VERSION}'
+CREATED_BY = f'osm-relatify {APP_VERSION}'
+# the user agent keeps the git revision: it is what identifies a build to Overpass and
+# OSM when one misbehaves, which a release number is too coarse to pin down
 USER_AGENT = f'osm-relatify/{VERSION} (+{WEBSITE})'
 
 TEST_ENV = os.getenv('TEST_ENV', '0').strip().lower() in ('1', 'true', 'yes')

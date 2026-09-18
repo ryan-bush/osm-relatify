@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import version_check
-from config import APP_VERSION
+from config import APP_VERSION, CREATED_BY
 from main import app
 
 # no context manager: the lifespan's NaPTAN download has nothing to do with this
@@ -34,6 +34,11 @@ def test_is_newer(latest, current, expected):
 
 def test_the_running_version_is_a_release_number():
     assert version_check.parse_version(APP_VERSION) is not None
+
+
+# a changeset names the release it came from, which is a thing a reader can look up
+def test_changesets_are_stamped_with_the_same_version_the_navbar_shows():
+    assert CREATED_BY == f'osm-relatify {APP_VERSION}'
 
 
 def test_version_endpoint_reports_an_available_update(monkeypatch):
