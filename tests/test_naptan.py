@@ -373,6 +373,25 @@ def test_a_second_naptan_record_for_the_same_letter_is_matched_to_the_coded_stop
     assert unmapped == []
 
 
+def test_a_letter_spelled_out_in_local_ref_still_matches():
+    """Bristol Airport: the bays are mapped as "Bay 1", while NaPTAN gives the number alone."""
+    unmapped = find_unmapped_stops(
+        [_naptan('A', NORTH_SIDE, 'Public Transport Interchange', '1')],
+        [_osm('1', (57.14130, -2.11750), {'name': 'Public Transport Interchange', 'local_ref': 'Bay 1'})],
+    )
+
+    assert unmapped == []
+
+
+def test_different_bays_spelled_out_are_still_not_matched():
+    unmapped = find_unmapped_stops(
+        [_naptan('A', NORTH_SIDE, 'Public Transport Interchange', '2')],
+        [_osm('1', (57.14130, -2.11750), {'name': 'Public Transport Interchange', 'local_ref': 'Bay 1'})],
+    )
+
+    assert _codes(unmapped) == ['A']
+
+
 def test_stops_with_different_letters_are_not_matched():
     """Guild Street M5 in Aberdeen is missing while M3 beside it is mapped."""
     unmapped = find_unmapped_stops(

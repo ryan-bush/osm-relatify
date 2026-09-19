@@ -400,6 +400,12 @@ class TestDifferingTags:
 
         assert differing_tags(osm, naptan) == {'name': 'High Street', 'local_ref': 'B'}
 
+    def test_a_letter_spelled_out_is_not_a_difference(self):
+        osm = {'name': 'Public Transport Interchange', 'local_ref': 'Bay 1'}
+        naptan = {'name': 'Public Transport Interchange', 'local_ref': '1'}
+
+        assert differing_tags(osm, naptan) == {}
+
 
 class TestWritableKeys:
     def _addition(self, tags, expected=None):
