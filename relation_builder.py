@@ -11,7 +11,7 @@ from sklearn.neighbors import BallTree
 from starlette import status
 
 from bus_stop_creation import NewBusStop, NewStopPosition, build_new_stop_nodes, build_stop_position_way_elements
-from config import CHANGESET_ID_PLACEHOLDER, CREATED_BY
+from config import BUS_COLLECTION_SEARCH_AREA, CHANGESET_ID_PLACEHOLDER, CREATED_BY
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id, split_element_id
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
@@ -225,16 +225,32 @@ def get_relation_members(relation: dict) -> list[RelationMember]:
     return [RelationMember(id=element_id(m['ref']), type=m['type'], role=m['role']) for m in relation['members']]
 
 
+def _route_returns_to_first_stop(route: FinalRoute) -> bool:
+    """Whether the ways come back to the stop the route sets off from."""
+    if not route.latLngs or not route.busStops:
+        return False
+
+    first = route.busStops[0]
+
+    # a stop position sits on the ways, so its coordinates are the route's own
+    if first.stop is not None:
+        return first.stop.latLng == route.latLngs[-1]
+
+    # a platform sits beside them, so measure instead
+    if first.platform is not None:
+        return haversine_distance(first.platform.latLng, route.latLngs[-1]) <= BUS_COLLECTION_SEARCH_AREA
+
+    return False
+
+
 def sort_and_upgrade_members(route: FinalRoute, relation_members: list[RelationMember]) -> FinalRoute:
     id_relation_member_map = {member.id: member for member in relation_members}
 
     members: list[RelationMember] = []
-    last_stop_member: RelationMember | None = None
-    last_platform_member: RelationMember | None = None
+    first_stop_member: RelationMember | None = None
+    first_platform_member: RelationMember | None = None
 
     for i, collection in enumerate(route.busStops):
-        last_stop_member = None
-        last_platform_member = None
         is_first = i == 0
         is_last = i == len(route.busStops) - 1
         suffix = '_entry_only' if is_first else ('_exit_only' if is_last else '')
@@ -246,8 +262,10 @@ def sort_and_upgrade_members(route: FinalRoute, relation_members: list[RelationM
                 role = member.role
             if route.roundtrip and role in {'stop_entry_only', 'stop_exit_only'}:
                 role = 'stop'
-            last_stop_member = RelationMember(id=collection.stop.id, type=collection.stop.type, role=role)
-            members.append(last_stop_member)
+            stop_member = RelationMember(id=collection.stop.id, type=collection.stop.type, role=role)
+            members.append(stop_member)
+            if is_first:
+                first_stop_member = stop_member
 
         if collection.platform is not None:
             role = 'platform' + suffix
@@ -256,15 +274,21 @@ def sort_and_upgrade_members(route: FinalRoute, relation_members: list[RelationM
                 role = member.role
             if route.roundtrip and role in {'platform_entry_only', 'platform_exit_only'}:
                 role = 'platform'
-            last_platform_member = RelationMember(id=collection.platform.id, type=collection.platform.type, role=role)
-            members.append(last_platform_member)
+            platform_member = RelationMember(id=collection.platform.id, type=collection.platform.type, role=role)
+            members.append(platform_member)
+            if is_first:
+                first_platform_member = platform_member
 
-    if route.roundtrip and members:
+    if route.roundtrip and _route_returns_to_first_stop(route):
+        # a circular route lists its terminus twice: once where the vehicle sets off and
+        # once where it comes back. Only repeat it when the ways really do return there;
+        # a loop that closes short of the first stop serves that stop once, and repeating
+        # it would leave a stop position out of order.
         # order: stop, platform
-        if last_platform_member is not None:
-            members.insert(0, last_platform_member)
-        if last_stop_member is not None:
-            members.insert(0, last_stop_member)
+        if first_stop_member is not None:
+            members.append(first_stop_member)
+        if first_platform_member is not None:
+            members.append(first_platform_member)
 
     way_ids = [route_way.way.id for route_way in route.ways]
     way_ids = _unsplit_way_ids(way_ids)
