@@ -210,3 +210,100 @@ def test_roles_are_assigned_from_scratch_without_an_existing_relation():
         ('103', 'platform_exit_only'),
         ('201', ''),
     ]
+
+
+ROUNDTRIP_TAGS = NEW_TAGS | {
+    'name': 'Bus 60: Amlwch → Carreglefn → Amlwch',
+    'roundtrip': 'yes',
+}
+
+
+def _stop_position(id: str, latLng: tuple[float, float]):  # noqa: N803
+    return FetchRelationBusStop(
+        id=ElementId(id),
+        type='node',
+        member=False,
+        latLng=latLng,
+        tags={},
+        name='Stop',
+        groupName='Stop',
+        highway=None,
+        public_transport=PublicTransport.STOP_POSITION,
+    )
+
+
+def _platform(id: str, latLng: tuple[float, float]):  # noqa: N803
+    return FetchRelationBusStop(
+        id=ElementId(id),
+        type='node',
+        member=False,
+        latLng=latLng,
+        tags={},
+        name='Stop',
+        groupName='Stop',
+        highway='bus_stop',
+        public_transport=PublicTransport.PLATFORM,
+    )
+
+
+def _roundtrip_route(latLngs: tuple[tuple[float, float], ...]):  # noqa: N803
+    """A three-stop loop whose first stop sits at (51.0, 0.0)."""
+    return FinalRoute(
+        ways=(FinalRouteWay(way=_way('201'), reversed_latLngs=False),),
+        latLngs=latLngs,
+        busStops=(
+            FetchRelationBusStopCollection(
+                platform=_platform('101', (51.0, 0.0)), stop=_stop_position('111', (51.0, 0.0))
+            ),
+            FetchRelationBusStopCollection(
+                platform=_platform('102', (51.0, 0.001)), stop=_stop_position('112', (51.0, 0.001))
+            ),
+            FetchRelationBusStopCollection(
+                platform=_platform('103', (51.0, 0.002)), stop=_stop_position('113', (51.0, 0.002))
+            ),
+        ),
+        tags=ROUNDTRIP_TAGS,
+        extraWaysToUpdate=(),
+        members=(),
+        warnings=(),
+    )
+
+
+def test_circular_route_repeats_the_stop_it_returns_to():
+    """A loop back to its first stop lists that stop again at the end, as PTv2 asks."""
+    route = _roundtrip_route(((51.0, 0.0), (51.0, 0.002), (51.0, 0.0)))
+
+    members = sort_and_upgrade_members(route, []).members
+
+    assert [(str(m.id), m.role) for m in members] == [
+        ('111', 'stop'),
+        ('101', 'platform'),
+        ('112', 'stop'),
+        ('102', 'platform'),
+        ('113', 'stop'),
+        ('103', 'platform'),
+        ('111', 'stop'),
+        ('101', 'platform'),
+        ('201', ''),
+    ]
+
+
+def test_loop_ending_short_of_the_first_stop_repeats_nothing():
+    """The ways close up before reaching the first stop, so every stop is served once.
+
+    Repeating one there would put a stop position out of order, which OSM Inspector
+    reports as "stop position in wrong order".
+    """
+    route = _roundtrip_route(((51.0, 0.0), (51.0, 0.002), (51.0, 0.004)))
+
+    members = sort_and_upgrade_members(route, []).members
+
+    assert [(str(m.id), m.role) for m in members] == [
+        ('111', 'stop'),
+        ('101', 'platform'),
+        ('112', 'stop'),
+        ('102', 'platform'),
+        ('113', 'stop'),
+        ('103', 'platform'),
+        ('201', ''),
+    ]
