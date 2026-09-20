@@ -93,6 +93,69 @@ test("a variant that contradicts the master's operator is named", () => {
     assert.deepEqual(issue.routes, [2])
 })
 
+// A line run by two operators between them says so on the master: operator=A;B. Read as
+// one string that contradicts every variant under it, including the ones it describes.
+test("a variant run by one of the master's operators agrees with it", () => {
+    const master = { ...MASTER, operator: "Alpha;Beta" }
+
+    assert.deepEqual(
+        messages(master, [
+            route(1, { operator: "Alpha" }),
+            route(2, { operator: "Beta" }),
+        ]),
+        [],
+    )
+})
+
+test("a variant run by neither of them is still named", () => {
+    const master = { ...MASTER, operator: "Alpha;Beta" }
+    const [issue] = routeMasterIssues(master, [
+        route(1, { operator: "Alpha" }),
+        route(2, { operator: "Gamma" }),
+    ])
+
+    assert.match(issue.message, /different operator from the master \(Alpha;Beta\)/)
+    assert.deepEqual(issue.routes, [2])
+})
+
+test("a variant may list the operators the master does", () => {
+    const master = { ...MASTER, operator: "Alpha;Beta" }
+
+    assert.deepEqual(messages(master, [route(1, { operator: "Beta;Alpha" })]), [])
+})
+
+test("a variant listing one the master does not is named", () => {
+    const master = { ...MASTER, operator: "Alpha;Beta" }
+    const [issue] = routeMasterIssues(master, [route(1, { operator: "Alpha;Gamma" })])
+
+    assert.deepEqual(issue.routes, [1])
+})
+
+test("network and colour are read as lists too", () => {
+    const master = { ...MASTER, network: "One;Two", colour: "red;blue" }
+
+    assert.deepEqual(
+        messages(master, [route(1, { network: "Two", colour: "blue" })]),
+        [],
+    )
+})
+
+test("spacing around a semicolon is not a disagreement", () => {
+    const master = { ...MASTER, operator: "Alpha; Beta" }
+
+    assert.deepEqual(messages(master, [route(1, { operator: "Beta" })]), [])
+})
+
+test("the same operators in another order are one value, not two", () => {
+    assert.deepEqual(
+        messages(MASTER, [
+            route(1, { operator: "Alpha;Beta" }),
+            route(2, { operator: "Beta;Alpha" }),
+        ]),
+        [],
+    )
+})
+
 // a master that says nothing about a tag is not something its variants can contradict
 test("variants are only measured against what the master states", () => {
     assert.deepEqual(
