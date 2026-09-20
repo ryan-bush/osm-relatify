@@ -27,18 +27,13 @@ def escape_overpass_value(value: str) -> str:
     return value.replace('\\', '\\\\').replace('"', '\\"')
 
 
-def build_route_master_candidates_query(
-    ref: str,
-    route_value: str,
-    bounds: BoundingBox,
-    timeout: int,
-) -> str:
+def build_route_master_candidates_statements(ref: str, route_value: str, bounds: BoundingBox) -> str:
     """
-    Overpass query for the route masters that routes sharing this ref already belong to.
+    Overpass statements for the route masters that routes sharing this ref already belong to.
 
     Route masters have no geometry of their own, so they are reached through their
     members: the routes with the same ref in the downloaded area, and from those the
-    relations holding them.
+    relations holding them. Empty when there is no ref to go on, which is nothing to ask.
     """
     ref = ref.strip()
     if not ref or not route_value:
@@ -47,11 +42,21 @@ def build_route_master_candidates_query(
     filters = f'["type"="route"]["route"="{escape_overpass_value(route_value)}"]["ref"="{escape_overpass_value(ref)}"]'
 
     return (
-        overpass_settings(timeout, 128)
-        + f'rel{filters}({bounds})->.r;'
-        f'rel(br.r)["type"="{ROUTE_MASTER_TYPE}"];'
+        f'rel{filters}({bounds})->.rm;'
+        f'rel(br.rm)["type"="{ROUTE_MASTER_TYPE}"];'
         f'out meta;'
     )
+
+
+def build_route_master_candidates_query(
+    ref: str,
+    route_value: str,
+    bounds: BoundingBox,
+    timeout: int,
+) -> str:
+    """The candidates asked for on their own, for a ref that has just been typed."""
+    statements = build_route_master_candidates_statements(ref, route_value, bounds)
+    return (overpass_settings(timeout, 128) + statements) if statements else ''
 
 
 def parse_route_masters(elements: Iterable[dict]) -> list[RouteMaster]:

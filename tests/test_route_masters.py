@@ -45,7 +45,7 @@ def test_query_names_the_ref_route_kind_and_area():
     assert '["ref"="71"]' in query
     assert str(BOUNDS) in query
     # masters are reached through the routes they hold, having no geometry of their own
-    assert 'rel(br.r)["type"="route_master"]' in query
+    assert 'rel(br.rm)["type"="route_master"]' in query
     assert '[timeout:30]' in query
 
 

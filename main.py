@@ -278,26 +278,23 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
             if route_type is None:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Relation must be a PTv2 bus/tram/trolleybus route')
 
-        (
-            bounds,
-            download_hist,
-            download_triggers,
-            ways,
-            id_map,
-            bus_stop_collections,
-            stop_areas,
-        ) = await _OVERPASS.query_relation(
+        download = await _OVERPASS.query_relation(
             relation_id=model.relationId,
             download_hist=download_hist,
             download_targets=download_targets,
             route_type=route_type,
+            ref=relation_tags.get('ref', ''),
+            route_value=get_route_value(relation_tags),
         )
+        bounds = download.bounds
+        download_hist = download.download_hist
+        ways = download.ways
 
     with print_run_time('Finding start/stop ways'):
-        start_way, stop_way = find_start_stop_ways(ways, id_map, relation)
+        start_way, stop_way = find_start_stop_ways(ways, download.id_map, relation)
 
     with print_run_time('Assigning members for stops'):
-        bus_stop_collections = assign_none_members(bus_stop_collections, relation)
+        bus_stop_collections = assign_none_members(download.bus_stop_collections, relation)
 
     naptan_stops = []
     naptan_tags = []
@@ -313,26 +310,25 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         naptan_matched = matches.matched
 
     with print_run_time('Finding route masters'):
-        route_masters, route_master_candidates = await _query_route_masters(
-            model.relationId, relation_tags, bounds
+        # the candidates came down with the area, so only membership is left to ask
+        route_masters, route_master_candidates = await _route_master_view(
+            model.relationId, download.route_master_candidates
         )
 
-    with print_run_time('Finding the driving side'):
-        # A further download of the same route is the same country, and the client keeps
-        # what the first answer said, so this is asked once per route rather than once
-        # per area panned into.
-        if len(download_hist.history) > 1:
-            driving_side = None
-        else:
-            # NaPTAN only covers Great Britain, where traffic keeps left
-            driving_side = await _query_driving_side(bounds) or ('left' if naptan_stops or naptan_matched else None)
+    # A further download of the same route is the same country, and the client keeps what
+    # the first answer said, so a merge says nothing rather than repeating it.
+    if len(download_hist.history) > 1:
+        driving_side = None
+    else:
+        # NaPTAN only covers Great Britain, where traffic keeps left
+        driving_side = download.driving_side or ('left' if naptan_stops or naptan_matched else None)
 
     return FetchRelation(
         fetchMerge=len(download_hist.history) > 1 or model.reload,
         nameOrRef=relation_tags.get('name', relation_tags.get('ref', '')).strip(),
         bounds=bounds,
         downloadHistory=download_hist,
-        downloadTriggers=download_triggers,
+        downloadTriggers=download.download_triggers,
         tags=relation_tags,
         startWay=start_way,
         stopWay=stop_way,
@@ -341,23 +337,11 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         naptanStops=naptan_stops,
         naptanTags=naptan_tags,
         naptanMatched=naptan_matched,
-        stopAreas=stop_areas,
+        stopAreas=download.stop_areas,
         routeMasters=route_masters,
         routeMasterCandidates=route_master_candidates,
         drivingSide=driving_side,
     )
-
-
-async def _query_driving_side(bounds: BoundingBox) -> str | None:
-    lat = round((bounds.minlat + bounds.maxlat) / 2, 2)
-    lon = round((bounds.minlon + bounds.maxlon) / 2, 2)
-
-    try:
-        return await _OVERPASS.query_driving_side(lat, lon)
-    except Exception as e:
-        # the mapper can still say which side, and the route is worked out regardless
-        print(f'🚧 Warning: Could not look up the driving side: {e!r}')
-        return None
 
 
 async def _build_route_master_view(relation: dict):
@@ -370,10 +354,9 @@ async def _build_route_master_view(relation: dict):
     return build_route_master_view(master, routes)
 
 
-async def _query_route_masters(
+async def _route_master_view(
     relation_id: int | None,
-    relation_tags: dict[str, str],
-    bounds: BoundingBox,
+    candidates: list[RouteMaster] | None,
 ) -> tuple[list[RouteMaster] | None, list[RouteMaster] | None]:
     """
     The route masters this route is in, and the ones it could be linked into.
@@ -393,25 +376,36 @@ async def _query_route_masters(
             print(f'🚧 Warning: Could not look up route masters: {e!r}')
             return None, None
 
-    try:
-        candidates = await _OVERPASS.query_route_master_candidates(
-            relation_tags.get('ref', ''),
-            get_route_value(relation_tags),
-            bounds,
-        )
+    if candidates is not None:
         # the route's own master is reached through the route itself, and is not a
         # relation to offer joining
         current_ids = {master.id for master in current}
         candidates = [master for master in candidates if master.id not in current_ids]
-    except Exception as e:
-        print(f'🚧 Warning: Could not look up route master candidates: {e!r}')
-        candidates = None
 
     routes = await _describe_route_master_members([*current, *(candidates or ())])
 
     return describe_members(current, routes), (
         describe_members(candidates, routes) if candidates is not None else None
     )
+
+
+async def _query_route_masters(
+    relation_id: int | None,
+    relation_tags: dict[str, str],
+    bounds: BoundingBox,
+) -> tuple[list[RouteMaster] | None, list[RouteMaster] | None]:
+    """The same view, for a ref just typed in, with no download of its own to have come with."""
+    try:
+        candidates = await _OVERPASS.query_route_master_candidates(
+            relation_tags.get('ref', ''),
+            get_route_value(relation_tags),
+            bounds,
+        )
+    except Exception as e:
+        print(f'🚧 Warning: Could not look up route master candidates: {e!r}')
+        candidates = None
+
+    return await _route_master_view(relation_id, candidates)
 
 
 async def _describe_route_master_members(masters):

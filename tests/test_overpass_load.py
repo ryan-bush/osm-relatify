@@ -13,7 +13,6 @@ import asyncio
 import httpx
 import pytest
 
-from driving_side import build_driving_side_query
 from models.bounding_box import BoundingBox
 from overpass import (
     _MAX_SLOT_WAIT,
@@ -160,7 +159,6 @@ class TestDeclaredResources:
         [
             build_bb_query(1, 60),
             build_parents_query([1, 2], 60),
-            build_driving_side_query(53.3, -4.7, 30),
             build_route_master_candidates_query(
                 '4', 'bus', BoundingBox(minlat=53.3, minlon=-4.7, maxlat=53.4, maxlon=-4.6), 30
             ),
