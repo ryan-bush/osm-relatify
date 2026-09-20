@@ -1,8 +1,6 @@
 from collections.abc import Iterable
 from typing import Literal
 
-from utils import overpass_settings
-
 DrivingSide = Literal['left', 'right']
 
 # The countries and territories where traffic keeps left, by ISO 3166-1 code, for a
@@ -19,9 +17,9 @@ LEFT_HAND_TRAFFIC = frozenset(
 )  # fmt: skip
 
 
-def build_driving_side_query(lat: float, lon: float, timeout: int) -> str:
-    """The country boundaries around a point."""
-    return overpass_settings(timeout, 64) + f'is_in({lat},{lon})->.a;area.a[admin_level=2];out tags;'
+def build_driving_side_statements(lat: float, lon: float) -> str:
+    """The country boundaries around a point, for a query to carry."""
+    return f'is_in({lat},{lon})->.ds;area.ds[admin_level=2];out tags;'
 
 
 def parse_driving_side(elements: Iterable[dict]) -> DrivingSide | None:

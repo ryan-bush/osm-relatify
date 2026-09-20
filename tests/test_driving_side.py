@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from cython_lib.route import calc_bus_route
-from driving_side import build_driving_side_query, parse_driving_side
+from driving_side import build_driving_side_statements, parse_driving_side
 from models.element_id import ElementId
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute, FinalRouteWay
@@ -181,7 +181,7 @@ def test_no_country_says_nothing():
 
 
 def test_the_query_asks_for_the_country_around_the_point():
-    query = build_driving_side_query(53.2, -4.1, 30)
+    statements = build_driving_side_statements(53.2, -4.1)
 
-    assert 'is_in(53.2,-4.1)' in query
-    assert 'admin_level=2' in query
+    assert 'is_in(53.2,-4.1)' in statements
+    assert 'admin_level=2' in statements

@@ -35,7 +35,8 @@ def overpass(monkeypatch):
 
     async def fake_post(query, query_timeout):  # noqa: ARG001
         posted.append(query)
-        return _Reply(7)
+        # seven groups for the area, and one more for the driving side riding along
+        return _Reply(8)
 
     monkeypatch.setattr('overpass.overpass_post', fake_post)
     return posted
