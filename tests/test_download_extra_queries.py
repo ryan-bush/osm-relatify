@@ -41,7 +41,7 @@ class FakeOverpass:
         self.asked = []
         self.candidate_queries = 0
 
-    async def query_relation(self, relation_id, download_hist, download_targets, route_type, ref, route_value):  # noqa: ARG002
+    async def query_relation(self, relation_id, download_hist, download_targets, route_type, ref, route_value, member_way_ids):  # noqa: ARG002
         self.asked.append(ref)
 
         if download_hist is None:

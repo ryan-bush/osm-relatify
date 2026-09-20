@@ -47,6 +47,7 @@ from models.fetch_relation import (
     PublicTransport,
     assign_none_members,
     find_start_stop_ways,
+    relation_member_way_ids,
 )
 from models.final_route import FinalRoute, WarningSeverity
 from models.route_master import RouteMaster
@@ -285,6 +286,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
             route_type=route_type,
             ref=relation_tags.get('ref', ''),
             route_value=get_route_value(relation_tags),
+            member_way_ids=tuple(relation_member_way_ids(relation)),
         )
         bounds = download.bounds
         download_hist = download.download_hist
