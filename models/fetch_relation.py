@@ -200,16 +200,21 @@ class FetchRelation:
     routeMasterCandidates: list[RouteMaster] | None = field(default_factory=list)
 
 
+def relation_member_way_ids(relation: dict) -> list[int]:
+    """The ways a route relation is made of, in the order the bus drives them."""
+    return [
+        way['ref']
+        for way in relation['members']
+        if way['type'] == 'way' and way['role'] in {'', 'forward', 'backward', 'route'}
+    ]
+
+
 def find_start_stop_ways(
     ways: dict[ElementId, FetchRelationElement],
     id_map: dict[int, list[ElementId]],
     relation: dict,
 ) -> tuple[FetchRelationElement | None, FetchRelationElement | None]:
-    member_ids = [
-        way['ref']
-        for way in relation['members']
-        if way['type'] == 'way' and way['role'] in {'', 'forward', 'backward', 'route'}
-    ]
+    member_ids = relation_member_way_ids(relation)
 
     # a relation being created has no members yet; the user picks both endpoints
     if not member_ids:

@@ -36,6 +36,7 @@ from route_masters import (
     parse_route_masters,
 )
 from stop_areas import parse_stop_areas
+from u_turns import relation_u_turn_nodes
 from utils import HTTP, overpass_settings
 from xmltodict_postprocessor import postprocessor
 
@@ -381,6 +382,12 @@ def build_download_extras(cell_bbs: Sequence[BoundingBox], ref: str, route_value
     return DownloadExtras(statements, blocks)
 
 
+# Where a bus can turn around on the spot. A turning circle is the tag for it, and a
+# mini roundabout is the same thing by another name - a bus that fits round one comes back
+# out the way it came in, which is exactly what routes do at the end of a residential leg.
+_TURN_IN_PLACE_TAGS = ('turning_circle', 'mini_roundabout')
+
+
 def build_query(
     cell_bbs: Sequence[BoundingBox],
     cell_bbs_expanded: Sequence[BoundingBox],
@@ -399,7 +406,9 @@ def build_query(
             '>;'
             'out skel qt;'
             'out count;'
-            '(' + ''.join(f'node[highway=turning_circle]({bb});' for bb in cell_bbs) + ');'
+            '(' + ''.join(
+                f'node[highway={tag}]({bb});' for bb in cell_bbs for tag in _TURN_IN_PLACE_TAGS
+            ) + ');'
             'out tags qt;'
             'out count;'
             + ''.join(
@@ -442,7 +451,9 @@ def build_query(
             '>;'
             'out skel qt;'
             'out count;'
-            '(' + ''.join(f'node[highway=turning_circle]({bb});' for bb in cell_bbs) + ');'
+            '(' + ''.join(
+                f'node[highway={tag}]({bb});' for bb in cell_bbs for tag in _TURN_IN_PLACE_TAGS
+            ) + ');'
             'out tags qt;'
             'out count;'
             + ''.join(
@@ -947,6 +958,7 @@ class Overpass:
         route_type: str,  # bus, tram...
         ref: str = '',
         route_value: str = '',
+        member_way_ids: tuple[int, ...] = (),
     ) -> QueryRelationResult:
         if download_targets is None:
             timeout = 60
@@ -1007,6 +1019,10 @@ class Overpass:
 
         nodes_map = {e['id']: e for e in node_elements}
         turn_in_place_nodes = {e['id'] for e in turn_in_place_elements}
+        # what the map says, plus what the relation itself says by listing a way twice
+        turn_in_place_nodes |= relation_u_turn_nodes(
+            member_way_ids, {e['id']: e['nodes'] for e in maybe_road_elements}
+        )
 
         for e in road_elements:
             e['_member'] = e['id'] in relation_way_members
