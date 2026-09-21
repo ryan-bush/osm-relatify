@@ -525,9 +525,9 @@ def is_routable(tags: dict[str, str], route_type: str) -> bool:
             'pedestrian',
         }
 
+        # parking_aisle is allowed: routes are often added before the road is retagged
         service_valid = tags.get('service', 'no') not in {
             'driveway',
-            'parking_aisle',
             'alley',
             'emergency_access',
         }
