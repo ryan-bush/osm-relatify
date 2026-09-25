@@ -413,8 +413,9 @@ def build_query(
             'out count;'
             + ''.join(
                 # unnamed too: one mapped without a name is still the stop, and NaPTAN
-                # would otherwise offer a second one on top of it
-                f'node[highway=bus_stop][public_transport=platform]({bb});'
+                # would otherwise offer a second one on top of it. Nor does it need
+                # public_transport: a bare highway=bus_stop is the platform all the same.
+                f'node[highway=bus_stop]({bb});'
                 f'out tags center qt;'
                 f'nwr[highway=platform][public_transport=platform][name]({bb});'
                 f'out tags center qt;'
@@ -675,15 +676,21 @@ def stop_elements(elements: Iterable[dict], places: Mapping[tuple[str, int], Sto
     """
     The elements that can be read as stops, each with its tags, even if it has none.
 
-    A stop area can hold a bare node, with nothing but its role to say what it is.
-    Anything neither tagged as a stop nor holding a stop's role says nothing at all.
+    A stop area can hold a bare node, with nothing but its role to say what it is, and a
+    highway=bus_stop mapped before PTv2 is a platform without saying so. Anything neither
+    tagged as a stop nor holding a stop's role says nothing at all.
     """
     result = []
 
     for element in elements:
         element.setdefault('tags', {})
+        tags = element['tags']
 
-        if 'public_transport' in element['tags'] or (element['type'], element['id']) in places:
+        if (
+            'public_transport' in tags
+            or tags.get('highway') == 'bus_stop'
+            or (element['type'], element['id']) in places
+        ):
             result.append(element)
 
     return tuple(result)

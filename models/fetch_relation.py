@@ -132,11 +132,18 @@ class FetchRelationBusStop:
             name=name,
             groupName=group_name,
             highway=tags.get('highway'),
-            public_transport=PublicTransport(
-                tags['public_transport'] if place is None or 'public_transport' in tags else place.public_transport
-            ),
+            public_transport=PublicTransport(_public_transport(tags, place)),
             placeName=place_name,
         )
+
+
+def _public_transport(tags: dict[str, str], place) -> str:
+    if 'public_transport' in tags:
+        return tags['public_transport']
+    if place is not None:
+        return place.public_transport
+    # a highway=bus_stop mapped before PTv2 is the platform, tagged or not
+    return 'platform'
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
