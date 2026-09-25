@@ -217,6 +217,12 @@
   max-width: none;
 }
 
+/* the menu sizes to its content, so the summary grows only as far as its longest stop
+   name needs */
+#menu.menu-summary {
+  max-width: min(560px, calc(100vw - 20px));
+}
+
 #menu.menu-wide .table-tags .key {
   /* the keys are the short half; the value is what needs the room */
   width: 1%;
@@ -525,6 +531,8 @@
 }
 
 .route-summary-item .stop-info {
+  /* the letters and zoom button stay on one line beside the name */
+  white-space: nowrap;
   font-family: monospace;
   font-weight: bold;
   margin-left: auto;
