@@ -723,11 +723,9 @@ const makeDefaultComment = () => {
     const tagged =
         (tagCounts.edited ? `; edited ${tagCounts.edited} bus stop${plural(tagCounts.edited)}` : "") +
         (tagCounts.naptan ? `; added NaPTAN tags to ${tagCounts.naptan} bus stop${plural(tagCounts.naptan)}` : "") +
-        (tagCounts.platform === 1
-            ? "; tagged 1 bus stop as a PTv2 platform"
-            : tagCounts.platform
-              ? `; tagged ${tagCounts.platform} bus stops as PTv2 platforms`
-              : "")
+        (tagCounts.platform
+            ? `; added platform tags to ${tagCounts.platform} bus stop${plural(tagCounts.platform)}`
+            : "")
     const pendingMaster = pendingRouteMaster()
     const master = !pendingMaster
         ? ""

@@ -594,44 +594,56 @@ class TestEditedByHand:
 
 
 class TestPlatformTags:
-    """public_transport=platform, offered for a stop tagged only highway=bus_stop."""
+    """highway=bus_stop, public_transport=platform and bus=yes, for a bus stop lacking any."""
 
-    def test_the_platform_value_can_be_written(self):
-        addition = StopTagAddition(type='node', id=1, tags={'public_transport': 'platform'})
+    def test_each_platform_tag_can_be_written(self):
+        tags = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes'}
+        addition = StopTagAddition(type='node', id=1, tags=tags)
 
-        assert addition.writable_keys() == {'public_transport'}
+        assert addition.writable_keys() == {'highway', 'public_transport', 'bus'}
 
-    def test_no_other_value_can_be_written(self):
-        addition = StopTagAddition(type='node', id=1, tags={'public_transport': 'stop_position'})
+    @pytest.mark.parametrize(
+        'tags', [{'public_transport': 'stop_position'}, {'highway': 'platform'}, {'bus': 'no'}]
+    )
+    def test_no_other_value_can_be_written(self, tags):
+        assert StopTagAddition(type='node', id=1, tags=tags).writable_keys() == set()
+
+    def test_they_cannot_be_typed_by_hand(self):
+        addition = StopTagAddition(type='node', id=1, tags={'bus': 'yes'}, byHand={'bus'})
 
         assert addition.writable_keys() == set()
 
-    def test_it_cannot_be_typed_by_hand(self):
-        addition = StopTagAddition(
-            type='node', id=1, tags={'public_transport': 'platform'}, byHand={'public_transport'}
+    def test_they_are_not_credited_to_naptan(self):
+        model = _model(
+            naptanTagAdditions=[
+                StopTagAddition(type='node', id=1, tags={'public_transport': 'platform', 'bus': 'yes'})
+            ]
         )
-
-        assert addition.writable_keys() == set()
-
-    def test_it_is_not_credited_to_naptan(self):
-        model = _model(naptanTagAdditions=[StopTagAddition(type='node', id=1, tags={'public_transport': 'platform'})])
 
         tags = model.make_changeset_tags()
 
-        assert tags['comment'] == 'Updated route: Bus 12, #7; tagged 1 bus stop as a PTv2 platform'
+        assert tags['comment'] == 'Updated route: Bus 12, #7; added platform tags to 1 bus stop'
         assert 'source' not in tags
 
-    def test_it_travels_with_naptan_tags_on_the_same_stop(self):
+    def test_they_travel_with_naptan_tags_on_the_same_stop(self):
         model = _model(
             naptanTagAdditions=[
-                StopTagAddition(type='node', id=1, tags={'public_transport': 'platform', 'naptan:Bearing': 'NE'}),
-                StopTagAddition(type='node', id=2, tags={'public_transport': 'platform'}),
+                StopTagAddition(type='node', id=1, tags={'bus': 'yes', 'naptan:Bearing': 'NE'}),
+                StopTagAddition(type='way', id=2, tags={'highway': 'bus_stop'}),
             ]
         )
 
         tags = model.make_changeset_tags()
 
         assert tags['comment'] == (
-            'Updated route: Bus 12, #7; added NaPTAN tags to 1 bus stop; tagged 2 bus stops as PTv2 platforms'
+            'Updated route: Bus 12, #7; added NaPTAN tags to 1 bus stop; added platform tags to 2 bus stops'
         )
         assert tags['source'] == 'NaPTAN'
+
+    def test_a_tag_set_since_is_a_conflict(self):
+        element = {'tag': [{'@k': 'bus', '@v': 'no'}]}
+
+        with pytest.raises(HTTPException) as e:
+            apply_stop_tags(element, 'node/1', {'bus': 'yes'}, {})
+
+        assert e.value.status_code == 409

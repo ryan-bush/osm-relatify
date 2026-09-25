@@ -134,3 +134,12 @@ def test_a_bus_stop_without_public_transport_is_a_platform():
     assert platform.public_transport == PublicTransport.PLATFORM
     assert platform.tags == {'highway': 'bus_stop', 'name': 'Deiniol Road'}
     assert build_bus_stop_collections([platform])[0].platform == platform
+
+
+def test_a_platform_without_highway_is_still_a_stop():
+    """public_transport=platform with bus=yes, never tagged highway=bus_stop."""
+    stop = _node(10, {'public_transport': 'platform', 'bus': 'yes', 'name': 'Deiniol Road'})
+
+    [element] = stop_elements([stop], {})
+
+    assert FetchRelationBusStop.from_data(element).public_transport == PublicTransport.PLATFORM

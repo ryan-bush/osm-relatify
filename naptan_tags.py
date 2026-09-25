@@ -58,9 +58,9 @@ NAPTAN_KEYS = (
 EDITABLE_KEYS = ('name', 'local_ref', 'shelter', 'bench')
 
 
-# What a highway=bus_stop mapped before PTv2 lacks to be read as a platform, offered for
-# the mapper to fill in. It is neither NaPTAN's nor typed, and writes this value only.
-PLATFORM_TAGS = {'public_transport': 'platform'}
+# The tags every bus stop platform should carry, offered for the mapper to fill in where
+# one lacks any of them. Neither NaPTAN's nor typed, each key writes this value only.
+PLATFORM_TAGS = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes'}
 
 
 def missing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
@@ -110,7 +110,7 @@ class StopTagAddition(BaseModel):
         return not self.tags or bool(self.tags.keys() - self.byHand - PLATFORM_TAGS.keys())
 
     def tags_platform(self) -> bool:
-        """Whether this fills in the tags that make an old bus stop a PTv2 platform."""
+        """Whether this fills in any of the tags every bus stop platform should carry."""
         return any(key in PLATFORM_TAGS for key in self.tags.keys() - self.byHand)
 
     def writable_keys(self) -> set[str]:
@@ -120,7 +120,7 @@ class StopTagAddition(BaseModel):
         What the mapper typed is theirs to decide, within the fields the form offers.
         What NaPTAN offers is narrower: the NaPTAN keys, either filled in where the
         stop has none or as a replacement the mapper accepted. Narrower still is making
-        an old bus stop a platform, which may write one value and nothing else.
+        up a bus stop's platform tags, each of which may write one value and nothing else.
         """
         result = set()
 

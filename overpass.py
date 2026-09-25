@@ -417,6 +417,9 @@ def build_query(
                 # public_transport: a bare highway=bus_stop is the platform all the same.
                 f'node[highway=bus_stop]({bb});'
                 f'out tags center qt;'
+                # and one mapped the other way round, a platform that never says highway=bus_stop
+                f'node[public_transport=platform][bus=yes][!highway]({bb});'
+                f'out tags center qt;'
                 f'nwr[highway=platform][public_transport=platform][name]({bb});'
                 f'out tags center qt;'
                 f'nwr[highway=platform][public_transport=platform][ref]({bb});'

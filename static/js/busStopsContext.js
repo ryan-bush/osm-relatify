@@ -61,8 +61,8 @@ const LIST_ICON = `
         <circle cx="4.5" cy="18" r="1"/>
     </svg>`
 
-// `platformTags`, when given, is { label, onClick } for making an old bus stop a PTv2
-// platform.
+// `platformTags`, when given, is { label, added, onClick } for filling in the tags every
+// bus stop platform should carry.
 // `naptanTags`, `stopPosition` and `naptanDifferences`, when given, are each
 // { label, onClick }: filling in NaPTAN tags, putting a stop position on the road, and
 // deciding between NaPTAN and the stop where they disagree. The last also carries
@@ -192,11 +192,11 @@ export function showNaptanTagsForm(latlng, { tags, added, onAdd, onRemove }) {
     })
 }
 
-// Offers the tag an old highway=bus_stop lacks to be a PTv2 platform, or takes it back.
+// Offers the platform tags a bus stop lacks, or takes them back.
 export function showPlatformTagsForm(latlng, { tags, added, onAdd, onRemove }) {
     showTagFillForm(latlng, {
-        title: added ? "Platform tag to add" : "Tag as a PTv2 platform",
-        note: "Only tagged highway=bus_stop, which PTv2 routes do not read as a platform. Its other tags are kept.",
+        title: added ? "Platform tags to add" : "Add missing platform tags",
+        note: "Bus stops should carry highway=bus_stop, public_transport=platform and bus=yes. Other tags are kept.",
         tags,
         added,
         onAdd,

@@ -611,8 +611,7 @@ class PostDownloadOsmChangeModel(BaseModel):
             comment += f'; added NaPTAN tags to {tagged} bus stop{"s" if tagged != 1 else ""}'
 
         if platforms := sum(1 for addition in self.naptanTagAdditions if addition.tags_platform()):
-            described = 'bus stop as a PTv2 platform' if platforms == 1 else 'bus stops as PTv2 platforms'
-            comment += f'; tagged {platforms} {described}'
+            comment += f'; added platform tags to {platforms} bus stop{"s" if platforms != 1 else ""}'
 
         comment += self._make_route_master_comment()
 

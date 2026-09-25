@@ -83,23 +83,26 @@ export function editedTags(stop) {
     return result
 }
 
-// Old bus stops, tagged only highway=bus_stop, the mapper chose to make PTv2 platforms.
-// Mirrors PLATFORM_TAGS in naptan_tags.py, the one value the upload lets this write.
-export const PLATFORM_TAGS = { public_transport: "platform" }
+// The tags every bus stop platform should carry, filled in where the mapper chose to on a
+// stop lacking any of them. Mirrors PLATFORM_TAGS in naptan_tags.py, which lets each key
+// write this value and no other.
+export const PLATFORM_TAGS = { highway: "bus_stop", public_transport: "platform", bus: "yes" }
 
 const platformFills = new Map()
 
-// what the stop lacks to be read as a platform, or null when it needs nothing
+// The platform tags the stop has no value for, or null when it needs none. A key holding
+// something else, such as highway=platform on a platform way, is the mapper's to judge.
 export function missingPlatformTags(stop) {
     const tags = stop.tags ?? {}
-    if (tags.highway !== "bus_stop" || tags.public_transport) return null
-    return PLATFORM_TAGS
+    const missing = Object.fromEntries(Object.entries(PLATFORM_TAGS).filter(([key]) => !(tags[key] ?? "").trim()))
+    return Object.keys(missing).length ? missing : null
 }
 
-export const hasPlatformFill = (stop) => platformFills.has(additionKey(stop))
+export const getPlatformFill = (stop) => platformFills.get(additionKey(stop))
 
-export function addPlatformFill(stop) {
-    platformFills.set(additionKey(stop), { type: stop.type, id: Number.parseInt(stop.id, 10) })
+// `tags` is what was missing when it was offered, so a stop is only given those
+export function addPlatformFill(stop, tags) {
+    platformFills.set(additionKey(stop), { type: stop.type, id: Number.parseInt(stop.id, 10), tags: tags })
 }
 
 export const removePlatformFill = (stop) => platformFills.delete(additionKey(stop))
@@ -205,7 +208,7 @@ export function tagAdditionsPayload() {
             byHand: [],
         }
 
-        Object.assign(stop.tags, PLATFORM_TAGS)
+        Object.assign(stop.tags, fill.tags)
         byStop.set(key, stop)
     }
 
