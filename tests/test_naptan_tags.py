@@ -591,3 +591,47 @@ class TestEditedByHand:
 
         assert apply_stop_tags(element, 'node/42', {'name': 'High Street', 'bench': ''}, {'name': 'High St', 'bench': 'yes'})
         assert self._tags(element) == {'name': 'High Street'}
+
+
+class TestPlatformTags:
+    """public_transport=platform, offered for a stop tagged only highway=bus_stop."""
+
+    def test_the_platform_value_can_be_written(self):
+        addition = StopTagAddition(type='node', id=1, tags={'public_transport': 'platform'})
+
+        assert addition.writable_keys() == {'public_transport'}
+
+    def test_no_other_value_can_be_written(self):
+        addition = StopTagAddition(type='node', id=1, tags={'public_transport': 'stop_position'})
+
+        assert addition.writable_keys() == set()
+
+    def test_it_cannot_be_typed_by_hand(self):
+        addition = StopTagAddition(
+            type='node', id=1, tags={'public_transport': 'platform'}, byHand={'public_transport'}
+        )
+
+        assert addition.writable_keys() == set()
+
+    def test_it_is_not_credited_to_naptan(self):
+        model = _model(naptanTagAdditions=[StopTagAddition(type='node', id=1, tags={'public_transport': 'platform'})])
+
+        tags = model.make_changeset_tags()
+
+        assert tags['comment'] == 'Updated route: Bus 12, #7; tagged 1 bus stop as a PTv2 platform'
+        assert 'source' not in tags
+
+    def test_it_travels_with_naptan_tags_on_the_same_stop(self):
+        model = _model(
+            naptanTagAdditions=[
+                StopTagAddition(type='node', id=1, tags={'public_transport': 'platform', 'naptan:Bearing': 'NE'}),
+                StopTagAddition(type='node', id=2, tags={'public_transport': 'platform'}),
+            ]
+        )
+
+        tags = model.make_changeset_tags()
+
+        assert tags['comment'] == (
+            'Updated route: Bus 12, #7; added NaPTAN tags to 1 bus stop; tagged 2 bus stops as PTv2 platforms'
+        )
+        assert tags['source'] == 'NaPTAN'

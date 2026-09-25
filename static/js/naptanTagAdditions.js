@@ -83,8 +83,43 @@ export function editedTags(stop) {
     return result
 }
 
-// stops with any NaPTAN change to write, a fill or an accepted replacement
+// Old bus stops, tagged only highway=bus_stop, the mapper chose to make PTv2 platforms.
+// Mirrors PLATFORM_TAGS in naptan_tags.py, the one value the upload lets this write.
+export const PLATFORM_TAGS = { public_transport: "platform" }
+
+const platformFills = new Map()
+
+// what the stop lacks to be read as a platform, or null when it needs nothing
+export function missingPlatformTags(stop) {
+    const tags = stop.tags ?? {}
+    if (tags.highway !== "bus_stop" || tags.public_transport) return null
+    return PLATFORM_TAGS
+}
+
+export const hasPlatformFill = (stop) => platformFills.has(additionKey(stop))
+
+export function addPlatformFill(stop) {
+    platformFills.set(additionKey(stop), { type: stop.type, id: Number.parseInt(stop.id, 10) })
+}
+
+export const removePlatformFill = (stop) => platformFills.delete(additionKey(stop))
+
+// stops with any tag change to write: a fill, an accepted replacement or a hand edit
 export const tagChangeCount = () => tagAdditionsPayload().length
+
+// mirrors make_comment() in main.py, which counts one stop under each kind it carries
+export function tagChangeCounts() {
+    const counts = { edited: 0, naptan: 0, platform: 0 }
+
+    for (const stop of tagAdditionsPayload()) {
+        const filled = Object.keys(stop.tags).filter((key) => !stop.byHand.includes(key))
+        if (stop.byHand.length) counts.edited++
+        if (filled.some((key) => !(key in PLATFORM_TAGS))) counts.naptan++
+        if (filled.some((key) => key in PLATFORM_TAGS)) counts.platform++
+    }
+
+    return counts
+}
 
 // A decision is remembered against the value NaPTAN gave at the time, so a stop whose
 // NaPTAN record changes afterwards comes back for a fresh decision rather than keeping
@@ -125,6 +160,7 @@ export function clearTagAdditions() {
     additions.clear()
     decisions.clear()
     edits.clear()
+    platformFills.clear()
 }
 
 // Fills and accepted replacements for the same stop travel together, as one change to
@@ -155,6 +191,21 @@ export function tagAdditionsPayload() {
 
         stop.tags[entry.tagKey] = entry.naptanValue
         stop.expected[entry.tagKey] = entry.osmValue
+        byStop.set(key, stop)
+    }
+
+    // neither NaPTAN's nor typed, and only ever a key the stop has none of
+    for (const fill of platformFills.values()) {
+        const key = `${fill.type},${fill.id}`
+        const stop = byStop.get(key) ?? {
+            type: fill.type,
+            id: fill.id,
+            tags: {},
+            expected: {},
+            byHand: [],
+        }
+
+        Object.assign(stop.tags, PLATFORM_TAGS)
         byStop.set(key, stop)
     }
 

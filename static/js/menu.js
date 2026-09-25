@@ -9,7 +9,7 @@ import {
     stopAreasPayload,
 } from "./stopAreas.js"
 import { stopPositionCount, stopPositionsPayload } from "./stopPositions.js"
-import { tagAdditionsPayload, tagChangeCount } from "./naptanTagAdditions.js"
+import { tagAdditionsPayload, tagChangeCount, tagChangeCounts } from "./naptanTagAdditions.js"
 import {
     downloadHistoryData,
     processRelationDownloadTriggers,
@@ -710,7 +710,7 @@ const makeDefaultComment = () => {
     const plural = (count) => (count !== 1 ? "s" : "")
     const stopCount = newStopCount()
     const positionCount = stopPositionCount()
-    const taggedCount = tagChangeCount()
+    const tagCounts = tagChangeCounts()
     const added = stopCount ? `; added ${stopCount} bus stop${plural(stopCount)}` : ""
     const positions = positionCount
         ? `; added ${positionCount} stop position${plural(positionCount)}`
@@ -720,9 +720,14 @@ const makeDefaultComment = () => {
     const areas =
         (newAreas ? `; added ${newAreas} stop area${plural(newAreas)}` : "") +
         (doneAreas ? `; completed ${doneAreas} stop area${plural(doneAreas)}` : "")
-    const tagged = taggedCount
-        ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
-        : ""
+    const tagged =
+        (tagCounts.edited ? `; edited ${tagCounts.edited} bus stop${plural(tagCounts.edited)}` : "") +
+        (tagCounts.naptan ? `; added NaPTAN tags to ${tagCounts.naptan} bus stop${plural(tagCounts.naptan)}` : "") +
+        (tagCounts.platform === 1
+            ? "; tagged 1 bus stop as a PTv2 platform"
+            : tagCounts.platform
+              ? `; tagged ${tagCounts.platform} bus stops as PTv2 platforms`
+              : "")
     const pendingMaster = pendingRouteMaster()
     const master = !pendingMaster
         ? ""

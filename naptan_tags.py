@@ -58,6 +58,11 @@ NAPTAN_KEYS = (
 EDITABLE_KEYS = ('name', 'local_ref', 'shelter', 'bench')
 
 
+# What a highway=bus_stop mapped before PTv2 lacks to be read as a platform, offered for
+# the mapper to fill in. It is neither NaPTAN's nor typed, and writes this value only.
+PLATFORM_TAGS = {'public_transport': 'platform'}
+
+
 def missing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
     """NaPTAN's value for each key the OSM stop lacks; values it has are kept."""
     return {key: naptan_tags[key] for key in NAPTAN_KEYS if key in naptan_tags and not osm_tags.get(key, '').strip()}
@@ -102,7 +107,11 @@ class StopTagAddition(BaseModel):
 
     def from_naptan(self) -> bool:
         """Whether any of this came from NaPTAN, rather than being typed by the mapper."""
-        return not self.byHand or bool(self.tags.keys() - self.byHand)
+        return not self.tags or bool(self.tags.keys() - self.byHand - PLATFORM_TAGS.keys())
+
+    def tags_platform(self) -> bool:
+        """Whether this fills in the tags that make an old bus stop a PTv2 platform."""
+        return any(key in PLATFORM_TAGS for key in self.tags.keys() - self.byHand)
 
     def writable_keys(self) -> set[str]:
         """
@@ -110,15 +119,16 @@ class StopTagAddition(BaseModel):
 
         What the mapper typed is theirs to decide, within the fields the form offers.
         What NaPTAN offers is narrower: the NaPTAN keys, either filled in where the
-        stop has none or as a replacement the mapper accepted.
+        stop has none or as a replacement the mapper accepted. Narrower still is making
+        an old bus stop a platform, which may write one value and nothing else.
         """
         result = set()
 
-        for key in self.tags:
+        for key, value in self.tags.items():
             if key in self.byHand:
                 if key in EDITABLE_KEYS:
                     result.add(key)
-            elif key in NAPTAN_KEYS:
+            elif key in NAPTAN_KEYS or PLATFORM_TAGS.get(key) == value:
                 result.add(key)
 
         return result

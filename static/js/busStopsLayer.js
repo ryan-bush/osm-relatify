@@ -6,6 +6,7 @@ import {
     showNaptanDifferencesForm,
     showNaptanTagsForm,
     showNewStopForm,
+    showPlatformTagsForm,
     showStopAreaForm,
     showStopPositionForm,
 } from "./busStopsContext.js"
@@ -20,13 +21,17 @@ import {
 } from "./busStopsNew.js"
 import { map } from "./map.js"
 import {
+    addPlatformFill,
     addTagAddition,
     clearTagAdditions,
     editedTags,
     getDecision,
     getStopEdit,
     getTagAddition,
+    hasPlatformFill,
     hasUndecided,
+    missingPlatformTags,
+    removePlatformFill,
     removeStopEdit,
     removeTagAddition,
     setDecision,
@@ -299,8 +304,13 @@ function addBusStopToLayer(i, stop, name, role) {
           : suggestion?.tags && Object.keys(suggestion.tags).length
             ? "<br><small>Missing tags NaPTAN has</small>"
             : ""
+    const platformNote = hasPlatformFill(stop)
+        ? "<br><small>Will be tagged public_transport=platform</small>"
+        : !isNewStop(stop) && missingPlatformTags(stop)
+          ? "<br><small>Not tagged public_transport=platform</small>"
+          : ""
 
-    marker.bindTooltip(name + naptanNote, {
+    marker.bindTooltip(name + naptanNote + platformNote, {
         direction: "top",
         offset: [0, -10],
     })
@@ -316,6 +326,7 @@ function addBusStopToLayer(i, stop, name, role) {
             naptanDifferencesAction(e, stop, suggestion, busStopData[i]),
             stopAreaAction(e, busStopData[i]),
             editStopAction(e, busStopData[i]),
+            platformTagsAction(e, stop),
         ),
     )
 
@@ -645,6 +656,34 @@ function naptanTagsAction(e, stop, suggestion, addition) {
                 },
                 onRemove: () => {
                     removeTagAddition(stop)
+                    onTagAdditionsChanged()
+                },
+            }),
+    }
+}
+
+// Offers the tag a stop mapped before PTv2 lacks to be a platform, for one already in OSM
+// that is only tagged highway=bus_stop, or takes back one not yet uploaded.
+function platformTagsAction(e, stop) {
+    if (isNewStop(stop)) return null
+
+    const added = hasPlatformFill(stop)
+    const tags = missingPlatformTags(stop)
+    if (!tags) return null
+
+    return {
+        label: added ? "<b>Platform</b> tag ✓" : "<b>Platform</b> tag",
+        added: added,
+        onClick: () =>
+            showPlatformTagsForm(e.latlng, {
+                tags: tags,
+                added: added,
+                onAdd: () => {
+                    addPlatformFill(stop)
+                    onTagAdditionsChanged()
+                },
+                onRemove: () => {
+                    removePlatformFill(stop)
                     onTagAdditionsChanged()
                 },
             }),
