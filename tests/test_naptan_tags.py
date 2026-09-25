@@ -591,3 +591,59 @@ class TestEditedByHand:
 
         assert apply_stop_tags(element, 'node/42', {'name': 'High Street', 'bench': ''}, {'name': 'High St', 'bench': 'yes'})
         assert self._tags(element) == {'name': 'High Street'}
+
+
+class TestPlatformTags:
+    """highway=bus_stop, public_transport=platform and bus=yes, for a bus stop lacking any."""
+
+    def test_each_platform_tag_can_be_written(self):
+        tags = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes'}
+        addition = StopTagAddition(type='node', id=1, tags=tags)
+
+        assert addition.writable_keys() == {'highway', 'public_transport', 'bus'}
+
+    @pytest.mark.parametrize(
+        'tags', [{'public_transport': 'stop_position'}, {'highway': 'platform'}, {'bus': 'no'}]
+    )
+    def test_no_other_value_can_be_written(self, tags):
+        assert StopTagAddition(type='node', id=1, tags=tags).writable_keys() == set()
+
+    def test_they_cannot_be_typed_by_hand(self):
+        addition = StopTagAddition(type='node', id=1, tags={'bus': 'yes'}, byHand={'bus'})
+
+        assert addition.writable_keys() == set()
+
+    def test_they_are_not_credited_to_naptan(self):
+        model = _model(
+            naptanTagAdditions=[
+                StopTagAddition(type='node', id=1, tags={'public_transport': 'platform', 'bus': 'yes'})
+            ]
+        )
+
+        tags = model.make_changeset_tags()
+
+        assert tags['comment'] == 'Updated route: Bus 12, #7; added platform tags to 1 bus stop'
+        assert 'source' not in tags
+
+    def test_they_travel_with_naptan_tags_on_the_same_stop(self):
+        model = _model(
+            naptanTagAdditions=[
+                StopTagAddition(type='node', id=1, tags={'bus': 'yes', 'naptan:Bearing': 'NE'}),
+                StopTagAddition(type='way', id=2, tags={'highway': 'bus_stop'}),
+            ]
+        )
+
+        tags = model.make_changeset_tags()
+
+        assert tags['comment'] == (
+            'Updated route: Bus 12, #7; added NaPTAN tags to 1 bus stop; added platform tags to 2 bus stops'
+        )
+        assert tags['source'] == 'NaPTAN'
+
+    def test_a_tag_set_since_is_a_conflict(self):
+        element = {'tag': [{'@k': 'bus', '@v': 'no'}]}
+
+        with pytest.raises(HTTPException) as e:
+            apply_stop_tags(element, 'node/1', {'bus': 'yes'}, {})
+
+        assert e.value.status_code == 409

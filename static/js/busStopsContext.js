@@ -61,6 +61,8 @@ const LIST_ICON = `
         <circle cx="4.5" cy="18" r="1"/>
     </svg>`
 
+// `platformTags`, when given, is { label, added, onClick } for filling in the tags every
+// bus stop platform should carry.
 // `naptanTags`, `stopPosition` and `naptanDifferences`, when given, are each
 // { label, onClick }: filling in NaPTAN tags, putting a stop position on the road, and
 // deciding between NaPTAN and the stop where they disagree. The last also carries
@@ -76,8 +78,17 @@ export function showContextMenu(
     naptanDifferences = null,
     stopArea = null,
     editStop = null,
+    platformTags = null,
 ) {
     clearBusStopsPopup()
+
+    const platformTagsButton = platformTags
+        ? `<button class="btn btn-sm ${platformTags.added ? "btn-info" : "btn-light"}
+                       d-flex flex-column align-items-center" id="bs-platform-tags">
+               ${TAGS_ICON}
+               <div>${platformTags.label}</div>
+           </button>`
+        : ""
 
     const naptanTagsButton = naptanTags
         ? `<button class="btn btn-sm btn-light d-flex flex-column align-items-center" id="bs-naptan-tags">
@@ -128,6 +139,7 @@ export function showContextMenu(
             <div class="btn-group text-center">
                 ${differencesButton}
                 ${naptanTagsButton}
+                ${platformTagsButton}
                 ${stopPositionButton}
                 ${stopAreaButton}
                 ${editButton}
@@ -140,13 +152,15 @@ export function showContextMenu(
         closeButton: false,
         className: "popup-sm",
         // wide enough for every button a stop can offer at once
-        maxWidth: 560,
+        maxWidth: 640,
     }).openOn(map)
 
     // scoped to this popup, as one closed a moment ago may still be fading out
     const openOsmButton = popup.getElement().querySelector("#bs-open-osm")
 
     if (naptanTags) popup.getElement().querySelector("#bs-naptan-tags").onclick = naptanTags.onClick
+
+    if (platformTags) popup.getElement().querySelector("#bs-platform-tags").onclick = platformTags.onClick
 
     if (naptanDifferences)
         popup.getElement().querySelector("#bs-naptan-differs").onclick = naptanDifferences.onClick
@@ -168,13 +182,36 @@ export function showContextMenu(
 
 // Lists the NaPTAN tags for a stop already in OSM, to add them or to take them back out.
 export function showNaptanTagsForm(latlng, { tags, added, onAdd, onRemove }) {
+    showTagFillForm(latlng, {
+        title: added ? "NaPTAN tags to add" : "Add missing NaPTAN tags",
+        note: "Only tags the stop lacks are added; its existing tags are kept. Check this is the stop NaPTAN means.",
+        tags,
+        added,
+        onAdd,
+        onRemove,
+    })
+}
+
+// Offers the platform tags a bus stop lacks, or takes them back.
+export function showPlatformTagsForm(latlng, { tags, added, onAdd, onRemove }) {
+    showTagFillForm(latlng, {
+        title: added ? "Platform tags to add" : "Add missing platform tags",
+        note: "Bus stops should carry highway=bus_stop, public_transport=platform and bus=yes. Other tags are kept.",
+        tags,
+        added,
+        onAdd,
+        onRemove,
+    })
+}
+
+function showTagFillForm(latlng, { title, note, tags, added, onAdd, onRemove }) {
     clearBusStopsPopup()
 
     const content = document.createElement("div")
     content.className = "new-stop-form"
     content.innerHTML = `
-        <div class="new-stop-title">${added ? "NaPTAN tags to add" : "Add missing NaPTAN tags"}</div>
-        <div class="new-stop-naptan">Only tags the stop lacks are added; its existing tags are kept. Check this is the stop NaPTAN means.</div>
+        <div class="new-stop-title">${title}</div>
+        <div class="new-stop-naptan">${note}</div>
         <table class="table table-sm naptan-tags-table mb-2"><tbody></tbody></table>
         <button type="button" class="btn btn-sm w-100 ${added ? "btn-outline-danger" : "btn-primary"} naptan-tags-action">
             ${added ? "Don't add these tags" : "Add tags"}

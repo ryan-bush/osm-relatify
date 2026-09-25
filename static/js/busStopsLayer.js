@@ -6,6 +6,7 @@ import {
     showNaptanDifferencesForm,
     showNaptanTagsForm,
     showNewStopForm,
+    showPlatformTagsForm,
     showStopAreaForm,
     showStopPositionForm,
 } from "./busStopsContext.js"
@@ -20,13 +21,17 @@ import {
 } from "./busStopsNew.js"
 import { map } from "./map.js"
 import {
+    addPlatformFill,
     addTagAddition,
     clearTagAdditions,
     editedTags,
     getDecision,
+    getPlatformFill,
     getStopEdit,
     getTagAddition,
     hasUndecided,
+    missingPlatformTags,
+    removePlatformFill,
     removeStopEdit,
     removeTagAddition,
     setDecision,
@@ -299,8 +304,15 @@ function addBusStopToLayer(i, stop, name, role) {
           : suggestion?.tags && Object.keys(suggestion.tags).length
             ? "<br><small>Missing tags NaPTAN has</small>"
             : ""
+    const platformFill = getPlatformFill(stop)
+    const platformMissing = role === "platform" && platformTagsWanted(stop) ? missingPlatformTags(stop) : null
+    const platformNote = platformFill
+        ? `<br><small>Will be tagged ${escapeHtml(tagList(platformFill.tags))}</small>`
+        : platformMissing
+          ? `<br><small>Missing ${escapeHtml(tagList(platformMissing))}</small>`
+          : ""
 
-    marker.bindTooltip(name + naptanNote, {
+    marker.bindTooltip(name + naptanNote + platformNote, {
         direction: "top",
         offset: [0, -10],
     })
@@ -316,6 +328,7 @@ function addBusStopToLayer(i, stop, name, role) {
             naptanDifferencesAction(e, stop, suggestion, busStopData[i]),
             stopAreaAction(e, busStopData[i]),
             editStopAction(e, busStopData[i]),
+            role === "platform" ? platformTagsAction(e, stop) : null,
         ),
     )
 
@@ -645,6 +658,44 @@ function naptanTagsAction(e, stop, suggestion, addition) {
                 },
                 onRemove: () => {
                     removeTagAddition(stop)
+                    onTagAdditionsChanged()
+                },
+            }),
+    }
+}
+
+const tagList = (tags) =>
+    Object.entries(tags)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(", ")
+
+// Only a bus route's platforms: a trolleybus stop says trolleybus=yes rather than bus=yes,
+// and a new stop is given every one of these on upload anyway. Relations cannot be written.
+const platformTagsWanted = (stop) =>
+    relationTags?.route === "bus" && !isNewStop(stop) && (stop.type === "node" || stop.type === "way")
+
+// Offers the tags every bus stop platform should carry, for one already in OSM that lacks
+// any of them, or takes back those not yet uploaded.
+function platformTagsAction(e, stop) {
+    if (!platformTagsWanted(stop)) return null
+
+    const fill = getPlatformFill(stop)
+    const tags = fill?.tags ?? missingPlatformTags(stop)
+    if (!tags) return null
+
+    return {
+        label: fill ? "<b>Platform</b> tags ✓" : "<b>Platform</b> tags",
+        added: Boolean(fill),
+        onClick: () =>
+            showPlatformTagsForm(e.latlng, {
+                tags: tags,
+                added: Boolean(fill),
+                onAdd: () => {
+                    addPlatformFill(stop, tags)
+                    onTagAdditionsChanged()
+                },
+                onRemove: () => {
+                    removePlatformFill(stop)
                     onTagAdditionsChanged()
                 },
             }),

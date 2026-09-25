@@ -610,6 +610,9 @@ class PostDownloadOsmChangeModel(BaseModel):
         if tagged := sum(1 for addition in self.naptanTagAdditions if addition.from_naptan()):
             comment += f'; added NaPTAN tags to {tagged} bus stop{"s" if tagged != 1 else ""}'
 
+        if platforms := sum(1 for addition in self.naptanTagAdditions if addition.tags_platform()):
+            comment += f'; added platform tags to {platforms} bus stop{"s" if platforms != 1 else ""}'
+
         comment += self._make_route_master_comment()
 
         return comment
