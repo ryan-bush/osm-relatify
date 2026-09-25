@@ -122,3 +122,15 @@ def test_an_untagged_node_in_no_stop_area_is_left_out():
     bare = {'type': 'node', 'id': 20, 'lat': 53.2, 'lon': 0.0}
 
     assert stop_elements([bare], {}) == ()
+
+
+def test_a_bus_stop_without_public_transport_is_a_platform():
+    """A highway=bus_stop mapped before PTv2 was left off the map, so it could not be tagged."""
+    stop = _node(10, {'highway': 'bus_stop', 'name': 'Deiniol Road'})
+
+    [element] = stop_elements([stop], {})
+    platform = FetchRelationBusStop.from_data(element)
+
+    assert platform.public_transport == PublicTransport.PLATFORM
+    assert platform.tags == {'highway': 'bus_stop', 'name': 'Deiniol Road'}
+    assert build_bus_stop_collections([platform])[0].platform == platform
