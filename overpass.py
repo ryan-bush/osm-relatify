@@ -867,7 +867,7 @@ def get_download_triggers(
                 minlon=latLng[1],
                 maxlat=latLng[0],
                 maxlon=latLng[1],
-            ).get_grid_cells(expand=1)  # 3x3 grid
+            ).get_grid_cells(expand=2)  # 5x5 grid, so a long route takes fewer clicks
 
             way_new_cells |= new_cells - cells_set
 
@@ -1089,7 +1089,9 @@ class Overpass:
         stop_areas = existing_stop_areas(stop_area_relations, bus_stop_collections)
 
         global_bb = BoundingBox(*bbc.idx.bounds)
-        download_triggers = get_download_triggers(bbc, union_grid_cells, ways)
+        # every cell downloaded so far, not only this time: the wider grid a trigger asks
+        # for overlaps earlier downloads more often, and those need not be asked again
+        download_triggers = get_download_triggers(bbc, tuple(chain.from_iterable(download_hist.history)), ways)
 
         return QueryRelationResult(
             bounds=global_bb,

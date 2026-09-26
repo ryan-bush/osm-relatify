@@ -192,9 +192,32 @@ def logout():
     return response
 
 
-# a full viewport at low zoom is far too much to download in one go; panning grows
-# the area from a sensible starting point instead
-NEW_RELATION_MAX_CELLS = 256
+# A full viewport at low zoom is far too much to download in one go. This bounds both a
+# relation being created and the map's "download this view" button: roughly 17 by 11 km
+# of cells, which is a zoom 13 window on a laptop screen.
+VIEW_DOWNLOAD_MAX_CELLS = 256
+
+
+def view_download_targets(
+    bounds: tuple[float, float, float, float],
+    downloaded: frozenset[Cell] = frozenset(),
+) -> tuple[Cell, ...]:
+    """
+    The cells in a map view still to download, for the view as the user sees it.
+
+    Only what is new counts against the limit, so a view reaching a little past an area
+    already downloaded is fine at a zoom where the whole of it would not be.
+    """
+    cells = BoundingBox(*bounds).get_grid_cells() - downloaded
+
+    if len(cells) > VIEW_DOWNLOAD_MAX_CELLS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            'Zoom in; the visible area is too large to download in one go.',
+        )
+
+    # sorted for a stable cache key, and query_relation expects a sequence
+    return tuple(sorted(cells, key=lambda c: (c.x, c.y)))
 
 
 class PostQueryModel(BaseModel):
@@ -203,9 +226,10 @@ class PostQueryModel(BaseModel):
     downloadHistory: dict | None = None
     downloadTargets: tuple[dict, ...] | None = None
     reload: bool = False
-    # creation only: the route type the user picked, and the map viewport to seed
-    # the first download from, as (minlat, minlon, maxlat, maxlon)
+    # creation only: the route type the user picked
     routeType: str | None = None
+    # the map viewport, as (minlat, minlon, maxlat, maxlon): the first download of a
+    # relation being created, or a view asked for with the "download this view" button
     bounds: tuple[float, float, float, float] | None = None
 
 
@@ -230,6 +254,12 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
                 session=DownloadHistory.make_session(),
                 history=(tuple(chain.from_iterable(download_hist.history)),),
             )
+        elif model.bounds is not None:
+            download_targets = view_download_targets(
+                model.bounds, frozenset(chain.from_iterable(download_hist.history))
+            )
+            if not download_targets:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Everything in view is already downloaded.')
     else:
         download_hist = None
         download_targets = None
@@ -249,16 +279,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
                 if model.bounds is None:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Creating a relation requires map bounds')
 
-                cells = BoundingBox(*model.bounds).get_grid_cells()
-                if len(cells) > NEW_RELATION_MAX_CELLS:
-                    raise HTTPException(
-                        status.HTTP_400_BAD_REQUEST,
-                        'Zoom in before creating a relation; the visible area is too large to download. '
-                        'Panning downloads more as you go.',
-                    )
-
-                # sorted for a stable cache key, and query_relation expects a sequence
-                download_targets = tuple(sorted(cells, key=lambda c: (c.x, c.y)))
+                download_targets = view_download_targets(model.bounds)
         else:
             try:
                 relation = await _OSM.get_relation(model.relationId)
