@@ -63,13 +63,6 @@ def test_only_new_cells_count_against_the_limit():
     assert len(view_download_targets(wide, downloaded)) <= VIEW_DOWNLOAD_MAX_CELLS
 
 
-class _Bbc:
-    """Nothing is downloaded yet, as far as the triggers can tell."""
-
-    def contains(self, lat_lng):  # noqa: ARG002
-        return False
-
-
 class _Way:
     def __init__(self, *lat_lngs):
         self.latLngs = lat_lngs
@@ -84,7 +77,7 @@ def _cell_of(lat_lng):
 
 
 def test_a_trigger_asks_for_the_5x5_cells_around_a_road():
-    triggers = get_download_triggers(_Bbc(), (), {'w1': _Way(POINT)})
+    triggers = get_download_triggers((), {'w1': _Way(POINT)})
 
     c = _cell_of(POINT)
     assert set(triggers['w1']) == {Cell(x, y) for x in range(c.x - 2, c.x + 3) for y in range(c.y - 2, c.y + 3)}
@@ -92,9 +85,26 @@ def test_a_trigger_asks_for_the_5x5_cells_around_a_road():
 
 def test_a_trigger_leaves_out_every_cell_downloaded_so_far():
     c = _cell_of(POINT)
-    downloaded = (c, Cell(c.x + 1, c.y))
+    downloaded = (Cell(c.x + 1, c.y), Cell(c.x, c.y + 1))
 
-    triggers = get_download_triggers(_Bbc(), downloaded, {'w1': _Way(POINT)})
+    triggers = get_download_triggers(downloaded, {'w1': _Way(POINT)})
 
     assert set(downloaded).isdisjoint(triggers['w1'])
     assert len(triggers['w1']) == 25 - 2
+
+
+def test_a_way_inside_the_download_triggers_nothing():
+    c = _cell_of(POINT)
+
+    assert get_download_triggers((c,), {'w1': _Way(POINT)}) == {}
+
+
+def test_a_way_leaving_the_download_triggers_only_past_its_edge():
+    inside = (50.005, 0.005)
+    outside = (50.005, 0.015)  # the next cell east
+    c = _cell_of(inside)
+
+    triggers = get_download_triggers((c,), {'w1': _Way(inside, outside)})
+
+    e = _cell_of(outside)
+    assert set(triggers['w1']) == {Cell(x, y) for x in range(e.x - 2, e.x + 3) for y in range(e.y - 2, e.y + 3)} - {c}
