@@ -17,6 +17,7 @@ from starlette import status
 from bus_collection_builder import build_bus_stop_collections, name_unnamed_stop_positions, stop_position_headings
 from config import (
     DOWNLOAD_RELATION_GRID_CELL_EXPAND,
+    DOWNLOAD_RELATION_GRID_SIZE,
     DOWNLOAD_RELATION_WAY_BB_EXPAND,
     OVERPASS_API_ATTEMPTS,
     OVERPASS_API_INTERPRETERS,
@@ -847,34 +848,45 @@ def optimize_cells_and_get_bbs(
     return bbs, tuple(bb.extend(unit_degrees=DOWNLOAD_RELATION_GRID_CELL_EXPAND) for bb in bbs)
 
 
+# how many cells either side of a road a click past the edge of the download asks for:
+# 5x5, so a long route takes fewer clicks
+DOWNLOAD_TRIGGER_EXPAND = 2
+
+
 def get_download_triggers(
-    bbc: BoundingBoxCollection,
-    cells: Sequence[Cell],
+    cells: Iterable[Cell],
     ways: dict[ElementId, FetchRelationElement],
 ) -> dict[ElementId, tuple[Cell, ...]]:
-    cells_set = frozenset(cells)
+    """
+    The cells to download when each way is clicked, for the ways reaching past the download.
+
+    Every point of every way is looked at on each download, so this is asked by grid cell
+    rather than of the downloaded area's bounding boxes: a set lookup, where the boxes'
+    R-tree took seconds on a few thousand ways and held up the route calculation with it.
+    """
+    downloaded = frozenset(cells)
     result = {}
 
     for way_id, way in ways.items():
-        way_new_cells = set()
+        seen: set[Cell] = set()
+        way_new_cells: set[Cell] = set()
 
-        for latLng in way.latLngs:
-            if bbc.contains(latLng):
+        for lat, lon in way.latLngs:
+            cell = Cell(int(lon // DOWNLOAD_RELATION_GRID_SIZE), int(lat // DOWNLOAD_RELATION_GRID_SIZE))
+            if cell in downloaded or cell in seen:
                 continue
+            seen.add(cell)
 
-            new_cells = BoundingBox(
-                minlat=latLng[0],
-                minlon=latLng[1],
-                maxlat=latLng[0],
-                maxlon=latLng[1],
-            ).get_grid_cells(expand=2)  # 5x5 grid, so a long route takes fewer clicks
-
-            way_new_cells |= new_cells - cells_set
+            for dx in range(-DOWNLOAD_TRIGGER_EXPAND, DOWNLOAD_TRIGGER_EXPAND + 1):
+                for dy in range(-DOWNLOAD_TRIGGER_EXPAND, DOWNLOAD_TRIGGER_EXPAND + 1):
+                    near = Cell(cell.x + dx, cell.y + dy)
+                    if near not in downloaded:
+                        way_new_cells.add(near)
 
         if way_new_cells:
             result[way_id] = tuple(way_new_cells)
 
-    return dict(result)
+    return result
 
 
 # TODO: check data freshness
@@ -1091,7 +1103,7 @@ class Overpass:
         global_bb = BoundingBox(*bbc.idx.bounds)
         # every cell downloaded so far, not only this time: the wider grid a trigger asks
         # for overlaps earlier downloads more often, and those need not be asked again
-        download_triggers = get_download_triggers(bbc, tuple(chain.from_iterable(download_hist.history)), ways)
+        download_triggers = get_download_triggers(chain.from_iterable(download_hist.history), ways)
 
         return QueryRelationResult(
             bounds=global_bb,
