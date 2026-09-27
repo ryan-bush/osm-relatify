@@ -18,11 +18,30 @@ from config import BUS_COLLECTION_SEARCH_AREA, STOP_AREA_SEARCH_AREA
 from cython_lib.geoutils import haversine_distance, radians_tuple
 from models.element_id import ElementId, element_id
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, PublicTransport
+from models.stop_area import StopArea
 from utils import extract_numbers, normalize_name
 
 # what pairing a stop position with a platform its buses do not serve costs, so that it is
 # never the cheaper choice; such a pair is undone once the assignment is made
 _WRONG_DIRECTION = 1e9
+
+# what the same costs when a stop area already holds the two of them: the mapper has said
+# they go together, so the pair is kept, but any platform the buses do serve comes first
+_WRONG_DIRECTION_IN_STOP_AREA = 1e6
+
+# the stop areas each stop is in, by "type/id"
+StopAreasOf = Mapping[str, frozenset[int]]
+
+
+def stop_areas_of(stop_areas: Iterable[StopArea]) -> dict[str, frozenset[int]]:
+    """Which stop areas each stop is in, by "type/id"."""
+    result: dict[str, set[int]] = defaultdict(set)
+
+    for area in stop_areas:
+        for member in area.members:
+            result[member].add(area.id)
+
+    return {member: frozenset(ids) for member, ids in result.items()}
 
 
 def stop_position_headings(
@@ -130,13 +149,30 @@ def _pairing_costs(
     platforms: Sequence[FetchRelationBusStop],
     stops: Sequence[FetchRelationBusStop],
     headings: Mapping[ElementId, float],
+    areas: StopAreasOf,
 ) -> np.ndarray:
+    """
+    What pairing each platform with each stop position costs: the distance between them.
+
+    A stop position whose buses go the other way from the platform's is ruled out, unless
+    a stop area already holds the two of them. A stop position is tagged with the way the
+    route that added it runs, which need not be the way NaPTAN says the platform faces:
+    Trelawney Avenue in Poughill has node/682268028, NW-bound, in one stop area with
+    node/14221288878, for buses heading SE. Keeping them apart offered to add a second
+    stop position on top of the first.
+    """
     costs = np.zeros((len(platforms), len(stops)))
 
     for i, platform in enumerate(platforms):
+        platform_areas = areas.get(platform.nice_id, frozenset())
+
         for j, stop in enumerate(stops):
+            distance = haversine_distance(platform.latLng, stop.latLng)
+
             if _serves(platform, stop, headings):
-                costs[i, j] = haversine_distance(platform.latLng, stop.latLng)
+                costs[i, j] = distance
+            elif platform_areas & areas.get(stop.nice_id, frozenset()):
+                costs[i, j] = _WRONG_DIRECTION_IN_STOP_AREA + distance
             else:
                 costs[i, j] = _WRONG_DIRECTION
 
@@ -147,6 +183,7 @@ def _pairing_costs(
 def build_bus_stop_collections(
     bus_stops: Sequence[FetchRelationBusStop],
     headings: Mapping[ElementId, float] | None = None,
+    stop_areas: Iterable[StopArea] = (),
 ) -> list[FetchRelationBusStopCollection]:
     # 1. group by area
     # 2. group by name in area
@@ -156,6 +193,7 @@ def build_bus_stop_collections(
         return []
 
     headings = headings or {}
+    areas = stop_areas_of(stop_areas)
     search_latLng = BUS_COLLECTION_SEARCH_AREA / 111_111
     search_latLng_rad = radians(search_latLng)
 
@@ -297,15 +335,15 @@ def build_bus_stop_collections(
                 )
 
             if platforms_explicit:
-                collections.extend(_collect(platforms_explicit, stops, headings))
+                collections.extend(_collect(platforms_explicit, stops, headings, areas))
                 continue
 
             if stops_explicit:
-                collections.extend(_collect(platforms, stops_explicit, headings))
+                collections.extend(_collect(platforms, stops_explicit, headings, areas))
                 continue
 
             if platforms_implicit and stops_implicit:
-                collections.extend(_collect(platforms_implicit, stops, headings))
+                collections.extend(_collect(platforms_implicit, stops, headings, areas))
                 continue
 
             if platforms_implicit:  # and not stops_implicit
@@ -321,13 +359,14 @@ def build_bus_stop_collections(
                 )
                 continue
 
-    return _pair_by_distance_within_places(assign_stop_area_groups(collections), headings)
+    return _pair_by_distance_within_places(assign_stop_area_groups(collections), headings, areas)
 
 
 def _collect(
     platforms: Sequence[FetchRelationBusStop],
     stops: Sequence[FetchRelationBusStop],
     headings: Mapping[ElementId, float],
+    areas: StopAreasOf,
 ) -> list[FetchRelationBusStopCollection]:
     """
     Pair the platforms of one name group with its stop positions, keeping every one.
@@ -339,7 +378,7 @@ def _collect(
     top of it. At the High Street terminus that would have put a new node 0.5 m from
     node/14177644556.
     """
-    assigned = _assign(platforms, stops, headings)
+    assigned = _assign(platforms, stops, headings, areas)
     paired = {id(stop) for stop in assigned if stop is not None}
 
     result = [
@@ -356,6 +395,7 @@ def _collect(
 def _pair_by_distance_within_places(
     collections: list[FetchRelationBusStopCollection],
     headings: Mapping[ElementId, float],
+    areas: StopAreasOf,
 ) -> list[FetchRelationBusStopCollection]:
     """
     Within one place, give each stop position to the platform it stands beside.
@@ -401,7 +441,7 @@ def _pair_by_distance_within_places(
 
         platforms = [result[i].platform for i in indices]
 
-        costs = _pairing_costs(platforms, [stop for _, stop in sources], headings)
+        costs = _pairing_costs(platforms, [stop for _, stop in sources], headings, areas)
         row_ind, col_ind = linear_sum_assignment(costs)
         taken = {
             indices[i]: sources[j][1]
@@ -444,6 +484,7 @@ def _assign(
     primary: Sequence[FetchRelationBusStop],
     elements: Sequence[FetchRelationBusStop],
     headings: Mapping[ElementId, float],
+    areas: StopAreasOf,
 ) -> list[FetchRelationBusStop | None]:
     """
     Pair each of `primary` with the element that goes with it, closest pairs first.
@@ -458,9 +499,9 @@ def _assign(
     if not elements:
         return [None] * len(primary)
 
-    # A stop position the platform's buses do not serve is never paired with it, as that
+    # A stop position the platform's buses do not serve is not paired with it, as that
     # would leave the platform looking as though it had one of its own.
-    costs = _pairing_costs(primary, elements, headings)
+    costs = _pairing_costs(primary, elements, headings, areas)
 
     # the Hungarian algorithm, which pairs off as many as it can for the least total
     # cost; on a lopsided matrix it simply leaves the extras unpaired

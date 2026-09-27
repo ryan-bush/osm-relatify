@@ -2,6 +2,7 @@
 
 from bus_collection_builder import build_bus_stop_collections, name_unnamed_stop_positions, stop_position_headings
 from models.fetch_relation import FetchRelationBusStop
+from models.stop_area import StopArea
 
 LAT = 51.5574
 
@@ -18,10 +19,10 @@ def _position(id, name='Durham Street', **kwargs):
     return _stop(id, {'name': name, 'public_transport': 'stop_position', 'bus': 'yes'}, **kwargs)
 
 
-def _pairs(bus_stops, headings=None):
+def _pairs(bus_stops, headings=None, stop_areas=()):
     return [
         (c.platform.id if c.platform else None, c.stop.id if c.stop else None)
-        for c in build_bus_stop_collections(bus_stops, headings)
+        for c in build_bus_stop_collections(bus_stops, headings, stop_areas)
     ]
 
 
@@ -171,6 +172,66 @@ def test_a_lone_platform_is_not_given_a_stop_position_for_the_other_direction():
     stops = [_sardis_platform(2, SARDIS_NE, 'NE'), _sardis_stop()]
 
     assert sorted(_pairs(stops, {'3': 246.0}), key=str) == [('2', None), (None, '3')]
+
+
+TRELAWNEY_PLATFORM = {'lat': 50.8448181, 'lon': -4.528776}
+TRELAWNEY_STOP = {'lat': 50.8448646, 'lon': -4.5287684}
+TRELAWNEY_FAR_SIDE = {'lat': 50.8449100, 'lon': -4.5287200}
+
+
+def _trelawney_stops():
+    platform = _stop(
+        682268028,
+        {
+            'name': 'Trelawney Avenue',
+            'public_transport': 'platform',
+            'highway': 'bus_stop',
+            'bus': 'yes',
+            'naptan:Bearing': 'NW',
+        },
+        **TRELAWNEY_PLATFORM,
+    )
+    stop = _stop(
+        14221288878,
+        {'name': 'Trelawney Avenue', 'public_transport': 'stop_position', 'bus': 'yes', 'direction': 'forward'},
+        **TRELAWNEY_STOP,
+    )
+    return [platform, stop]
+
+
+TRELAWNEY_HEADINGS = {'14221288878': 131.0}
+TRELAWNEY_AREA = StopArea(id=21447435, name='Trelawney Avenue', members=['node/682268028', 'node/14221288878'])
+
+
+def test_a_stop_area_pairs_a_stop_position_with_a_platform_facing_the_other_way():
+    pairs = _pairs(_trelawney_stops(), TRELAWNEY_HEADINGS, [TRELAWNEY_AREA])
+
+    assert pairs == [('682268028', '14221288878')]
+
+
+def test_without_the_stop_area_they_stay_apart():
+    pairs = _pairs(_trelawney_stops(), TRELAWNEY_HEADINGS)
+
+    assert sorted(pairs, key=str) == [('682268028', None), (None, '14221288878')]
+
+
+def test_a_stop_area_still_gives_the_stop_position_to_the_platform_its_buses_call_at():
+    far_side = _stop(
+        3,
+        {
+            'name': 'Trelawney Avenue',
+            'public_transport': 'platform',
+            'highway': 'bus_stop',
+            'bus': 'yes',
+            'naptan:Bearing': 'SE',
+        },
+        **TRELAWNEY_FAR_SIDE,
+    )
+    area = StopArea(id=21447435, name='Trelawney Avenue', members=[*TRELAWNEY_AREA.members, 'node/3'])
+
+    pairs = _pairs([*_trelawney_stops(), far_side], TRELAWNEY_HEADINGS, [area])
+
+    assert sorted(pairs, key=str) == [('3', '14221288878'), ('682268028', None)]
 
 
 def _road(nodes):
