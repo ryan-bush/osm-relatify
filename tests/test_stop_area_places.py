@@ -136,6 +136,19 @@ def test_a_bus_stop_without_public_transport_is_a_platform():
     assert build_bus_stop_collections([platform])[0].platform == platform
 
 
+def test_an_unknown_public_transport_value_is_read_as_if_untagged():
+    """Staunton Lodge near Bristol: a NaPTAN import tagged public_transport=pole."""
+    stop = _node(10, {'highway': 'bus_stop', 'public_transport': 'pole', 'name': 'Staunton Lodge'})
+    stop_position = _node(11, {'public_transport': 'pole'})
+    places = stop_area_places([_area(1, [(11, 'stop')])], [], [stop_position])
+
+    assert FetchRelationBusStop.from_data(stop).public_transport == PublicTransport.PLATFORM
+    assert (
+        FetchRelationBusStop.from_data(stop_position, places[('node', 11)]).public_transport
+        == PublicTransport.STOP_POSITION
+    )
+
+
 def test_a_platform_without_highway_is_still_a_stop():
     """public_transport=platform with bus=yes, never tagged highway=bus_stop."""
     stop = _node(10, {'public_transport': 'platform', 'bus': 'yes', 'name': 'Deiniol Road'})
