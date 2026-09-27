@@ -1095,7 +1095,9 @@ class Overpass:
             unsplit_road_elements,
             {n_id: (node['lat'], node['lon']) for n_id, node in nodes_map.items()},
         )
-        bus_stop_collections = build_bus_stop_collections(stops, headings)
+        bus_stop_collections = build_bus_stop_collections(
+            stops, headings, parse_stop_areas(stop_area_relations), driving_side
+        )
         bus_stop_collections = tuple(c for c in bus_stop_collections if bbc.contains(c.best.latLng))
 
         stop_areas = existing_stop_areas(stop_area_relations, bus_stop_collections)
