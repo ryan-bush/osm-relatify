@@ -1,6 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from itertools import combinations
 from math import atan2, cos, degrees, radians
 from operator import itemgetter
@@ -16,6 +16,7 @@ from sklearn.neighbors import BallTree
 from compass import OPPOSITE_HEADING_ANGLE, angle_between, compass_degrees
 from config import BUS_COLLECTION_SEARCH_AREA, STOP_AREA_SEARCH_AREA
 from cython_lib.geoutils import haversine_distance, radians_tuple
+from driving_side import DrivingSide
 from models.element_id import ElementId, element_id
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, PublicTransport
 from models.stop_area import StopArea
@@ -29,11 +30,23 @@ _WRONG_DIRECTION = 1e9
 # they go together, so the pair is kept, but any platform the buses do serve comes first
 _WRONG_DIRECTION_IN_STOP_AREA = 1e6
 
-# the stop areas each stop is in, by "type/id"
-StopAreasOf = Mapping[str, frozenset[int]]
+# how far off square to the road a platform can be and still be clearly on one side of
+# it; one further ahead or behind the stop position than that says nothing either way
+_SIDE_ANGLE = 60  # degrees
 
 
-def stop_areas_of(stop_areas: Iterable[StopArea]) -> dict[str, frozenset[int]]:
+@dataclass(frozen=True, slots=True)
+class _Hints:
+    """What tells which platform a stop position serves."""
+
+    # which way the buses at each one-way stop position travel, by its id
+    headings: Mapping[ElementId, float]
+    # the stop areas each stop is in, by "type/id"
+    areas: Mapping[str, frozenset[int]]
+    driving_side: DrivingSide | None
+
+
+def _stop_areas_of(stop_areas: Iterable[StopArea]) -> dict[str, frozenset[int]]:
     """Which stop areas each stop is in, by "type/id"."""
     result: dict[str, set[int]] = defaultdict(set)
 
@@ -132,46 +145,71 @@ def name_unnamed_stop_positions(stops: Sequence[FetchRelationBusStop]) -> list[F
     return result
 
 
-def _serves(platform: FetchRelationBusStop, stop: FetchRelationBusStop, headings: Mapping[ElementId, float]) -> bool:
+def _side_of_road(platform: FetchRelationBusStop, stop: FetchRelationBusStop, heading: float) -> DrivingSide | None:
+    """Which side of the buses at a stop position a platform stands on, if it is clear."""
+    lat, lon = stop.latLng
+    north = platform.latLng[0] - lat
+    east = (platform.latLng[1] - lon) * cos(radians(lat))
+    if not north and not east:
+        return None
+
+    relative = (degrees(atan2(east, north)) - heading) % 360
+
+    if angle_between(relative, 270) <= _SIDE_ANGLE:
+        return 'left'
+    if angle_between(relative, 90) <= _SIDE_ANGLE:
+        return 'right'
+    return None
+
+
+def _serves(platform: FetchRelationBusStop, stop: FetchRelationBusStop, hints: _Hints) -> bool:
     """
     Whether the buses halting at a stop position can be the ones calling at a platform.
 
-    Told from the direction NaPTAN gives the platform, which says which way its buses go
-    without needing to know which side of the road they keep to.
+    Told first from the side of the road the platform stands on, as buses pull in on the
+    side traffic keeps to. Only where that is unclear does the direction NaPTAN gives the
+    platform decide, as it is often unchecked: at Bus Shelter on the B3263 the two sides'
+    bearings are swapped, node/682267945 saying NE-bound on the SW-bound side, and going
+    by them gave the NE-bound stop position to it and offered the platform the route
+    really uses, node/14220097586, a second one on top of the first.
     """
-    heading = headings.get(stop.id)
-    bearing = compass_degrees(platform.tags.get('naptan:Bearing', ''))
+    heading = hints.headings.get(stop.id)
+    if heading is None:
+        return True
 
-    return heading is None or bearing is None or angle_between(heading, bearing) <= OPPOSITE_HEADING_ANGLE
+    if hints.driving_side is not None and (side := _side_of_road(platform, stop, heading)) is not None:
+        return side == hints.driving_side
+
+    bearing = compass_degrees(platform.tags.get('naptan:Bearing', ''))
+    return bearing is None or angle_between(heading, bearing) <= OPPOSITE_HEADING_ANGLE
 
 
 def _pairing_costs(
     platforms: Sequence[FetchRelationBusStop],
     stops: Sequence[FetchRelationBusStop],
-    headings: Mapping[ElementId, float],
-    areas: StopAreasOf,
+    hints: _Hints,
 ) -> np.ndarray:
     """
     What pairing each platform with each stop position costs: the distance between them.
 
     A stop position whose buses go the other way from the platform's is ruled out, unless
     a stop area already holds the two of them. A stop position is tagged with the way the
-    route that added it runs, which need not be the way NaPTAN says the platform faces:
-    Trelawney Avenue in Poughill has node/682268028, NW-bound, in one stop area with
-    node/14221288878, for buses heading SE. Keeping them apart offered to add a second
-    stop position on top of the first.
+    route that added it runs, and where a route turns around it can call on the far side
+    of the road: Trelawney Avenue in Poughill has node/682268028, NW-bound and on the
+    NW-bound side, in one stop area with node/14221288878, for buses heading SE. Keeping
+    them apart offered to add a second stop position on top of the first.
     """
     costs = np.zeros((len(platforms), len(stops)))
 
     for i, platform in enumerate(platforms):
-        platform_areas = areas.get(platform.nice_id, frozenset())
+        platform_areas = hints.areas.get(platform.nice_id, frozenset())
 
         for j, stop in enumerate(stops):
             distance = haversine_distance(platform.latLng, stop.latLng)
 
-            if _serves(platform, stop, headings):
+            if _serves(platform, stop, hints):
                 costs[i, j] = distance
-            elif platform_areas & areas.get(stop.nice_id, frozenset()):
+            elif platform_areas & hints.areas.get(stop.nice_id, frozenset()):
                 costs[i, j] = _WRONG_DIRECTION_IN_STOP_AREA + distance
             else:
                 costs[i, j] = _WRONG_DIRECTION
@@ -184,6 +222,7 @@ def build_bus_stop_collections(
     bus_stops: Sequence[FetchRelationBusStop],
     headings: Mapping[ElementId, float] | None = None,
     stop_areas: Iterable[StopArea] = (),
+    driving_side: DrivingSide | None = None,
 ) -> list[FetchRelationBusStopCollection]:
     # 1. group by area
     # 2. group by name in area
@@ -192,8 +231,7 @@ def build_bus_stop_collections(
     if not bus_stops:
         return []
 
-    headings = headings or {}
-    areas = stop_areas_of(stop_areas)
+    hints = _Hints(headings or {}, _stop_areas_of(stop_areas), driving_side)
     search_latLng = BUS_COLLECTION_SEARCH_AREA / 111_111
     search_latLng_rad = radians(search_latLng)
 
@@ -335,15 +373,15 @@ def build_bus_stop_collections(
                 )
 
             if platforms_explicit:
-                collections.extend(_collect(platforms_explicit, stops, headings, areas))
+                collections.extend(_collect(platforms_explicit, stops, hints))
                 continue
 
             if stops_explicit:
-                collections.extend(_collect(platforms, stops_explicit, headings, areas))
+                collections.extend(_collect(platforms, stops_explicit, hints))
                 continue
 
             if platforms_implicit and stops_implicit:
-                collections.extend(_collect(platforms_implicit, stops, headings, areas))
+                collections.extend(_collect(platforms_implicit, stops, hints))
                 continue
 
             if platforms_implicit:  # and not stops_implicit
@@ -359,14 +397,13 @@ def build_bus_stop_collections(
                 )
                 continue
 
-    return _pair_by_distance_within_places(assign_stop_area_groups(collections), headings, areas)
+    return _pair_by_distance_within_places(assign_stop_area_groups(collections), hints)
 
 
 def _collect(
     platforms: Sequence[FetchRelationBusStop],
     stops: Sequence[FetchRelationBusStop],
-    headings: Mapping[ElementId, float],
-    areas: StopAreasOf,
+    hints: _Hints,
 ) -> list[FetchRelationBusStopCollection]:
     """
     Pair the platforms of one name group with its stop positions, keeping every one.
@@ -378,7 +415,7 @@ def _collect(
     top of it. At the High Street terminus that would have put a new node 0.5 m from
     node/14177644556.
     """
-    assigned = _assign(platforms, stops, headings, areas)
+    assigned = _assign(platforms, stops, hints)
     paired = {id(stop) for stop in assigned if stop is not None}
 
     result = [
@@ -394,8 +431,7 @@ def _collect(
 
 def _pair_by_distance_within_places(
     collections: list[FetchRelationBusStopCollection],
-    headings: Mapping[ElementId, float],
-    areas: StopAreasOf,
+    hints: _Hints,
 ) -> list[FetchRelationBusStopCollection]:
     """
     Within one place, give each stop position to the platform it stands beside.
@@ -441,7 +477,7 @@ def _pair_by_distance_within_places(
 
         platforms = [result[i].platform for i in indices]
 
-        costs = _pairing_costs(platforms, [stop for _, stop in sources], headings, areas)
+        costs = _pairing_costs(platforms, [stop for _, stop in sources], hints)
         row_ind, col_ind = linear_sum_assignment(costs)
         taken = {
             indices[i]: sources[j][1]
@@ -483,8 +519,7 @@ def _pick_best(
 def _assign(
     primary: Sequence[FetchRelationBusStop],
     elements: Sequence[FetchRelationBusStop],
-    headings: Mapping[ElementId, float],
-    areas: StopAreasOf,
+    hints: _Hints,
 ) -> list[FetchRelationBusStop | None]:
     """
     Pair each of `primary` with the element that goes with it, closest pairs first.
@@ -501,7 +536,7 @@ def _assign(
 
     # A stop position the platform's buses do not serve is not paired with it, as that
     # would leave the platform looking as though it had one of its own.
-    costs = _pairing_costs(primary, elements, headings, areas)
+    costs = _pairing_costs(primary, elements, hints)
 
     # the Hungarian algorithm, which pairs off as many as it can for the least total
     # cost; on a lopsided matrix it simply leaves the extras unpaired
