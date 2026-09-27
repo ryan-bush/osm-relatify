@@ -138,7 +138,8 @@ class FetchRelationBusStop:
 
 
 def _public_transport(tags: dict[str, str], place) -> str:
-    if 'public_transport' in tags:
+    # anything else, such as public_transport=pole, says no more than an untagged stop
+    if tags.get('public_transport') in PublicTransport._value2member_map_:
         return tags['public_transport']
     if place is not None:
         return place.public_transport
