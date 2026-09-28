@@ -10,6 +10,19 @@ const SHARED_KEYS = ["network", "operator", "colour"]
 
 const value = (tags, key) => tags?.[key]?.trim() ?? ""
 
+// Two operators can run one line between them, and OSM says so by listing both:
+// operator=A;B. Read as one string, a master tagged that way disagrees with every variant
+// under it, including the ones it is describing - so these tags are read as the lists they
+// are, and a variant agrees when everything it states is something the master states too.
+const values = (tags, key) =>
+    value(tags, key)
+        .split(";")
+        .map((part) => part.trim())
+        .filter(Boolean)
+
+// what the value says, rather than how it was written: A;B and B;A are one answer
+const valueKey = (tags, key) => [...new Set(values(tags, key))].sort().join(";")
+
 const label = (route) => `#${route.id}`
 
 const list = (routes) => routes.map(label).join(", ")
@@ -75,9 +88,10 @@ export function routeMasterIssues(masterTags, routes) {
         const master = value(masterTags, key)
 
         if (master) {
+            const stated = new Set(values(masterTags, key))
             const wrong = routes.filter((route) => {
-                const own = value(route.tags, key)
-                return own && own !== master
+                const own = values(route.tags, key)
+                return own.length && !own.every((one) => stated.has(one))
             })
 
             // phrased around the article, "a operator" being the alternative
@@ -92,11 +106,16 @@ export function routeMasterIssues(masterTags, routes) {
 
         // the master says nothing, so the variants are only wrong about each other
         const stated = routes.filter((route) => value(route.tags, key))
-        const distinct = new Set(stated.map((route) => value(route.tags, key)))
+        const distinct = new Map(
+            stated.map((route) => [
+                valueKey(route.tags, key),
+                value(route.tags, key),
+            ]),
+        )
 
         if (distinct.size > 1)
             add(
-                `The variants give ${distinct.size} different values for ${key}: ${[...distinct].join(", ")}.`,
+                `The variants give ${distinct.size} different values for ${key}: ${[...distinct.values()].join(", ")}.`,
                 stated,
             )
     }

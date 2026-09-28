@@ -184,7 +184,11 @@ CALC_ROUTE_MAX_PROCESSES = CALC_ROUTE_MAX_REQUESTS * CALC_ROUTE_N_PROCESSES
 
 CHANGESET_ID_PLACEHOLDER = f'__CHANGESET_ID_PLACEHOLDER__{secrets.token_urlsafe(8)}__'
 
-DOWNLOAD_RELATION_WAY_BB_EXPAND = 250  # meters
+# How far past the relation's own ways the first download reaches. The area is snapped
+# to the grid below, so this mostly decides how often a nearby road falls in the next
+# cell over and has to be panned to. Raising it much further grows the cell count, and
+# with it the memory and timeout the query asks a public Overpass instance for.
+DOWNLOAD_RELATION_WAY_BB_EXPAND = 500  # meters
 DOWNLOAD_RELATION_GRID_SIZE = 0.01  # degrees
 DOWNLOAD_RELATION_GRID_CELL_EXPAND = 0.001  # degrees, only used for internal calculations, not sent to the user
 

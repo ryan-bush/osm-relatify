@@ -177,17 +177,37 @@ export const getPendingStopArea = (members) => pending.get(signatureOf(members))
 
 // `automatic` marks one the application queued by itself, following a stop position into
 // the area its stop already belongs to, rather than one the mapper asked for. Only the
-// mapper's own survives the group changing again under it.
-export function addStopArea(members, name, existingArea, { automatic = false } = {}) {
+// mapper's own survives the group changing again under it. `forNewStop` marks one queued
+// for the place of a stop placed in this session, which is worked out afresh every time
+// the new stops change.
+export function addStopArea(members, name, existingArea, { automatic = false, forNewStop = false } = {}) {
     pending.set(signatureOf(members), {
         id: existingArea?.id ?? null,
         name: existingArea?.name || name,
         members: members,
         automatic: automatic,
+        forNewStop: forNewStop,
     })
 }
 
 export const removeStopArea = (members) => pending.delete(signatureOf(members))
+
+// the places the mapper took an area back from, so one is not queued for them again
+const declined = new Set()
+
+export function declineStopArea(members) {
+    declined.add(signatureOf(members))
+    removeStopArea(members)
+}
+
+export const stopAreaDeclined = (members) => declined.has(signatureOf(members))
+
+// Drops every area queued for a new stop, before they are worked out again.
+export function removeNewStopAreas() {
+    for (const [key, area] of pending) {
+        if (area.forNewStop) pending.delete(key)
+    }
+}
 
 // Renames a stop area that is already in OSM, to follow the stop it is named after. The
 // members ride along as they always do, so a rename and a completion are one change to
@@ -256,7 +276,10 @@ export function pendingStopAreaFor(keys) {
     return null
 }
 
-export const clearStopAreas = () => pending.clear()
+export function clearStopAreas() {
+    pending.clear()
+    declined.clear()
+}
 
 export const stopAreaCount = () => pending.size
 

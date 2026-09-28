@@ -9,7 +9,7 @@ import {
     stopAreasPayload,
 } from "./stopAreas.js"
 import { stopPositionCount, stopPositionsPayload } from "./stopPositions.js"
-import { tagAdditionsPayload, tagChangeCount } from "./naptanTagAdditions.js"
+import { tagAdditionsPayload, tagChangeCount, tagChangeCounts } from "./naptanTagAdditions.js"
 import {
     downloadHistoryData,
     processRelationDownloadTriggers,
@@ -63,6 +63,7 @@ import {
 import { clearRouteData, requestCalcBusRoute, routeData } from "./waysRoute.js"
 
 const busAnimationElement = document.getElementById("bus-animation")
+const menuElement = document.getElementById("menu")
 const loadRelationForm = document.getElementById("load-relation-form")
 const loadRelationBtn = loadRelationForm.querySelector("button[type=submit]")
 const relationIdInput = loadRelationForm.querySelector(
@@ -148,6 +149,8 @@ const switchView = (name) => {
     }
 
     activeView = name
+    // stop names beside their P S A N letters need more room than the other views
+    menuElement.classList.toggle("menu-summary", name === "submit")
 }
 
 relationIdInput.focus()
@@ -358,8 +361,6 @@ export const processFetchRelationData = (data) => {
 }
 
 export const processRouteWarnings = (data) => {
-    if (activeView === "submit") switchView("edit")
-
     editSubmitBtn.classList.add("d-none")
 
     editWarnings.innerHTML = ""
@@ -491,6 +492,13 @@ export const processRouteWarnings = (data) => {
     )
 
     if (highestSeverityLevel === 0) editSubmitBtn.classList.remove("d-none")
+
+    // A change made from the summary (a stop area added to a stop zoomed to, say) keeps
+    // the summary open, unless it left the route with something to fix first.
+    if (activeView === "submit") {
+        if (highestSeverityLevel === 0) submitComment.placeholder = makeDefaultComment()
+        else switchView("edit")
+    }
 }
 
 // Everything belonging to the route being edited. The master it was picked from is not
@@ -702,7 +710,7 @@ const makeDefaultComment = () => {
     const plural = (count) => (count !== 1 ? "s" : "")
     const stopCount = newStopCount()
     const positionCount = stopPositionCount()
-    const taggedCount = tagChangeCount()
+    const tagCounts = tagChangeCounts()
     const added = stopCount ? `; added ${stopCount} bus stop${plural(stopCount)}` : ""
     const positions = positionCount
         ? `; added ${positionCount} stop position${plural(positionCount)}`
@@ -712,9 +720,12 @@ const makeDefaultComment = () => {
     const areas =
         (newAreas ? `; added ${newAreas} stop area${plural(newAreas)}` : "") +
         (doneAreas ? `; completed ${doneAreas} stop area${plural(doneAreas)}` : "")
-    const tagged = taggedCount
-        ? `; added NaPTAN tags to ${taggedCount} bus stop${plural(taggedCount)}`
-        : ""
+    const tagged =
+        (tagCounts.edited ? `; edited ${tagCounts.edited} bus stop${plural(tagCounts.edited)}` : "") +
+        (tagCounts.naptan ? `; added NaPTAN tags to ${tagCounts.naptan} bus stop${plural(tagCounts.naptan)}` : "") +
+        (tagCounts.platform
+            ? `; added platform tags to ${tagCounts.platform} bus stop${plural(tagCounts.platform)}`
+            : "")
     const pendingMaster = pendingRouteMaster()
     const master = !pendingMaster
         ? ""
@@ -794,8 +805,25 @@ function naptanLetter(code) {
     return `<span class="stop-info-naptan" title="${escapeHtml(title)}">N</span>`
 }
 
+// how far down the summary the mapper has ticked, kept while a change made from the
+// summary rebuilds it
+let summaryCheckedIndex = -1
+
+const applySummaryChecks = () => {
+    const items = routeSummary.querySelectorAll(".route-summary-item")
+
+    for (const [index, item] of items.entries()) {
+        const checked = index <= summaryCheckedIndex
+        item.classList.toggle("route-summary-item-checked", checked)
+        item.querySelector(".stop-icon").src = checked
+            ? "/static/img/bus_stop_check.webp"
+            : "/static/img/bus_stop.webp"
+    }
+}
+
 export const processRouteStops = (data) => {
     routeSummary.innerHTML = ""
+    if (activeView !== "submit") summaryCheckedIndex = -1
 
     for (const collection of data.busStops) {
         const { area, naptan } = stopSummary(collection)
@@ -844,28 +872,18 @@ export const processRouteStops = (data) => {
         else zoomBtn.remove()
     }
 
-    const allItems = Array.from(
-        routeSummary.querySelectorAll(".route-summary-item"),
-    )
-    const allIcons = allItems.map((item) => item.querySelector(".stop-icon"))
-
-    for (const [outerIndex, outerItem] of allItems.entries()) {
-        outerItem.onclick = (e) => {
+    for (const [index, item] of routeSummary.querySelectorAll(".route-summary-item").entries()) {
+        item.onclick = (e) => {
             e.stopPropagation()
 
             if (e.target.closest("a, .stop-info-zoom")) return
 
-            for (const [index, item] of allItems.entries()) {
-                if (index <= outerIndex) {
-                    item.classList.add("route-summary-item-checked")
-                    allIcons[index].src = "/static/img/bus_stop_check.webp"
-                } else {
-                    item.classList.remove("route-summary-item-checked")
-                    allIcons[index].src = "/static/img/bus_stop.webp"
-                }
-            }
+            summaryCheckedIndex = index
+            applySummaryChecks()
         }
     }
+
+    applySummaryChecks()
 }
 
 sumitBackBtn.onclick = () => {

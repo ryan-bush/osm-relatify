@@ -1,3 +1,4 @@
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Literal
@@ -7,6 +8,29 @@ from pydantic import BaseModel, Field
 
 from tag_editing import normalize_tags, validate_tag
 from utils import ensure_list
+
+# "Stop A", "Stop P1", "Stance 1", "Bay 12"; other indicators ("opp", "o/s 103", "->N")
+# describe where the stop is rather than naming it
+_LOCAL_REF_RE = re.compile(r'^(?:stop|stand|stance|bay)\s+([a-z0-9]{1,4})$', re.IGNORECASE)
+
+
+def indicator_letter(indicator: str) -> str:
+    """The letter a NaPTAN indicator names the stop by, or nothing where it names none."""
+    match = _LOCAL_REF_RE.match(indicator.strip())
+    return match.group(1).upper() if match else ''
+
+
+def stop_letter(local_ref: str) -> str:
+    """
+    A local_ref in the form the letters of two stops can be compared in.
+
+    The tag is written both ways - "Bay 1" at Bristol Airport, "A" elsewhere - while the
+    letter taken from NaPTAN is always bare, so the word in front is dropped from either
+    of them before they are held against each other.
+    """
+    value = local_ref.strip()
+    return indicator_letter(value) or value.upper()
+
 
 # The NaPTAN tags a stop already in OSM can be given, filled in where it has none or put
 # in front of the mapper where it holds a different value - a stop NaPTAN has renamed, or
@@ -34,6 +58,11 @@ NAPTAN_KEYS = (
 EDITABLE_KEYS = ('name', 'local_ref', 'shelter', 'bench')
 
 
+# The tags every bus stop platform should carry, offered for the mapper to fill in where
+# one lacks any of them. Neither NaPTAN's nor typed, each key writes this value only.
+PLATFORM_TAGS = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes'}
+
+
 def missing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
     """NaPTAN's value for each key the OSM stop lacks; values it has are kept."""
     return {key: naptan_tags[key] for key in NAPTAN_KEYS if key in naptan_tags and not osm_tags.get(key, '').strip()}
@@ -48,8 +77,14 @@ def differing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dic
         osm_value = osm_tags.get(key, '').strip()
 
         # only a real disagreement: a tag the stop lacks is a fill, not a conflict
-        if naptan_value and osm_value and naptan_value != osm_value:
-            result[key] = naptan_value
+        if not naptan_value or not osm_value or naptan_value == osm_value:
+            continue
+
+        # and "Bay 1" against "1" is the same bay spelled out, not a stop mapped wrongly
+        if key == 'local_ref' and stop_letter(osm_value) == stop_letter(naptan_value):
+            continue
+
+        result[key] = naptan_value
 
     return result
 
@@ -72,7 +107,11 @@ class StopTagAddition(BaseModel):
 
     def from_naptan(self) -> bool:
         """Whether any of this came from NaPTAN, rather than being typed by the mapper."""
-        return not self.byHand or bool(self.tags.keys() - self.byHand)
+        return not self.tags or bool(self.tags.keys() - self.byHand - PLATFORM_TAGS.keys())
+
+    def tags_platform(self) -> bool:
+        """Whether this fills in any of the tags every bus stop platform should carry."""
+        return any(key in PLATFORM_TAGS for key in self.tags.keys() - self.byHand)
 
     def writable_keys(self) -> set[str]:
         """
@@ -80,15 +119,16 @@ class StopTagAddition(BaseModel):
 
         What the mapper typed is theirs to decide, within the fields the form offers.
         What NaPTAN offers is narrower: the NaPTAN keys, either filled in where the
-        stop has none or as a replacement the mapper accepted.
+        stop has none or as a replacement the mapper accepted. Narrower still is making
+        up a bus stop's platform tags, each of which may write one value and nothing else.
         """
         result = set()
 
-        for key in self.tags:
+        for key, value in self.tags.items():
             if key in self.byHand:
                 if key in EDITABLE_KEYS:
                     result.add(key)
-            elif key in NAPTAN_KEYS:
+            elif key in NAPTAN_KEYS or PLATFORM_TAGS.get(key) == value:
                 result.add(key)
 
         return result

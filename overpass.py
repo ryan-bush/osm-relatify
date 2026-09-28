@@ -17,12 +17,13 @@ from starlette import status
 from bus_collection_builder import build_bus_stop_collections, name_unnamed_stop_positions, stop_position_headings
 from config import (
     DOWNLOAD_RELATION_GRID_CELL_EXPAND,
+    DOWNLOAD_RELATION_GRID_SIZE,
     DOWNLOAD_RELATION_WAY_BB_EXPAND,
     OVERPASS_API_ATTEMPTS,
     OVERPASS_API_INTERPRETERS,
     OVERPASS_MAX_DATA_AGE,
 )
-from driving_side import DrivingSide, build_driving_side_query, parse_driving_side
+from driving_side import DrivingSide, build_driving_side_statements, parse_driving_side
 from models.bounding_box import BoundingBox
 from models.bounding_box_collection import BoundingBoxCollection
 from models.download_history import Cell, DownloadHistory
@@ -30,8 +31,13 @@ from models.element_id import ElementId, element_id
 from models.fetch_relation import FetchRelationBusStop, FetchRelationBusStopCollection, FetchRelationElement
 from models.route_master import RouteMaster
 from models.stop_area import StopArea
-from route_masters import build_route_master_candidates_query, parse_route_masters
+from route_masters import (
+    build_route_master_candidates_query,
+    build_route_master_candidates_statements,
+    parse_route_masters,
+)
 from stop_areas import parse_stop_areas
+from u_turns import relation_u_turn_nodes
 from utils import HTTP, overpass_settings
 from xmltodict_postprocessor import postprocessor
 
@@ -290,6 +296,20 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
     ) from last_error
 
 
+class QueryRelationResult(NamedTuple):
+    """Everything one download of a route's area says, including what rode along with it."""
+
+    bounds: BoundingBox
+    download_hist: DownloadHistory
+    download_triggers: dict[ElementId, tuple[Cell, ...]]
+    ways: dict[ElementId, FetchRelationElement]
+    id_map: dict[int, list[ElementId]]
+    bus_stop_collections: list[FetchRelationBusStopCollection]
+    stop_areas: list[StopArea]
+    driving_side: DrivingSide | None
+    route_master_candidates: list[RouteMaster]
+
+
 class QueryParentsResult(NamedTuple):
     id_relations_map: dict[int, list[dict]]
     ways_map: dict[int, dict]
@@ -326,11 +346,55 @@ def build_bb_query(relation_id: int, timeout: int) -> str:
     return overpass_settings(timeout, 64) + f'rel({relation_id});way(r);out ids bb qt;'
 
 
+class DownloadExtras(NamedTuple):
+    """What the area download carries on top of the area itself."""
+
+    statements: str
+    blocks: int
+
+
+def build_download_extras(cell_bbs: Sequence[BoundingBox], ref: str, route_value: str) -> DownloadExtras:
+    """
+    The driving side and the route master candidates, to ride along with the download.
+
+    Asked on their own they were two more queries in the same moment as the download, and
+    the public instance hands one address two query slots a minute: loading a route asked
+    for four and the third came back 429. Neither needs anything the download does not
+    already have - the area, and the route's ref - so neither needs a query of its own.
+    """
+    bounds = BoundingBox(
+        minlat=min(bb.minlat for bb in cell_bbs),
+        minlon=min(bb.minlon for bb in cell_bbs),
+        maxlat=max(bb.maxlat for bb in cell_bbs),
+        maxlon=max(bb.maxlon for bb in cell_bbs),
+    )
+    # rounded so that panning a little does not make a different query out of it
+    lat = round((bounds.minlat + bounds.maxlat) / 2, 2)
+    lon = round((bounds.minlon + bounds.maxlon) / 2, 2)
+
+    statements = build_driving_side_statements(lat, lon) + 'out count;'
+    blocks = 1
+
+    masters = build_route_master_candidates_statements(ref, route_value, bounds)
+    if masters:
+        statements += masters + 'out count;'
+        blocks += 1
+
+    return DownloadExtras(statements, blocks)
+
+
+# Where a bus can turn around on the spot. A turning circle is the tag for it, and a
+# mini roundabout is the same thing by another name - a bus that fits round one comes back
+# out the way it came in, which is exactly what routes do at the end of a residential leg.
+_TURN_IN_PLACE_TAGS = ('turning_circle', 'mini_roundabout')
+
+
 def build_query(
     cell_bbs: Sequence[BoundingBox],
     cell_bbs_expanded: Sequence[BoundingBox],
     timeout: int,
     route_type: str,
+    extras: str = '',
 ) -> str:
     settings = overpass_settings(timeout, download_maxsize_mib(len(cell_bbs)))
 
@@ -343,13 +407,19 @@ def build_query(
             '>;'
             'out skel qt;'
             'out count;'
-            '(' + ''.join(f'node[highway=turning_circle]({bb});' for bb in cell_bbs) + ');'
+            '(' + ''.join(
+                f'node[highway={tag}]({bb});' for bb in cell_bbs for tag in _TURN_IN_PLACE_TAGS
+            ) + ');'
             'out tags qt;'
             'out count;'
             + ''.join(
                 # unnamed too: one mapped without a name is still the stop, and NaPTAN
-                # would otherwise offer a second one on top of it
-                f'node[highway=bus_stop][public_transport=platform]({bb});'
+                # would otherwise offer a second one on top of it. Nor does it need
+                # public_transport: a bare highway=bus_stop is the platform all the same.
+                f'node[highway=bus_stop]({bb});'
+                f'out tags center qt;'
+                # and one mapped the other way round, a platform that never says highway=bus_stop
+                f'node[public_transport=platform][bus=yes][!highway]({bb});'
                 f'out tags center qt;'
                 f'nwr[highway=platform][public_transport=platform][name]({bb});'
                 f'out tags center qt;'
@@ -374,7 +444,7 @@ def build_query(
             'out count;'
             '(node(r.r:stop);node(r.r:stop_position););'
             'out tags center qt;'
-            'out count;'
+            'out count;' + extras
         )
 
     if route_type == 'tram':
@@ -386,7 +456,9 @@ def build_query(
             '>;'
             'out skel qt;'
             'out count;'
-            '(' + ''.join(f'node[highway=turning_circle]({bb});' for bb in cell_bbs) + ');'
+            '(' + ''.join(
+                f'node[highway={tag}]({bb});' for bb in cell_bbs for tag in _TURN_IN_PLACE_TAGS
+            ) + ');'
             'out tags qt;'
             'out count;'
             + ''.join(
@@ -413,7 +485,7 @@ def build_query(
             'out count;'
             '(node(r.r:stop);node(r.r:stop_position););'
             'out tags center qt;'
-            'out count;'
+            'out count;' + extras
         )
 
     raise NotImplementedError(f'Unsupported route type {route_type!r}')
@@ -458,9 +530,9 @@ def is_routable(tags: dict[str, str], route_type: str) -> bool:
             'pedestrian',
         }
 
+        # parking_aisle is allowed: routes are often added before the road is retagged
         service_valid = tags.get('service', 'no') not in {
             'driveway',
-            'parking_aisle',
             'alley',
             'emergency_access',
         }
@@ -608,15 +680,21 @@ def stop_elements(elements: Iterable[dict], places: Mapping[tuple[str, int], Sto
     """
     The elements that can be read as stops, each with its tags, even if it has none.
 
-    A stop area can hold a bare node, with nothing but its role to say what it is.
-    Anything neither tagged as a stop nor holding a stop's role says nothing at all.
+    A stop area can hold a bare node, with nothing but its role to say what it is, and a
+    highway=bus_stop mapped before PTv2 is a platform without saying so. Anything neither
+    tagged as a stop nor holding a stop's role says nothing at all.
     """
     result = []
 
     for element in elements:
         element.setdefault('tags', {})
+        tags = element['tags']
 
-        if 'public_transport' in element['tags'] or (element['type'], element['id']) in places:
+        if (
+            'public_transport' in tags
+            or tags.get('highway') == 'bus_stop'
+            or (element['type'], element['id']) in places
+        ):
             result.append(element)
 
     return tuple(result)
@@ -770,34 +848,45 @@ def optimize_cells_and_get_bbs(
     return bbs, tuple(bb.extend(unit_degrees=DOWNLOAD_RELATION_GRID_CELL_EXPAND) for bb in bbs)
 
 
+# how many cells either side of a road a click past the edge of the download asks for:
+# 5x5, so a long route takes fewer clicks
+DOWNLOAD_TRIGGER_EXPAND = 2
+
+
 def get_download_triggers(
-    bbc: BoundingBoxCollection,
-    cells: Sequence[Cell],
+    cells: Iterable[Cell],
     ways: dict[ElementId, FetchRelationElement],
 ) -> dict[ElementId, tuple[Cell, ...]]:
-    cells_set = frozenset(cells)
+    """
+    The cells to download when each way is clicked, for the ways reaching past the download.
+
+    Every point of every way is looked at on each download, so this is asked by grid cell
+    rather than of the downloaded area's bounding boxes: a set lookup, where the boxes'
+    R-tree took seconds on a few thousand ways and held up the route calculation with it.
+    """
+    downloaded = frozenset(cells)
     result = {}
 
     for way_id, way in ways.items():
-        way_new_cells = set()
+        seen: set[Cell] = set()
+        way_new_cells: set[Cell] = set()
 
-        for latLng in way.latLngs:
-            if bbc.contains(latLng):
+        for lat, lon in way.latLngs:
+            cell = Cell(int(lon // DOWNLOAD_RELATION_GRID_SIZE), int(lat // DOWNLOAD_RELATION_GRID_SIZE))
+            if cell in downloaded or cell in seen:
                 continue
+            seen.add(cell)
 
-            new_cells = BoundingBox(
-                minlat=latLng[0],
-                minlon=latLng[1],
-                maxlat=latLng[0],
-                maxlon=latLng[1],
-            ).get_grid_cells(expand=1)  # 3x3 grid
-
-            way_new_cells |= new_cells - cells_set
+            for dx in range(-DOWNLOAD_TRIGGER_EXPAND, DOWNLOAD_TRIGGER_EXPAND + 1):
+                for dy in range(-DOWNLOAD_TRIGGER_EXPAND, DOWNLOAD_TRIGGER_EXPAND + 1):
+                    near = Cell(cell.x + dx, cell.y + dy)
+                    if near not in downloaded:
+                        way_new_cells.add(near)
 
         if way_new_cells:
             result[way_id] = tuple(way_new_cells)
 
-    return dict(result)
+    return result
 
 
 # TODO: check data freshness
@@ -825,12 +914,16 @@ class Overpass:
         relation_id: int,
         download_hist: DownloadHistory,
         route_type: str,
-    ) -> tuple[list[list[dict]], BoundingBoxCollection]:
+        ref: str,
+        route_value: str,
+    ) -> tuple[list[list[dict]], BoundingBoxCollection, DrivingSide | None, list[RouteMaster]]:
         if not download_hist.history or not all(download_hist.history):
             raise ValueError('No grid cells to download')
 
         all_elements_split = None
         all_bbs = []
+        driving_side = None
+        candidates: dict[int, RouteMaster] = {}
 
         for cells in download_hist.history:
             hor_bbs_t = optimize_cells_and_get_bbs(cells, start_horizontal=True)
@@ -846,7 +939,8 @@ class Overpass:
             # minutes the largest download might want. A busy instance weighs what a
             # query asks for when deciding whether to run it at all.
             timeout = min(180, 30 + 15 * len(cell_bbs))
-            query = build_query(cell_bbs, cell_bbs_expand, timeout, route_type)
+            extras = build_download_extras(cell_bbs, ref, route_value)
+            query = build_query(cell_bbs, cell_bbs_expand, timeout, route_type, extras.statements)
             elements_split = await self._query_relation_history_post(
                 download_hist.session,
                 query,
@@ -854,15 +948,28 @@ class Overpass:
                 f'Downloading {len(cell_bbs)} cells for relation {relation_id}',
             )
 
+            # what rode along with this area, before the area itself is merged with the rest
+            extra_split = elements_split[len(elements_split) - extras.blocks :]
+            elements_split = elements_split[: len(elements_split) - extras.blocks]
+
+            if driving_side is None:
+                driving_side = parse_driving_side(extra_split[0])
+
+            if extras.blocks > 1:
+                for master in parse_route_masters(extra_split[1]):
+                    candidates.setdefault(master.id, master)
+
             if all_elements_split is None:
-                all_elements_split = elements_split
+                # copied: what the post returned is held in its cache, and the areas
+                # downloaded after this one are merged into what is built up here
+                all_elements_split = [list(elements) for elements in elements_split]
             else:
                 for i, elements in enumerate(elements_split):
                     all_elements_split[i].extend(elements)
 
         bbc = BoundingBoxCollection(all_bbs)
 
-        return all_elements_split, bbc
+        return all_elements_split, bbc, driving_side, list(candidates.values())
 
     @cached(TTLCache(maxsize=128, ttl=60))
     async def query_relation(
@@ -871,14 +978,10 @@ class Overpass:
         download_hist: DownloadHistory | None,
         download_targets: Sequence[Cell] | None,
         route_type: str,  # bus, tram...
-    ) -> tuple[
-        BoundingBox,
-        DownloadHistory,
-        dict[ElementId, tuple[Cell, ...]],
-        dict[ElementId, FetchRelationElement],
-        dict[int, list[ElementId]],
-        list[FetchRelationBusStopCollection],
-    ]:
+        ref: str = '',
+        route_value: str = '',
+        member_way_ids: tuple[int, ...] = (),
+    ) -> QueryRelationResult:
         if download_targets is None:
             timeout = 60
             query = build_bb_query(relation_id, timeout)
@@ -915,7 +1018,9 @@ class Overpass:
         elif union_grid_cells:
             download_hist = replace(download_hist, history=(*download_hist.history, union_grid_cells))
 
-        elements_split, bbc = await self._query_relation_history(relation_id, download_hist, route_type)
+        elements_split, bbc, driving_side, route_master_candidates = await self._query_relation_history(
+            relation_id, download_hist, route_type, ref, route_value
+        )
 
         maybe_road_elements = elements_split[0]
         maybe_road_elements = preprocess_elements(maybe_road_elements)
@@ -936,6 +1041,10 @@ class Overpass:
 
         nodes_map = {e['id']: e for e in node_elements}
         turn_in_place_nodes = {e['id'] for e in turn_in_place_elements}
+        # what the map says, plus what the relation itself says by listing a way twice
+        turn_in_place_nodes |= relation_u_turn_nodes(
+            member_way_ids, {e['id']: e['nodes'] for e in maybe_road_elements}
+        )
 
         for e in road_elements:
             e['_member'] = e['id'] in relation_way_members
@@ -986,22 +1095,29 @@ class Overpass:
             unsplit_road_elements,
             {n_id: (node['lat'], node['lon']) for n_id, node in nodes_map.items()},
         )
-        bus_stop_collections = build_bus_stop_collections(stops, headings)
+        bus_stop_collections = build_bus_stop_collections(
+            stops, headings, parse_stop_areas(stop_area_relations), driving_side
+        )
         bus_stop_collections = tuple(c for c in bus_stop_collections if bbc.contains(c.best.latLng))
 
         stop_areas = existing_stop_areas(stop_area_relations, bus_stop_collections)
 
         global_bb = BoundingBox(*bbc.idx.bounds)
-        download_triggers = get_download_triggers(bbc, union_grid_cells, ways)
+        # every cell downloaded so far, not only this time: the wider grid a trigger asks
+        # for overlaps earlier downloads more often, and those need not be asked again
+        download_triggers = get_download_triggers(chain.from_iterable(download_hist.history), ways)
 
-        return global_bb, download_hist, download_triggers, ways, id_map, bus_stop_collections, stop_areas
-
-    @cached(TTLCache(maxsize=1024, ttl=24 * 3600))
-    async def query_driving_side(self, lat: float, lon: float) -> DrivingSide | None:
-        """Which side of the road traffic keeps to at a point, or None if nothing says."""
-        timeout = 30
-        r = await overpass_post(build_driving_side_query(lat, lon, timeout), timeout)
-        return parse_driving_side(r.json().get('elements', ()))
+        return QueryRelationResult(
+            bounds=global_bb,
+            download_hist=download_hist,
+            download_triggers=download_triggers,
+            ways=ways,
+            id_map=id_map,
+            bus_stop_collections=bus_stop_collections,
+            stop_areas=stop_areas,
+            driving_side=driving_side,
+            route_master_candidates=route_master_candidates,
+        )
 
     @cached(TTLCache(maxsize=128, ttl=60))
     async def query_route_master_candidates(
@@ -1010,7 +1126,7 @@ class Overpass:
         route_value: str,
         bounds: BoundingBox,
     ) -> list[RouteMaster]:
-        """The route masters that routes sharing this ref already belong to."""
+        """The route masters that routes sharing this ref already belong to, asked on their own."""
         timeout = 30
         query = build_route_master_candidates_query(ref, route_value, bounds, timeout)
         if not query:
