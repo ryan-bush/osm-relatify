@@ -6,6 +6,7 @@ import {
     addStopArea,
     clearStopAreas,
     completedStopAreaCount,
+    declineStopArea,
     existingAreaFor,
     existingAreasFor,
     getPendingStopArea,
@@ -13,10 +14,12 @@ import {
     growStopArea,
     newStopAreaCount,
     reconcileStopAreas,
+    removeNewStopAreas,
     removeStopArea,
     renameStopArea,
     renameExistingStopArea,
     setExistingStopAreas,
+    stopAreaDeclined,
     stopAreaSignature,
     stopAreasPayload,
     unrenameStopArea,
@@ -288,4 +291,30 @@ test("an existing area left with nothing to add is not sent", () => {
 
     assert.equal(stopAreasPayload(new Set()).length, 0)
     assert.equal(stopAreasPayload(new Set([-2])).length, 1)
+})
+
+test("areas queued for new stops are dropped together, leaving the mapper's", () => {
+    const placed = { platform: stop(-1, "Mill Lane"), stop: stop(-2, "Mill Lane") }
+    const theirs = groupMembers([northbound, southbound])
+    const ours = groupMembers([placed])
+
+    addStopArea(theirs, "The Station", null)
+    addStopArea(ours, "Mill Lane", null, { automatic: true, forNewStop: true })
+    removeNewStopAreas()
+
+    assert.ok(getPendingStopArea(theirs))
+    assert.equal(getPendingStopArea(ours), null)
+})
+
+test("an area the mapper took back is remembered until the next route", () => {
+    const members = groupMembers([northbound, southbound])
+
+    addStopArea(members, "The Station", null, { automatic: true, forNewStop: true })
+    declineStopArea(members)
+
+    assert.equal(getPendingStopArea(members), null)
+    assert.ok(stopAreaDeclined(members))
+
+    clearStopAreas()
+    assert.ok(!stopAreaDeclined(members))
 })
