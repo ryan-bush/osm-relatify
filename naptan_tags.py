@@ -63,6 +63,11 @@ EDITABLE_KEYS = ('name', 'local_ref', 'shelter', 'bench')
 PLATFORM_TAGS = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes'}
 
 
+# The keys written in words, whose capitals are a matter of style rather than fact:
+# NaPTAN has "Police Hq" where the sign says "Police HQ". A code is left as it is.
+_CASE_INSENSITIVE_KEYS = {'name', 'naptan:CommonName', 'naptan:Indicator', 'naptan:Street'}
+
+
 def missing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
     """NaPTAN's value for each key the OSM stop lacks; values it has are kept."""
     return {key: naptan_tags[key] for key in NAPTAN_KEYS if key in naptan_tags and not osm_tags.get(key, '').strip()}
@@ -78,6 +83,11 @@ def differing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dic
 
         # only a real disagreement: a tag the stop lacks is a fill, not a conflict
         if not naptan_value or not osm_value or naptan_value == osm_value:
+            continue
+
+        # "Police HQ" against "Police Hq" is the same name in other capitals, and OSM's
+        # is kept rather than put to the mapper
+        if key in _CASE_INSENSITIVE_KEYS and osm_value.casefold() == naptan_value.casefold():
             continue
 
         # and "Bay 1" against "1" is the same bay spelled out, not a stop mapped wrongly
