@@ -41,6 +41,7 @@ import {
 import {
     addStopArea,
     clearStopAreas,
+    declineStopArea,
     existingAreaFor,
     existingAreasFor,
     getPendingStopArea,
@@ -48,10 +49,12 @@ import {
     pendingStopAreaFor,
     groupMembers,
     reconcileStopAreas,
+    removeNewStopAreas,
     removeStopArea,
     renameStopArea,
     renameExistingStopArea,
     setExistingStopAreas,
+    stopAreaDeclined,
     stopAreaSignature,
     stopAreaUploaded,
     stopAreasKnown,
@@ -179,6 +182,7 @@ function refreshNewStops() {
 
 function syncNewStops() {
     refreshNewStops()
+    queueNewStopAreas()
     onBusStopDataChanged()
 }
 
@@ -555,6 +559,9 @@ function refreshDerivedNames() {
         }
     }
 
+    // a rename can bring a new stop together with the stops of its place, or part them
+    queueNewStopAreas()
+
     return changed
 }
 
@@ -577,6 +584,7 @@ function onStopPositionsChanged(collection, previousMembers) {
     // before the redraw, so the stop area is settled by the time the menu offers it again
     refreshNewStops()
     followStopAreaMembers(collection, previousMembers)
+    queueNewStopAreas()
     onBusStopDataChanged()
 }
 
@@ -806,6 +814,48 @@ function groupName(collections) {
     return ""
 }
 
+// A stop placed in this session is in no stop area, and nothing else would put it in one:
+// it is edited through its own form rather than offered an area, and a stop with nothing
+// across the road is not offered one from anywhere. So its place is grouped as soon as
+// it is placed - its stop position, and the stops of its name nearby - either joining the
+// area those are already in or as a new one. Worked out afresh whenever the stops change,
+// so moving, renaming or deleting a new stop takes its area along.
+function queueNewStopAreas() {
+    removeNewStopAreas()
+    if (!busStopData || !stopAreasKnown()) return
+
+    const index = placeIndex()
+
+    for (const entry of busStopData) {
+        if (!isNewStop(entry.platform)) continue
+
+        const collections = collectionsInGroup(entry, index)
+        const members = groupMembers(collections)
+
+        // as in stopAreaAction: a single element is not a group
+        if (members.length < 2) continue
+
+        // already queued, for this stop's place or by the mapper; or taken back by them
+        if (getPendingStopArea(members) || stopAreaDeclined(members)) continue
+
+        const found = existingAreasFor(members)
+        // grouped twice over, and which one to add to is not ours to guess
+        if (found.length > 1) continue
+
+        const existing = found[0] ?? null
+        // grouped by this session a moment ago, and the download has not caught up
+        if (!existing && stopAreaUploaded(members)) continue
+
+        const name = groupName(collections)
+        if (!existing && !name) continue
+
+        // one the mapper queued for the rest of the place takes the new stop in
+        if (growStopArea(members, existing)) continue
+
+        addStopArea(members, name, existing, { automatic: true, forNewStop: true })
+    }
+}
+
 // Offers a stop area for the stops of one place, or takes back one not yet uploaded.
 function stopAreaAction(e, collection) {
     if (!busStopData || !collection) return null
@@ -870,7 +920,7 @@ function stopAreaAction(e, collection) {
                     onStopAreasChanged()
                 },
                 onRemove: () => {
-                    removeStopArea(members)
+                    declineStopArea(members)
                     onStopAreasChanged()
                 },
             })
