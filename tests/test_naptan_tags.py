@@ -406,6 +406,17 @@ class TestDifferingTags:
 
         assert differing_tags(osm, naptan) == {}
 
+    def test_a_name_in_other_capitals_is_not_a_difference(self):
+        osm = {'name': 'Police HQ', 'naptan:CommonName': 'POLICE HQ', 'naptan:Street': 'High Street'}
+        naptan = {'name': 'Police Hq', 'naptan:CommonName': 'Police Hq', 'naptan:Street': 'HIGH STREET'}
+
+        assert differing_tags(osm, naptan) == {}
+
+    def test_a_code_in_other_capitals_is_still_a_difference(self):
+        assert differing_tags({'naptan:NaptanCode': 'BSTJADA'}, {'naptan:NaptanCode': 'bstjada'}) == {
+            'naptan:NaptanCode': 'bstjada'
+        }
+
 
 class TestWritableKeys:
     def _addition(self, tags, expected=None):
