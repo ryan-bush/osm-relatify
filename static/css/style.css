@@ -304,6 +304,24 @@
   background-position: right center;
 }
 
+.table-tags .value-field {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+}
+
+.table-tags .colour-swatch {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  border: 1px solid rgba(0, 0, 0, .35);
+  border-radius: 2px;
+}
+
+.table-tags .colour-swatch-empty {
+  border-style: dashed;
+}
+
 .table-tags .key input {
   font-family: monospace;
   font-weight: bold;

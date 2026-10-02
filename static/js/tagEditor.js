@@ -58,6 +58,19 @@ export function createTagEditor({
         for (const { tr, entry } of rows) markRow(tr, entry)
     }
 
+    // A square beside the colour tag showing the colour it names. OSM allows a list, so
+    // it shows the first; a value no browser can draw leaves the square empty.
+    const paintSwatch = (swatch, entry) => {
+        const isColour = entry.key.trim() === "colour"
+        const colour = entry.value.split(";")[0].trim()
+        const valid = colour !== "" && CSS.supports("color", colour)
+
+        swatch.classList.toggle("d-none", !isColour)
+        swatch.classList.toggle("colour-swatch-empty", !valid)
+        swatch.style.backgroundColor = valid ? colour : ""
+        swatch.title = valid ? colour : "Not a colour"
+    }
+
     const makeValueInput = (entry) => {
         const options = enumKeys[entry.key]
 
@@ -108,6 +121,7 @@ export function createTagEditor({
             keyInput.oninput = () => {
                 entry.key = keyInput.value
                 syncWorkingCopy()
+                paintSwatch(tr.querySelector(".colour-swatch"), entry)
                 // a renamed key can collide with another row, so refresh every marker
                 markAllRows()
             }
@@ -117,15 +131,24 @@ export function createTagEditor({
         const valueCell = document.createElement("td")
         valueCell.className = "value"
 
+        const swatch = document.createElement("span")
+        swatch.className = "colour-swatch"
+        paintSwatch(swatch, entry)
+
         const valueInput = makeValueInput(entry)
         valueInput.disabled = locked
         valueInput.oninput = () => {
             entry.value = valueInput.value
             syncWorkingCopy()
             markRow(tr, entry)
+            paintSwatch(swatch, entry)
             if (recalcKeys.has(entry.key)) onRecalcNeeded()
         }
-        valueCell.appendChild(valueInput)
+
+        const valueField = document.createElement("div")
+        valueField.className = "value-field"
+        valueField.append(swatch, valueInput)
+        valueCell.appendChild(valueField)
 
         tr.append(keyCell, valueCell)
 
@@ -234,6 +257,7 @@ export function createTagEditor({
                 const input = row.tr.querySelector("input, select")
                 if (input) input.value = value
                 markRow(row.tr, entry)
+                paintSwatch(row.tr.querySelector(".colour-swatch"), entry)
             }
 
             return true
