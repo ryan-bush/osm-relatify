@@ -25,6 +25,7 @@ from config import (
     CALC_ROUTE_MAX_PROCESSES,
     CALC_ROUTE_N_PROCESSES,
     CREATED_BY,
+    DOWNLOAD_RELATION_GRID_SIZE,
     NAPTAN_ENABLED,
     OSM_CLIENT,
     OSM_IS_LIVE,
@@ -82,7 +83,12 @@ from version_check import get_version_status
 
 _SESSION_MAX_AGE = 31536000  # 1 year
 _TEMPLATES = Jinja2Templates(directory='templates', auto_reload=TEST_ENV)
-_TEMPLATES.env.globals.update(osm_url=OSM_URL, osm_is_live=OSM_IS_LIVE, app_version=APP_VERSION)
+_TEMPLATES.env.globals.update(
+    osm_url=OSM_URL,
+    osm_is_live=OSM_IS_LIVE,
+    app_version=APP_VERSION,
+    download_grid_size=DOWNLOAD_RELATION_GRID_SIZE,
+)
 
 _PROCESS_EXECUTOR = ProcessPoolExecutor(CALC_ROUTE_MAX_PROCESSES)
 _OSM = OpenStreetMap()
