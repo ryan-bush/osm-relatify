@@ -3,6 +3,8 @@
 // downloaded elements stay on openstreetmap.org rather than using this.
 export const osmUrl = document.documentElement.dataset.osmUrl
 export const osmIsLive = document.documentElement.dataset.osmLive === "true"
+// the size in degrees of a download cell; see DOWNLOAD_RELATION_GRID_SIZE in config.py
+export const downloadGridSize = Number.parseFloat(document.documentElement.dataset.downloadGridSize)
 
 export const escapeHtml = (text) => {
     const div = document.createElement("div")

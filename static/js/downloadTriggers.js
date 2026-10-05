@@ -1,7 +1,7 @@
 import { hideDownloadBar, map, showDownloadBar } from "./map.js"
 import { newRouteType, processFetchRelationData, relationId } from "./menu.js"
 import { showMessage } from "./messageBox.js"
-import { createElementFromHTML, deflateCompress } from "./utils.js"
+import { createElementFromHTML, deflateCompress, downloadGridSize } from "./utils.js"
 
 export let downloadHistoryData = null
 export let downloadTriggersData = null
@@ -46,6 +46,81 @@ export function processRelationDownloadTriggers(fetchData) {
     }
 
     updateDownloadViewButton()
+    updateDownloadedArea()
+}
+
+// Everything outside the downloaded cells is shaded, so the edge of what is downloaded
+// can be seen before a route runs off it. Below the ways, and never in the way of a click.
+map.createPane("downloadedArea").style.zIndex = 350
+
+let downloadedAreaLayer = null
+
+// the outline of the union of cells, as rings of [lat, lng]: each cell's edges, less
+// those shared with a neighbour, chained end to end. Even-odd filling means it does
+// not matter which way a ring turns where two cells meet only at a corner.
+function downloadedAreaRings(cells) {
+    const key = (x, y) => `${x},${y}`
+    const present = new Set(cells.map(({ x, y }) => key(x, y)))
+    const edges = new Map()
+
+    for (const { x, y } of cells) {
+        const sides = [
+            [x, y, x + 1, y, key(x, y - 1)],
+            [x + 1, y, x + 1, y + 1, key(x + 1, y)],
+            [x + 1, y + 1, x, y + 1, key(x, y + 1)],
+            [x, y + 1, x, y, key(x - 1, y)],
+        ]
+        for (const [x1, y1, x2, y2, neighbour] of sides) {
+            if (present.has(neighbour)) continue
+            const start = key(x1, y1)
+            if (!edges.has(start)) edges.set(start, [])
+            edges.get(start).push([x2, y2])
+        }
+    }
+
+    const rings = []
+    for (const [start, ends] of edges) {
+        while (ends.length > 0) {
+            const ring = []
+            let [x, y] = start.split(",").map(Number)
+            let current = start
+            do {
+                ring.push([y * downloadGridSize, x * downloadGridSize])
+                ;[x, y] = edges.get(current).pop()
+                current = key(x, y)
+            } while (current !== start)
+            rings.push(ring)
+        }
+    }
+    return rings
+}
+
+function updateDownloadedArea() {
+    if (downloadedAreaLayer) {
+        downloadedAreaLayer.remove()
+        downloadedAreaLayer = null
+    }
+
+    const cells = downloadHistoryData?.history.flat() ?? []
+    if (cells.length === 0) return
+
+    // the world, a few times over for a map panned round the antimeridian
+    const world = [
+        [-85, -540],
+        [85, -540],
+        [85, 540],
+        [-85, 540],
+    ]
+
+    downloadedAreaLayer = L.polygon([world, ...downloadedAreaRings(cells)], {
+        pane: "downloadedArea",
+        renderer: L.svg({ pane: "downloadedArea" }),
+        stroke: false,
+        fillColor: "#000",
+        fillOpacity: 0.2,
+        fillRule: "evenodd",
+        interactive: false,
+    }).addTo(map)
 }
 
 export const downloadTrigger = (id) => {
