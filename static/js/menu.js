@@ -74,6 +74,9 @@ const createRelationBtn = createRelationForm.querySelector(
     "button[type=submit]",
 )
 const createRouteType = document.getElementById("create-route-type")
+const duplicateRelationForm = document.getElementById("duplicate-relation-form")
+const duplicateRelationBtn = duplicateRelationForm.querySelector("button[type=submit]")
+const duplicateIdInput = duplicateRelationForm.querySelector("input[name=duplicate-id]")
 const relationIdElements = document.querySelectorAll(".view .relation-id")
 const relationUrlElements = document.querySelectorAll(".view .relation-url")
 const editingLabel = document.querySelector("#view-edit .editing-label")
@@ -270,23 +273,16 @@ const confirmLeavingRoute = () =>
     window.confirm("This route has changes that have not been uploaded. Leave and lose them?")
 
 
-createRelationForm.addEventListener("submit", (e) => {
-    e.preventDefault()
-
-    if (createRelationBtn.classList.contains("is-loading")) return
-
-    // there is no relation to seed a download area from, so the visible map is it
-    const bounds = map.getBounds()
-
+// Starts a relation that exists nowhere but here until it is uploaded, either from
+// nothing or as a copy of an existing route. Both lock the start screen while the first
+// download runs, which the caller does through setBusy.
+const startNewRoute = (body, setBusy, failure, onStarted) => {
     relationId = null
     isCreating = true
-    newRouteType = createRouteType.value
+    newRouteType = body.routeType ?? null
     showRelationIdentity()
 
-    createRouteType.disabled = true
-    createRelationBtn.classList.add("is-loading")
-    const defaultInnerText = createRelationBtn.innerText
-    createRelationBtn.innerText = "Creating..."
+    setBusy(true)
     showDownloadBar("Downloading map data...")
 
     fetch("/query", {
@@ -294,25 +290,12 @@ createRelationForm.addEventListener("submit", (e) => {
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-            relationId: null,
-            routeType: newRouteType,
-            bounds: [
-                bounds.getSouth(),
-                bounds.getWest(),
-                bounds.getNorth(),
-                bounds.getEast(),
-            ],
-        }),
+        body: JSON.stringify({ relationId: null, ...body }),
     })
         .then(async (resp) => {
             if (!resp.ok) {
                 isCreating = false
-                showMessage(
-                    "danger",
-                    `❌ Could not start a new relation - ${resp.status}`,
-                    await resp.text(),
-                )
+                showMessage("danger", `❌ ${failure} - ${resp.status}`, await resp.text())
                 return
             }
 
@@ -321,28 +304,91 @@ createRelationForm.addEventListener("submit", (e) => {
         .then((data) => {
             if (!data) return
 
+            // every later download is told the route type, as for any relation being
+            // created; a copy takes its source's, and the server reads trolleybus as bus
+            newRouteType ??= data.tags[data.tags.type] === "tram" ? "tram" : "bus"
+
             processFetchRelationData(data)
+            onStarted(data)
+        })
+        .catch((error) => {
+            isCreating = false
+            console.error(error)
+            showMessage("danger", `❌ ${failure}`, error)
+        })
+        .finally(() => {
+            hideDownloadBar()
+            setBusy(false)
+        })
+}
+
+createRelationForm.addEventListener("submit", (e) => {
+    e.preventDefault()
+
+    if (createRelationBtn.classList.contains("is-loading")) return
+
+    // there is no relation to seed a download area from, so the visible map is it
+    const bounds = map.getBounds()
+    const routeType = createRouteType.value
+    const defaultInnerText = createRelationBtn.innerText
+
+    const setBusy = (busy) => {
+        createRouteType.disabled = busy
+        createRelationBtn.classList.toggle("is-loading", busy)
+        createRelationBtn.innerText = busy ? "Creating..." : defaultInnerText
+    }
+
+    startNewRoute(
+        {
+            routeType,
+            bounds: [bounds.getSouth(), bounds.getWest(), bounds.getNorth(), bounds.getEast()],
+        },
+        setBusy,
+        "Could not start a new relation",
+        () =>
             showMessage(
                 "info",
                 "🆕 New route started",
                 "Click the ways the route follows, then right-click one to set <b>START</b> and another to set <b>END</b>. " +
                     "Fill in <b>name</b>, <b>ref</b>, <b>from</b> and <b>to</b> in the tag table before uploading." +
-                    (newRouteType === "bus"
+                    (routeType === "bus"
                         ? "<br><br>A stop missing from the map? Right-click where it is to add it."
                         : ""),
-            )
-        })
-        .catch((error) => {
-            isCreating = false
-            console.error(error)
-            showMessage("danger", "❌ Could not start a new relation", error)
-        })
-        .finally(() => {
-            hideDownloadBar()
-            createRouteType.disabled = false
-            createRelationBtn.classList.remove("is-loading")
-            createRelationBtn.innerText = defaultInnerText
-        })
+            ),
+    )
+})
+
+duplicateIdInput.addEventListener("input", (e) => {
+    const match = duplicateIdInput.value.match(/\d+/)
+    e.target.value = match !== null ? match[0] : ""
+})
+
+// One of many variants of a line is mostly the same ways and stops as the others, so
+// it is quicker to start from one of them and change what differs than from nothing.
+duplicateRelationForm.addEventListener("submit", (e) => {
+    e.preventDefault()
+
+    if (duplicateRelationBtn.classList.contains("is-loading")) return
+
+    const sourceId = Number.parseInt(duplicateIdInput.value)
+    const defaultInnerText = duplicateRelationBtn.innerText
+
+    const setBusy = (busy) => {
+        duplicateIdInput.disabled = busy
+        duplicateRelationBtn.classList.toggle("is-loading", busy)
+        duplicateRelationBtn.innerText = busy ? "Duplicating..." : defaultInnerText
+    }
+
+    startNewRoute({ duplicateFrom: sourceId }, setBusy, "Could not duplicate the relation", () =>
+        showMessage(
+            "info",
+            "📋 Route duplicated",
+            `This is a <b>new route</b> copied from relation ` +
+                `<a href="${osmUrl}/relation/${sourceId}" target="_blank">#${sourceId}</a>, which is left as it is. ` +
+                "Change the ways, stops and endpoints that differ, and update <b>name</b>, <b>from</b>, <b>via</b> " +
+                "and <b>to</b> in the tag table before uploading.",
+        ),
+    )
 })
 
 export const processFetchRelationData = (data) => {
