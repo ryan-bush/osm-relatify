@@ -88,7 +88,7 @@ let naptanTagSuggestions = new Map()
 let naptanMatched = new Map()
 
 // how far apart the stops of one place can be, as the server grouped them by
-let stopAreaReach = 150
+let stopAreaReach = 300
 
 const stopKey = (stop) => `${stop.type},${stop.id}`
 
