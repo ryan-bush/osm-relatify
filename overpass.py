@@ -546,10 +546,11 @@ def is_routable(tags: dict[str, str], route_type: str) -> bool:
             access_designated = access_valid = tags['bus'] not in {'no'}
         elif 'psv' in tags:
             access_designated = access_valid = tags['psv'] not in {'no'}
+        # private and customers are allowed: buses often run through depots, stations and hospital grounds
         elif 'motor_vehicle' in tags:
-            access_valid = tags['motor_vehicle'] not in {'private', 'customers', 'no'}
+            access_valid = tags['motor_vehicle'] not in {'no'}
         elif 'access' in tags:
-            access_valid = tags['access'] not in {'private', 'customers', 'no'}
+            access_valid = tags['access'] not in {'no'}
 
         noarea_valid = tags.get('area', 'no') in {'no'}
 
