@@ -280,6 +280,16 @@ def test_osm_stop_without_a_code_matches_by_name_and_distance():
     assert unmapped == []
 
 
+def test_a_same_named_stop_over_a_hundred_metres_away_is_a_match():
+    """Waggon and Horses at Beckhampton: NaPTAN puts it about 110 m from the mapped stop."""
+    unmapped = find_unmapped_stops(
+        [_naptan('A', (57.14120, -2.11750), 'Waggon and Horses')],
+        [_osm('1', (57.14020, -2.11750), {'name': 'Waggon & Horses'})],
+    )
+
+    assert unmapped == []
+
+
 def test_mapped_stop_does_not_hide_its_twin_across_the_road():
     unmapped = find_unmapped_stops(
         [_naptan('A', NORTH_SIDE), _naptan('B', SOUTH_SIDE)],
