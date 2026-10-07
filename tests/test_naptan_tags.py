@@ -546,19 +546,28 @@ class TestEditedByHand:
         # unlike NaPTAN, which never fills an empty name in
         assert self._addition({'name': 'High Street'}).writable_keys() == {'name'}
 
-    def test_nothing_outside_the_form_can_be_written(self):
-        assert self._addition({'highway': 'crossing', 'naptan:Bearing': 'NE'}).writable_keys() == set()
+    def test_any_tag_can_be_written_by_hand(self):
+        tags = {'highway': 'bus_stop', 'naptan:Bearing': 'NE', 'tactile_paving': 'yes'}
 
-    def test_a_tag_outside_the_form_is_refused(self):
-        osm = FakeOpenStreetMap(nodes=[_element({}, '1')])
+        assert self._addition(tags).writable_keys() == set(tags)
 
-        with pytest.raises(HTTPException) as e:
-            _build_elements(
-                [StopTagAddition(type='node', id=1, tags={'highway': 'bus_stop'}, byHand={'highway'})], osm
-            )
+    def test_a_hand_typed_tag_beyond_the_form_is_written(self):
+        osm = FakeOpenStreetMap(nodes=[_element({'naptan:verified': 'no'}, '1')])
 
-        assert e.value.status_code == 400
-        assert 'highway' in e.value.detail
+        [(_, element)] = _build_elements(
+            [
+                StopTagAddition(
+                    type='node',
+                    id=1,
+                    tags={'naptan:verified': '', 'tactile_paving': 'yes'},
+                    expected={'naptan:verified': 'no'},
+                    byHand={'naptan:verified', 'tactile_paving'},
+                )
+            ],
+            osm,
+        )
+
+        assert self._tags(element) == {'tactile_paving': 'yes'}
 
     def test_one_stop_can_carry_a_hand_edit_and_a_naptan_fill_at_once(self):
         addition = StopTagAddition(
@@ -619,10 +628,10 @@ class TestPlatformTags:
     def test_no_other_value_can_be_written(self, tags):
         assert StopTagAddition(type='node', id=1, tags=tags).writable_keys() == set()
 
-    def test_they_cannot_be_typed_by_hand(self):
-        addition = StopTagAddition(type='node', id=1, tags={'bus': 'yes'}, byHand={'bus'})
+    def test_any_value_can_be_typed_by_hand(self):
+        addition = StopTagAddition(type='node', id=1, tags={'bus': 'no'}, byHand={'bus'})
 
-        assert addition.writable_keys() == set()
+        assert addition.writable_keys() == {'bus'}
 
     def test_they_are_not_credited_to_naptan(self):
         model = _model(

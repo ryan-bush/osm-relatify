@@ -382,9 +382,8 @@ function stopPositionAction(e, collection) {
     }
 }
 
-// Lets the mapper change the few fields of a stop that are theirs to change. Only for a
-// stop already in OSM: one placed in this session is edited through its own form, which
-// can still move and delete it.
+// Lets the mapper change any tag of a stop. Only for a stop already in OSM: one placed in
+// this session is edited through its own form, which can still move and delete it.
 function editStopAction(e, collection) {
     const platform = collection.platform
     if (!platform || isNewStop(platform)) return null
@@ -396,6 +395,7 @@ function editStopAction(e, collection) {
         edited: Boolean(edit),
         onClick: () =>
             showEditStopForm(e.latlng, {
+                original: platform.tags ?? {},
                 tags: editedTags(platform),
                 edited: Boolean(edit),
                 rename: {

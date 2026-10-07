@@ -81,6 +81,28 @@
   overflow-y: auto;
 }
 
+.edit-stop-form {
+  width: 250px;
+  font-size: .9em;
+}
+
+/* the full list needs room for an editable key and value on every row */
+.edit-stop-form.menu-wide {
+  width: 380px;
+}
+
+.edit-stop-form .table-tags .key {
+  width: 40%;
+  word-break: break-all;
+}
+
+/* a stop with many tags scrolls rather than making the form taller than the map */
+.edit-stop-tags {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: .25rem;
+}
+
 .new-stop-nearby {
   font-size: .8em;
   color: #664d03;
