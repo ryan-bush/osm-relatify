@@ -50,17 +50,14 @@ NAPTAN_KEYS = (
 )
 
 
-# What the mapper may write to a stop by hand, as opposed to what NaPTAN may fill in for
-# them. These are the fields the stop form offers, and the mapper is the authority on all
-# of them - what the sign says, and what is standing at the stop. Every write is still
-# checked against the value the form was showing, so one that changed underneath is a
-# conflict rather than a silent overwrite.
-EDITABLE_KEYS = ('name', 'local_ref', 'shelter', 'bench')
-
-
 # The tags every bus stop platform should carry, offered for the mapper to fill in where
 # one lacks any of them. Neither NaPTAN's nor typed, each key writes this value only.
 PLATFORM_TAGS = {'highway': 'bus_stop', 'public_transport': 'platform', 'bus': 'yes'}
+
+
+# The keys written in words, whose capitals are a matter of style rather than fact:
+# NaPTAN has "Police Hq" where the sign says "Police HQ". A code is left as it is.
+_CASE_INSENSITIVE_KEYS = {'name', 'naptan:CommonName', 'naptan:Indicator', 'naptan:Street'}
 
 
 def missing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dict[str, str]:
@@ -78,6 +75,11 @@ def differing_tags(osm_tags: dict[str, str], naptan_tags: dict[str, str]) -> dic
 
         # only a real disagreement: a tag the stop lacks is a fill, not a conflict
         if not naptan_value or not osm_value or naptan_value == osm_value:
+            continue
+
+        # "Police HQ" against "Police Hq" is the same name in other capitals, and OSM's
+        # is kept rather than put to the mapper
+        if key in _CASE_INSENSITIVE_KEYS and osm_value.casefold() == naptan_value.casefold():
             continue
 
         # and "Bay 1" against "1" is the same bay spelled out, not a stop mapped wrongly
@@ -117,18 +119,16 @@ class StopTagAddition(BaseModel):
         """
         The keys this may write.
 
-        What the mapper typed is theirs to decide, within the fields the form offers.
-        What NaPTAN offers is narrower: the NaPTAN keys, either filled in where the
-        stop has none or as a replacement the mapper accepted. Narrower still is making
-        up a bus stop's platform tags, each of which may write one value and nothing else.
+        What the mapper typed is theirs to decide, whatever the key: they are the
+        authority on what the sign says and what is standing at the stop. What NaPTAN
+        offers is narrower: the NaPTAN keys, either filled in where the stop has none or
+        as a replacement the mapper accepted. Narrower still is making up a bus stop's
+        platform tags, each of which may write one value and nothing else.
         """
         result = set()
 
         for key, value in self.tags.items():
-            if key in self.byHand:
-                if key in EDITABLE_KEYS:
-                    result.add(key)
-            elif key in NAPTAN_KEYS or PLATFORM_TAGS.get(key) == value:
+            if key in self.byHand or key in NAPTAN_KEYS or PLATFORM_TAGS.get(key) == value:
                 result.add(key)
 
         return result

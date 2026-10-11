@@ -84,7 +84,7 @@ Everything below has a working default and can be set in `.env`:
 | `SENTRY_DSN` | Enables error reporting, off unless set. |
 | `OSM_URL` | The OSM instance to sign in to and upload to. Defaults to live OSM. |
 | `OSM_API_URL` | Its API host, if different. Only live OSM needs this, and it is set for you. |
-| `STOP_AREA_SEARCH_AREA` | How far apart the stops of one place can be, for stop areas. Metres; defaults to 150. |
+| `STOP_AREA_SEARCH_AREA` | How far apart the stops of one place can be, for stop areas. Metres; defaults to 300. |
 | `NAPTAN_ENABLED` | Suggests and checks stops using NaPTAN. On by default; set to `0` to turn off. |
 | `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
 | `UPDATE_CHECK_REPO` | The `owner/repo` whose releases are checked for a newer version. Leave empty to turn the check off. |

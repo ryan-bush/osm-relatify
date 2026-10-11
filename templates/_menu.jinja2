@@ -16,6 +16,18 @@
 
         <div class="body pt-0">
             <div class="separator-or my-2"><span>or</span></div>
+            <form id="duplicate-relation-form">
+                <div class="small mb-1">Create a <b>new route</b> as a copy of an existing one</div>
+                <div class="input-group">
+                    <input type="text" class="form-control" name="duplicate-id"
+                        placeholder="Relation ID" aria-label="Relation ID to duplicate" required>
+                    <button type="submit" class="btn btn-duplicate btn-outline-primary">
+                        Duplicate
+                    </button>
+                </div>
+            </form>
+
+            <div class="separator-or my-2"><span>or</span></div>
             <form id="create-relation-form">
                 <div class="small mb-1">Create a <b>new route</b> from the visible area</div>
                 <div class="input-group">

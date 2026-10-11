@@ -1,4 +1,5 @@
 import { map, openInOpenStreetMap } from "./map.js"
+import { createTagEditor } from "./tagEditor.js"
 
 let popup = null
 
@@ -260,6 +261,8 @@ function stopPositionUploadTags(tags, routeType, direction) {
     return result
 }
 
+const YES_NO = ["", "yes", "no"]
+
 const yesNoOptions = `
     <option value="">Unknown</option>
     <option value="yes">Yes</option>
@@ -407,43 +410,71 @@ export function showNewStopForm(
     form.elements.name.focus()
 }
 
-// The fields of a stop already in OSM, to change by hand. Only these four: the rest of
-// what a stop carries is either NaPTAN's to offer or nothing this editor should touch.
+// Every tag of a stop already in OSM, to change by hand. The fields most often wanted
+// come first; the rest are behind "Show all tags". `original` is what the stop says in
+// OSM, which edits are marked against, and `tags` what it will say with the edits queued
+// so far. onSave is given every key either holds, an empty value taking the tag away.
 // `rename`, when given, is what else says the old name — the stop position on the road
 // and the stop area the place is in — offered to follow the new one.
-export function showEditStopForm(latlng, { tags, edited, rename = null, onSave, onRevert }) {
+export function showEditStopForm(latlng, { original, tags, edited, rename = null, onSave, onRevert }) {
     clearBusStopsPopup()
 
     const form = document.createElement("form")
-    form.className = "new-stop-form"
+    form.className = "new-stop-form edit-stop-form"
     form.innerHTML = `
         <div class="new-stop-title">Edit this stop</div>
-        <label>Name
-            <input class="form-control form-control-sm" name="name" maxlength="255">
-        </label>
-        <label>Local ref <span class="text-body-secondary">(stop letter or stand)</span>
-            <input class="form-control form-control-sm" name="local_ref" maxlength="255">
-        </label>
-        <div class="d-flex gap-2">
-            <label class="flex-fill">Shelter
-                <select class="form-select form-select-sm" name="shelter">${yesNoOptions}</select>
-            </label>
-            <label class="flex-fill">Bench
-                <select class="form-select form-select-sm" name="bench">${yesNoOptions}</select>
-            </label>
+        <div class="edit-stop-tags">
+            <table class="table table-sm table-bordered table-tags mb-0">
+                <tbody></tbody>
+            </table>
         </div>
+        <div class="d-flex justify-content-between mb-2">
+            <button type="button" class="btn btn-link btn-sm p-0 edit-stop-toggle">Show all tags</button>
+            <button type="button" class="btn btn-link btn-sm p-0 edit-stop-add">+ Add tag</button>
+        </div>
+        <div class="new-stop-nearby duplicate-note d-none">A key is used twice. Remove or rename one of them.</div>
         <label class="new-stop-check rename-check d-none">
             <input type="checkbox" name="rename" checked>
             <span></span>
         </label>
-        <div class="new-stop-naptan rename-note d-none"></div>
         <div class="d-flex gap-2">
             <button type="submit" class="btn btn-sm btn-primary flex-fill">Save</button>
             <button type="button" class="btn btn-sm btn-outline-danger new-stop-revert d-none">Undo</button>
         </div>`
 
-    // set through the DOM rather than the template, so nothing from OSM is parsed as HTML
-    for (const key of FORM_KEYS) form.elements[key].value = tags[key] ?? ""
+    let working = {}
+    const tableBody = form.querySelector("tbody")
+
+    const editor = createTagEditor({
+        tableBody,
+        toggleButton: form.querySelector(".edit-stop-toggle"),
+        addButton: form.querySelector(".edit-stop-add"),
+        featuredKeys: FORM_KEYS,
+        enumKeys: { shelter: YES_NO, bench: YES_NO },
+        wideElement: form,
+        onChange: (tags) => {
+            working = tags ?? {}
+        },
+    })
+
+    // loaded as OSM has it, so the edits queued earlier show as edits
+    editor.load(original)
+    for (const key of new Set([...Object.keys(original), ...Object.keys(tags)])) {
+        editor.setTag(key, tags[key] ?? "")
+    }
+
+    // Resized to the table, the full list needing room for an editable key and value on
+    // every row. Leaflet puts the form back into the popup to do it, which takes the focus
+    // away from the field "+ Add tag" has just put it in.
+    function resize() {
+        const focused = document.activeElement
+        popup?.update()
+        if (form.contains(focused)) focused.focus()
+    }
+
+    for (const button of form.querySelectorAll(".edit-stop-toggle, .edit-stop-add")) {
+        button.addEventListener("click", resize)
+    }
 
     const revert = form.querySelector(".new-stop-revert")
     revert.classList.toggle("d-none", !edited)
@@ -452,8 +483,7 @@ export function showEditStopForm(latlng, { tags, edited, rename = null, onSave, 
     const renameLabel = renameCheck.nextElementSibling
 
     function refreshRename() {
-        const name = form.elements.name.value.trim()
-        const follows = rename?.follows(name) ?? []
+        const follows = rename?.follows(working.name ?? "") ?? []
 
         form.querySelector(".rename-check").classList.toggle("d-none", !follows.length)
         if (!follows.length) return
@@ -463,6 +493,7 @@ export function showEditStopForm(latlng, { tags, edited, rename = null, onSave, 
 
     refreshRename()
     form.addEventListener("input", refreshRename)
+    form.addEventListener("change", refreshRename)
 
     // Leaflet pans and zooms the map on arrow and +/- keys, which would swallow them here
     L.DomEvent.on(form, "keydown", L.DomEvent.stopPropagation)
@@ -470,8 +501,20 @@ export function showEditStopForm(latlng, { tags, edited, rename = null, onSave, 
     form.onsubmit = (e) => {
         e.preventDefault()
 
+        // one of the two rows would be silently lost
+        const duplicate = tableBody.querySelector(".tag-duplicate")
+        form.querySelector(".duplicate-note").classList.toggle("d-none", !duplicate)
+        if (duplicate) {
+            resize()
+            duplicate.querySelector("input")?.focus()
+            return
+        }
+
+        // a key the stop had and the table no longer does is one to take away
         const collected = {}
-        for (const key of FORM_KEYS) collected[key] = form.elements[key].value.trim()
+        for (const key of new Set([...Object.keys(original), ...Object.keys(tags), ...Object.keys(working)])) {
+            collected[key] = working[key] ?? ""
+        }
 
         popup.close()
         onSave(collected, !form.querySelector(".rename-check").classList.contains("d-none") && renameCheck.checked)
@@ -486,11 +529,11 @@ export function showEditStopForm(latlng, { tags, edited, rename = null, onSave, 
         content: form,
         closeButton: false,
         className: "popup-form",
-        minWidth: 240,
-        maxWidth: 280,
+        minWidth: 260,
+        maxWidth: 420,
     }).openOn(map)
 
-    form.elements.name.focus()
+    tableBody.querySelector("input")?.focus()
 }
 
 // Every tag on a stop, read-only. `sections` is one entry per element of the collection,

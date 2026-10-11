@@ -25,6 +25,7 @@ from config import (
     CALC_ROUTE_MAX_PROCESSES,
     CALC_ROUTE_N_PROCESSES,
     CREATED_BY,
+    DOWNLOAD_RELATION_GRID_SIZE,
     NAPTAN_ENABLED,
     OSM_CLIENT,
     OSM_IS_LIVE,
@@ -82,7 +83,12 @@ from version_check import get_version_status
 
 _SESSION_MAX_AGE = 31536000  # 1 year
 _TEMPLATES = Jinja2Templates(directory='templates', auto_reload=TEST_ENV)
-_TEMPLATES.env.globals.update(osm_url=OSM_URL, osm_is_live=OSM_IS_LIVE, app_version=APP_VERSION)
+_TEMPLATES.env.globals.update(
+    osm_url=OSM_URL,
+    osm_is_live=OSM_IS_LIVE,
+    app_version=APP_VERSION,
+    download_grid_size=DOWNLOAD_RELATION_GRID_SIZE,
+)
 
 _PROCESS_EXECUTOR = ProcessPoolExecutor(CALC_ROUTE_MAX_PROCESSES)
 _OSM = OpenStreetMap()
@@ -228,6 +234,8 @@ class PostQueryModel(BaseModel):
     reload: bool = False
     # creation only: the route type the user picked
     routeType: str | None = None
+    # creation only: an existing route whose ways, stops and tags the new one starts from
+    duplicateFrom: int | None = None
     # the map viewport, as (minlat, minlon, maxlat, maxlon): the first download of a
     # relation being created, or a view asked for with the "download this view" button
     bounds: tuple[float, float, float, float] | None = None
@@ -264,8 +272,12 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
         download_hist = None
         download_targets = None
 
+    # A duplicate is downloaded as the route it copies, and from then on is a relation
+    # being created like any other: the client sets the members of every later download.
+    source_id = model.relationId if model.relationId is not None else model.duplicateFrom
+
     with print_run_time('Querying relation data'):
-        if model.relationId is None:
+        if source_id is None:
             # nothing to fetch yet: the relation is invented here and only exists
             # in OSM once the user uploads
             route_type = model.routeType
@@ -282,7 +294,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
                 download_targets = view_download_targets(model.bounds)
         else:
             try:
-                relation = await _OSM.get_relation(model.relationId)
+                relation = await _OSM.get_relation(source_id)
             except HTTPStatusError as e:
                 if e.response.status_code == status.HTTP_404_NOT_FOUND:
                     raise HTTPException(status.HTTP_404_NOT_FOUND, 'Relation not found') from e
@@ -294,6 +306,8 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
             # the thing that gets edited. Its variants are listed instead, and the one
             # picked is loaded the way any route is — so nothing is downloaded here.
             if is_route_master(relation_tags):
+                if model.relationId is None:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Duplicate one of its routes, not the route master')
                 return await _build_route_master_view(relation)
 
             route_type = get_route_type(relation_tags)
@@ -301,7 +315,7 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Relation must be a PTv2 bus/tram/trolleybus route')
 
         download = await _OVERPASS.query_relation(
-            relation_id=model.relationId,
+            relation_id=source_id,
             download_hist=download_hist,
             download_targets=download_targets,
             route_type=route_type,

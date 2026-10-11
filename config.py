@@ -199,9 +199,10 @@ BUS_COLLECTION_SEARCH_AREA = 50  # meters
 
 # How far apart the stops of one place can be, for the stop_area relation that groups
 # them. Wider than the collection radius above: the two sides of a road, or a few stands
-# at one stop, are one place even a couple of hundred metres apart. Raising it much
-# further starts joining up same-named stops that are genuinely different places.
-STOP_AREA_SEARCH_AREA = float(os.getenv('STOP_AREA_SEARCH_AREA', '150'))  # meters
+# at one stop, or the stops either side of a roundabout, are one place even a few hundred
+# metres apart. Raising it much further starts joining up same-named stops that are
+# genuinely different places.
+STOP_AREA_SEARCH_AREA = float(os.getenv('STOP_AREA_SEARCH_AREA', '300'))  # meters
 
 # Suggests bus stops that are in NaPTAN but missing from OSM, and checks route stops
 # against it. NaPTAN covers Great Britain only, and the national dataset (about 100 MB)

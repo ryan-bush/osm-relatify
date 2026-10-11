@@ -53,8 +53,10 @@ DATA_VERSION = 5
 # either kerb
 _KERB_OFFSET = 2  # meters
 
-# NaPTAN positions are often tens of metres out
-MATCH_DISTANCE = 80  # meters
+# NaPTAN positions are often tens of metres out, and in the country over a hundred: the
+# Waggon and Horses stops at Beckhampton sit 100-110 m from the one mapped there. A
+# matching name is still needed this far out, and each OSM stop takes the closest.
+MATCH_DISTANCE = 150  # meters
 # the cutoff bus_collection_builder.py groups similar stop names with
 MATCH_NAME_SCORE = 89
 # An OSM stop this close is taken to be the NaPTAN stop even when the names disagree, or
