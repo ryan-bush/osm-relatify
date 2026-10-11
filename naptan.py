@@ -23,6 +23,7 @@ from models.download_history import DownloadHistory
 from models.fetch_relation import FetchRelationBusStopCollection
 from models.naptan_stop import NaptanStop, NaptanTagSuggestion
 from naptan_tags import differing_tags, indicator_letter, missing_tags, stop_letter
+from osgb import grid_to_lat_lng
 from overpass import optimize_cells_and_get_bbs
 from utils import HTTP, normalize_name
 
@@ -47,7 +48,7 @@ _TAG_COLUMNS = (
 
 # bumped whenever what the database stores changes, so an older one is rebuilt on start
 # rather than serving stale tags until the next daily refresh
-DATA_VERSION = 5
+DATA_VERSION = 6
 
 # a platform nearer than this to its stop position, or to the road, could be standing at
 # either kerb
@@ -76,7 +77,15 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     # NaPTAN writes an apostrophe as a backtick, "St Mihangel`s Church"; naptan:CommonName
     # below keeps it as NaPTAN has it
     name = row['CommonName'].strip().replace('`', "'")
-    if not name or not row['Latitude'] or not row['Longitude']:
+    if not name:
+        return None
+
+    if (lat := row['Latitude'].strip()) and (lon := row['Longitude'].strip()):
+        lat_lng = (float(lat), float(lon))
+    # some areas, Shropshire and much of Scotland among them, give only a grid reference
+    elif (easting := row['Easting'].strip()) and (northing := row['Northing'].strip()):
+        lat_lng = grid_to_lat_lng(float(easting), float(northing))
+    else:
         return None
 
     indicator = row['Indicator'].strip()
@@ -103,7 +112,7 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
         atcoCode=row['ATCOCode'].strip(),
         name=name,
         indicator=indicator,
-        latLng=(float(row['Latitude']), float(row['Longitude'])),
+        latLng=lat_lng,
         tags=tags,
     )
 

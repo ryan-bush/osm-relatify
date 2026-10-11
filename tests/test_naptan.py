@@ -32,6 +32,8 @@ COLUMNS = (
     'Bearing',
     'Longitude',
     'Latitude',
+    'Easting',
+    'Northing',
     'StopType',
     'BusStopType',
     'Status',
@@ -48,6 +50,8 @@ def _row(**overrides) -> dict[str, str]:
         'Bearing': 'SW',
         'Longitude': '-2.117499',
         'Latitude': '57.141117',
+        'Easting': '393069',
+        'Northing': '805528',
         'StopType': 'BCT',
         'BusStopType': 'MKD',
         'Status': 'active',
@@ -104,11 +108,18 @@ def test_empty_fields_are_left_out():
         {'BusStopType': 'HAR'},
         {'BusStopType': 'FLX'},
         {'CommonName': ' '},
-        {'Latitude': ''},
+        {'Latitude': '', 'Easting': ''},
     ],
 )
 def test_stops_without_a_mappable_pole_are_skipped(overrides):
     assert parse_row(_row(**overrides)) is None
+
+
+def test_a_stop_with_only_a_grid_reference_is_placed_from_it():
+    # Lyth Hill Road Jct, Bayston Hill, which NaPTAN gives no latitude or longitude
+    stop = parse_row(_row(Latitude='', Longitude='', Easting='348470', Northing='308741'))
+
+    assert stop.latLng == pytest.approx((52.67390, -2.76353), abs=0.00005)
 
 
 def test_a_backtick_in_the_name_becomes_an_apostrophe():
