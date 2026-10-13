@@ -2,7 +2,7 @@ import asyncio
 import os
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Annotated
 from urllib.parse import urlencode
@@ -52,6 +52,7 @@ from models.fetch_relation import (
 )
 from models.final_route import FinalRoute, WarningSeverity
 from models.route_master import RouteMaster
+from models.stop_plan import StopPlanEntry
 from naptan import NAPTAN, Roads
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
@@ -496,6 +497,9 @@ class PostCalcBusRouteModel:
     tags: dict[str, str]
     # which side of the road traffic keeps to; right until the client says otherwise
     drivingSide: str = 'right'
+    # the stops in the order the mapper arranged them, with the role of each visit;
+    # absent until they arrange them, when the route decides
+    stopPlan: list[StopPlanEntry] = field(default_factory=list)  # noqa: N815
 
 
 @app.websocket('/ws/calc_bus_route')
@@ -550,8 +554,9 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                                     _PROCESS_EXECUTOR,
                                     driving_side=model.drivingSide,
                                     n_processes=CALC_ROUTE_N_PROCESSES,
+                                    stop_plan=model.stopPlan,
                                 ),
-                                # MAX_SEARCH_TIME plus room for building the graph and
+                                # MAX_SEARCH_TIME and FOLLOW_STOP_PLAN_TIME, plus room for building the graph and
                                 # for the workers still running when the search stops
                                 timeout=4,
                             )
@@ -568,7 +573,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
 
                 route = route_task.result()
                 route = replace(route, extraWaysToUpdate=tuple(ways_non_members.values()))
-                route = sort_and_upgrade_members(route, relation_members)
+                route = sort_and_upgrade_members(route, relation_members, model.stopPlan)
 
                 inactive_naptan_codes = await NAPTAN.find_inactive(route.busStops) if NAPTAN_ENABLED else frozenset()
 

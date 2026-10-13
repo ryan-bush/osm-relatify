@@ -18,6 +18,7 @@ from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationE
 from models.final_route import FinalRoute
 from models.osm_change import OsmChange
 from models.relation_member import RelationMember
+from models.stop_plan import StopPlanEntry, StopRole
 from placeholder_ids import RelationPlaceholders
 from naptan_tags import StopTagAddition, build_tag_addition_elements
 from openstreetmap import OpenStreetMap
@@ -243,10 +244,65 @@ def _route_returns_to_first_stop(route: FinalRoute) -> bool:
     return False
 
 
-def sort_and_upgrade_members(route: FinalRoute, relation_members: list[RelationMember]) -> FinalRoute:
+def requested_stop_roles(
+    bus_stops: Sequence[FetchRelationBusStopCollection],
+    stop_plan: Sequence[StopPlanEntry],
+) -> list[StopRole]:
+    """The role the mapper set for each of the route's stop visits, matched to the plan by stop and visit number."""
+    planned: dict[ElementId, list[StopRole]] = defaultdict(list)
+    for entry in stop_plan:
+        planned[entry.id].append(entry.role)
+
+    seen: dict[ElementId, int] = defaultdict(int)
+    roles: list[StopRole] = []
+    for collection in bus_stops:
+        stop_id = collection.best.id
+        visit = seen[stop_id]
+        seen[stop_id] += 1
+        roles.append(planned[stop_id][visit] if visit < len(planned[stop_id]) else 'auto')
+
+    return roles
+
+
+_ROLE_SUFFIXES: dict[StopRole, str] = {'both': '', 'entry_only': '_entry_only', 'exit_only': '_exit_only'}
+
+
+def _member_role(
+    base: str,
+    suffix: str,
+    requested: StopRole,
+    member: RelationMember | None,
+    roundtrip: bool,
+) -> str:
+    # what the mapper set here wins over everything worked out below
+    if requested != 'auto':
+        return base + _ROLE_SUFFIXES[requested]
+
+    role = base + suffix
+    if member is not None and member.role.startswith(role):
+        role = member.role
+    if roundtrip and role in {base + '_entry_only', base + '_exit_only'}:
+        role = base
+    return role
+
+
+def _stop_role(role: str) -> StopRole:
+    for stop_role, suffix in _ROLE_SUFFIXES.items():
+        if suffix and role.endswith(suffix):
+            return stop_role
+    return 'both'
+
+
+def sort_and_upgrade_members(
+    route: FinalRoute,
+    relation_members: list[RelationMember],
+    stop_plan: Sequence[StopPlanEntry] = (),
+) -> FinalRoute:
     id_relation_member_map = {member.id: member for member in relation_members}
+    requested_roles = requested_stop_roles(route.busStops, stop_plan)
 
     members: list[RelationMember] = []
+    stop_roles: list[StopRole] = []
     first_stop_member: RelationMember | None = None
     first_platform_member: RelationMember | None = None
 
@@ -254,32 +310,38 @@ def sort_and_upgrade_members(route: FinalRoute, relation_members: list[RelationM
         is_first = i == 0
         is_last = i == len(route.busStops) - 1
         suffix = '_entry_only' if is_first else ('_exit_only' if is_last else '')
+        stop_role: StopRole = 'both'
 
         if collection.stop is not None:
-            role = 'stop' + suffix
-            member = id_relation_member_map.get(collection.stop.id)
-            if member is not None and member.role.startswith(role):
-                role = member.role
-            if route.roundtrip and role in {'stop_entry_only', 'stop_exit_only'}:
-                role = 'stop'
+            role = _member_role(
+                'stop', suffix, requested_roles[i], id_relation_member_map.get(collection.stop.id), route.roundtrip
+            )
             stop_member = RelationMember(id=collection.stop.id, type=collection.stop.type, role=role)
             members.append(stop_member)
+            stop_role = _stop_role(role)
             if is_first:
                 first_stop_member = stop_member
 
         if collection.platform is not None:
-            role = 'platform' + suffix
-            member = id_relation_member_map.get(collection.platform.id)
-            if member is not None and member.role.startswith(role):
-                role = member.role
-            if route.roundtrip and role in {'platform_entry_only', 'platform_exit_only'}:
-                role = 'platform'
+            role = _member_role(
+                'platform',
+                suffix,
+                requested_roles[i],
+                id_relation_member_map.get(collection.platform.id),
+                route.roundtrip,
+            )
             platform_member = RelationMember(id=collection.platform.id, type=collection.platform.type, role=role)
             members.append(platform_member)
+            stop_role = _stop_role(role)
             if is_first:
                 first_platform_member = platform_member
 
-    if route.roundtrip and _route_returns_to_first_stop(route):
+        stop_roles.append(stop_role)
+
+    # the mapper may have had the route serve its first stop again at the end already
+    returns_listed = len(route.busStops) > 1 and route.busStops[-1].best.id == route.busStops[0].best.id
+
+    if route.roundtrip and not returns_listed and _route_returns_to_first_stop(route):
         # a circular route lists its terminus twice: once where the vehicle sets off and
         # once where it comes back. Only repeat it when the ways really do return there;
         # a loop that closes short of the first stop serves that stop once, and repeating
@@ -302,7 +364,7 @@ def sort_and_upgrade_members(route: FinalRoute, relation_members: list[RelationM
 
         members.append(RelationMember(id=way_id, type='way', role=role))
 
-    return replace(route, members=tuple(members))
+    return replace(route, members=tuple(members), busStopRoles=tuple(stop_roles))
 
 
 def _initialize_osm_change_structure() -> dict:

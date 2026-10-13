@@ -613,6 +613,58 @@
   color: #000;
 }
 
+.route-summary-item .stop-drag {
+  color: #999;
+  cursor: grab;
+  padding: 0 .35em 0 0;
+  user-select: none;
+  touch-action: none;
+}
+
+.route-summary-item .stop-drag:hover {
+  color: #000;
+}
+
+.route-summary-item-dragging {
+  opacity: .4;
+}
+
+/* where the stop being dragged will go */
+.route-summary-drop-before {
+  box-shadow: inset 0 2px 0 #0d6efd;
+}
+
+.route-summary-drop-after {
+  box-shadow: inset 0 -2px 0 #0d6efd;
+}
+
+.route-summary-pending {
+  opacity: .5;
+}
+
+.route-summary-item .stop-role-badge {
+  font-size: .75em;
+  color: #6c757d;
+  white-space: nowrap;
+}
+
+.route-summary-item .stop-menu-btn {
+  color: #555;
+  font-weight: bold;
+  line-height: 1;
+  margin-left: .2em;
+  text-decoration: none;
+}
+
+.route-summary-item .stop-menu-btn:hover {
+  color: #000;
+}
+
+.route-summary-item .stop-menu .dropdown-menu {
+  font-family: var(--bs-body-font-family);
+  font-weight: normal;
+}
+
 .digit {
   font-family: monospace;
   font-weight: bold;
