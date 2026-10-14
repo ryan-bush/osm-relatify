@@ -61,6 +61,20 @@ import {
     waysData,
 } from "./waysLayer.js"
 import { clearRouteData, requestCalcBusRoute, routeData } from "./waysRoute.js"
+import {
+    ROLE_LABELS,
+    isStopPlanSet,
+    moveVisit,
+    planFromRoute,
+    removeVisit,
+    resetStopPlan,
+    serveAgain,
+    setRole,
+    setStopPlan,
+    stopPlanPayload,
+    visitId,
+    visitsOutOfPlace,
+} from "./stopPlan.js"
 
 const busAnimationElement = document.getElementById("bus-animation")
 const menuElement = document.getElementById("menu")
@@ -86,6 +100,7 @@ const editWarnings = document.getElementById("edit-warnings")
 const editSubmitBtn = document.querySelector("#view-edit .btn-next")
 const sumitBackBtn = document.querySelector("#view-submit .btn-back")
 const routeSummary = document.getElementById("route-summary")
+const routeSummaryPlan = document.getElementById("route-summary-plan")
 const submitUploadBtn = document.querySelector("#view-submit .btn-upload")
 const submitDownloadBtn = document.querySelector("#view-submit .btn-download")
 const submitComment = document.getElementById("submit-comment")
@@ -562,6 +577,7 @@ const unloadRoute = () => {
     relationId = null
     isCreating = false
     newRouteType = null
+    resetStopPlan()
     clearRouteData()
 }
 
@@ -867,24 +883,100 @@ const applySummaryChecks = () => {
     }
 }
 
+const ROLE_BADGES = {
+    entry_only: "pick up only",
+    exit_only: "set down only",
+}
+
+const stopMenu = (role, effectiveRole, repeated, first, last) => {
+    const roleItem = (value, label) =>
+        `<li><button type="button" class="dropdown-item${role === value ? " active" : ""}"
+            data-role="${value}">${label}</button></li>`
+
+    const actionItem = (action, label, shown = true) =>
+        shown ? `<li><button type="button" class="dropdown-item" data-action="${action}">${label}</button></li>` : ""
+
+    return `
+    <div class="dropdown d-inline-block stop-menu">
+        <button type="button" class="stop-menu-btn btn btn-link p-0 border-0 align-baseline"
+            data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}'
+            aria-expanded="false" title="Order and passengers at this stop">⋯</button>
+        <ul class="dropdown-menu dropdown-menu-end">
+            <li><h6 class="dropdown-header">Passengers</h6></li>
+            ${roleItem("auto", role === "auto" ? `Automatic <span class="text-body-secondary">(${ROLE_LABELS[effectiveRole].toLowerCase()})</span>` : "Automatic")}
+            ${roleItem("both", ROLE_LABELS.both)}
+            ${roleItem("entry_only", ROLE_LABELS.entry_only)}
+            ${roleItem("exit_only", ROLE_LABELS.exit_only)}
+            <li><hr class="dropdown-divider"></li>
+            ${actionItem("up", "Move up", !first)}
+            ${actionItem("down", "Move down", !last)}
+            ${actionItem("again", "Serve again")}
+            ${actionItem("remove", "Remove this visit", repeated)}
+        </ul>
+    </div>`
+}
+
+// A change to the plan only shows once the route has been worked out again, which can
+// take a couple of seconds; the summary is greyed out until then.
+const applyStopPlan = (plan) => {
+    setStopPlan(plan)
+    routeSummary.classList.add("route-summary-pending")
+    requestCalcBusRoute()
+}
+
+const processStopPlanStatus = (data) => {
+    if (!isStopPlanSet()) {
+        routeSummaryPlan.classList.add("d-none")
+        routeSummaryPlan.innerHTML = ""
+        return
+    }
+
+    const outOfPlace = visitsOutOfPlace(stopPlanPayload(), data.busStops.map(visitId))
+    const message = outOfPlace
+        ? `${outOfPlace === 1 ? "A stop" : `${outOfPlace} stops`} could not go where you put
+           ${outOfPlace === 1 ? "it" : "them"}: the route's ways only allow the order below.`
+        : "The stops are in the order you set."
+
+    routeSummaryPlan.className = `alert ${outOfPlace ? "alert-warning" : "alert-light"} small py-1 px-2 mb-2`
+    routeSummaryPlan.innerHTML = `${message}
+        <button type="button" class="btn btn-link btn-sm p-0 align-baseline">Reset to the route's order</button>`
+    routeSummaryPlan.querySelector("button").onclick = () => {
+        resetStopPlan()
+        routeSummary.classList.add("route-summary-pending")
+        requestCalcBusRoute()
+    }
+}
+
+let draggedIndex = null
+
 export const processRouteStops = (data) => {
     routeSummary.innerHTML = ""
+    routeSummary.classList.remove("route-summary-pending")
     if (activeView !== "submit") summaryCheckedIndex = -1
 
-    for (const collection of data.busStops) {
+    const ids = data.busStops.map(visitId)
+    const visitCounts = new Map()
+    for (const id of ids) visitCounts.set(id, (visitCounts.get(id) ?? 0) + 1)
+
+    const plan = planFromRoute(data.busStops)
+
+    for (const [index, collection] of data.busStops.entries()) {
         const { area, naptan } = stopSummary(collection)
         const isPlatform = collection.platform != null
         const isStop = collection.stop != null
         // not in OSM until upload, so there is nothing to link to yet
         const isNew = isNewStop(collection.platform)
+        const effectiveRole = data.busStopRoles?.[index] ?? "both"
+        const roleBadge = ROLE_BADGES[effectiveRole]
 
         routeSummary.appendChild(
             createElementFromHTML(`
         <div class="route-summary-item">
+            <span class="stop-drag" title="Drag to move this stop">⠿</span>
             <img class="stop-icon" src="/static/img/bus_stop.webp" alt="Bus stop icon" height="28">
             <div class="stop-name">${styleStopName(getBusCollectionName(collection))}${
                 isNew ? ' <span class="badge text-bg-warning stop-new-badge">new</span>' : ""
-            }</div>
+            }${roleBadge ? ` <span class="stop-role-badge">${roleBadge}</span>` : ""}</div>
             <div class="stop-info">
                 ${
                     isNew
@@ -906,23 +998,62 @@ export const processRouteStops = (data) => {
                 }<!--
                 -->${stopAreaLetter(area)}<!--
                 -->${naptanLetter(naptan)}<!--
-                -->${zoomButton()}
+                -->${zoomButton()}<!--
+                -->${stopMenu(
+                    plan[index].role,
+                    effectiveRole,
+                    visitCounts.get(ids[index]) > 1,
+                    index === 0,
+                    index === data.busStops.length - 1,
+                )}
             </div>
         </div>`),
         )
 
+        const item = routeSummary.lastElementChild
         const latLng = collection.platform?.latLng ?? collection.stop?.latLng
 
-        const zoomBtn = routeSummary.lastElementChild.querySelector(".stop-info-zoom")
+        const zoomBtn = item.querySelector(".stop-info-zoom")
         if (latLng) zoomBtn.onclick = () => map.setView(latLng, 19)
         else zoomBtn.remove()
+
+        for (const button of item.querySelectorAll(".stop-menu [data-role]"))
+            button.onclick = () => applyStopPlan(setRole(plan, index, button.dataset.role))
+
+        for (const button of item.querySelectorAll(".stop-menu [data-action]")) {
+            button.onclick = () => {
+                const action = button.dataset.action
+                if (action === "up") applyStopPlan(moveVisit(plan, index, index - 1))
+                else if (action === "down") applyStopPlan(moveVisit(plan, index, index + 1))
+                else if (action === "again") applyStopPlan(serveAgain(plan, index))
+                else if (action === "remove") applyStopPlan(removeVisit(plan, index))
+            }
+        }
+
+        // only the handle starts a drag, so the names can still be selected and clicked
+        const handle = item.querySelector(".stop-drag")
+        handle.onpointerdown = () => {
+            item.draggable = true
+        }
+        item.ondragstart = (e) => {
+            draggedIndex = index
+            e.dataTransfer.effectAllowed = "move"
+            e.dataTransfer.setData("text/plain", String(index))
+            item.classList.add("route-summary-item-dragging")
+        }
+        item.ondragend = () => {
+            item.draggable = false
+            draggedIndex = null
+            item.classList.remove("route-summary-item-dragging")
+            clearDropMarkers()
+        }
     }
 
     for (const [index, item] of routeSummary.querySelectorAll(".route-summary-item").entries()) {
         item.onclick = (e) => {
             e.stopPropagation()
 
-            if (e.target.closest("a, .stop-info-zoom")) return
+            if (e.target.closest("a, .stop-info-zoom, .stop-menu, .stop-drag")) return
 
             summaryCheckedIndex = index
             applySummaryChecks()
@@ -930,6 +1061,50 @@ export const processRouteStops = (data) => {
     }
 
     applySummaryChecks()
+    processStopPlanStatus(data)
+}
+
+const clearDropMarkers = () => {
+    for (const item of routeSummary.querySelectorAll(".route-summary-drop-before, .route-summary-drop-after"))
+        item.classList.remove("route-summary-drop-before", "route-summary-drop-after")
+}
+
+// where a drop over an item puts the dragged stop: before it, or after it
+const dropTarget = (e) => {
+    const item = e.target.closest?.(".route-summary-item")
+    if (!item) return null
+
+    const items = [...routeSummary.querySelectorAll(".route-summary-item")]
+    const rect = item.getBoundingClientRect()
+    const after = e.clientY > rect.top + rect.height / 2
+    return { item, index: items.indexOf(item), after }
+}
+
+routeSummary.ondragover = (e) => {
+    if (draggedIndex === null) return
+    const target = dropTarget(e)
+    if (!target) return
+
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "move"
+    clearDropMarkers()
+    target.item.classList.add(target.after ? "route-summary-drop-after" : "route-summary-drop-before")
+}
+
+routeSummary.ondrop = (e) => {
+    if (draggedIndex === null || routeData === null) return
+    const target = dropTarget(e)
+    if (!target) return
+
+    e.preventDefault()
+    clearDropMarkers()
+
+    // the position among the stops before the dragged one is taken out
+    let to = target.index + (target.after ? 1 : 0)
+    if (draggedIndex < to) to -= 1
+    if (to === draggedIndex) return
+
+    applyStopPlan(moveVisit(planFromRoute(routeData.busStops), draggedIndex, to))
 }
 
 sumitBackBtn.onclick = () => {

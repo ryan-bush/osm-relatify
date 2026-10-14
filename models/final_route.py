@@ -36,6 +36,9 @@ class FinalRoute:
 
     members: tuple[RelationMember, ...] = None
 
+    # what each of busStops is for passengers: 'both', 'entry_only' or 'exit_only'
+    busStopRoles: tuple[str, ...] = None
+
     warnings: tuple[FinalRouteWarning, ...] = None
 
     @property

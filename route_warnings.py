@@ -64,10 +64,11 @@ def _check_for_bus_stop_not_reached(
     route: FinalRoute,
     bus_stop_collections: list[FetchRelationBusStopCollection],
 ) -> FinalRouteWarning | None:
-    if len(route.busStops) == len(bus_stop_collections):
-        return None
+    # counting would not do: a stop the route serves twice can stand in for one it misses
     not_reached_bus_stop_ids: set[ElementId] = {collection.best.id for collection in bus_stop_collections}
     not_reached_bus_stop_ids.difference_update(collection.best.id for collection in route.busStops)
+    if not not_reached_bus_stop_ids:
+        return None
     return FinalRouteWarning(
         severity=WarningSeverity.HIGH,
         message='Some stops are not reached',
