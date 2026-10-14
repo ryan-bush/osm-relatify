@@ -125,9 +125,11 @@ function updateDownloadedArea() {
 
 export const downloadTrigger = (id) => {
     if (downloadTriggersData?.[id]) {
-        const newScheduledCells = downloadTriggersData[id].filter(
-            (cell) => !downloadingCells.includes(cell),
-        )
+        // compared by position: every way's cells are objects of their own, so the
+        // same cell asked for by neighbouring ways would otherwise be downloaded twice
+        const cellKey = ({ x, y }) => `${x},${y}`
+        const queued = new Set([...downloadingCells, ...scheduledCells].map(cellKey))
+        const newScheduledCells = downloadTriggersData[id].filter((cell) => !queued.has(cellKey(cell)))
         if (newScheduledCells.length > 0) {
             scheduledCells = scheduledCells.concat(newScheduledCells)
             processDownloadTriggers()
@@ -164,16 +166,32 @@ export const processDownloadTriggers = async (_retrying = false) => {
         }),
         signal: processDownloadTriggersAbortController.signal,
     })
-        .then((resp) => {
-            if (!resp.ok) {
+        .then(async (resp) => {
+            // a busy or unreachable server is worth asking again; one that refused the
+            // request will refuse it the same way every time
+            if (resp.status >= 500) {
                 console.error(resp)
                 throw new Error("HTTP error")
             }
 
-            return resp.json()
-        })
-        .then((data) => {
-            processFetchRelationData(data)
+            if (!resp.ok) {
+                finishDownload()
+                showMessage("danger", `❌ Download failed - ${resp.status}`, await resp.text())
+                return
+            }
+
+            const data = await resp.json()
+
+            // Past this point the answer is in hand, so a failure is in handling it, and
+            // asking again would only get the same answer and fail the same way, forever.
+            try {
+                processFetchRelationData(data)
+            } catch (error) {
+                console.error(error)
+                finishDownload()
+                showMessage("danger", "❌ Could not show the downloaded map data", error)
+                return
+            }
 
             downloadingCells = []
             updateDownloadViewButton()
@@ -191,6 +209,14 @@ export const processDownloadTriggers = async (_retrying = false) => {
                 hideDownloadBar()
             }
         })
+}
+
+// Gives up on the cells being downloaded, so a click at the edge can ask for them again.
+function finishDownload() {
+    downloadingCells = []
+    scheduledCells = []
+    updateDownloadViewButton()
+    hideDownloadBar()
 }
 
 // Everything in the map view at once, for a route too long to grow a few roads at a time
