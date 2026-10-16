@@ -31,11 +31,12 @@ NAPTAN_URL = 'https://naptan.api.dft.gov.uk/v1/access-nodes?dataFormat=csv'
 
 # on-street stops, and bays in a bus station
 _BUS_STOP_TYPES = frozenset(('BCT', 'BCS', 'BCQ'))
-# hail-and-ride and flexible stops have no single point to put on the map
-_POLELESS_BUS_STOP_TYPES = frozenset(('HAR', 'FLX'))
-# an unmarked stop, where buses halt on request with no pole or sign; still a place on
-# the map, but tagged so nobody goes looking for a pole
-_UNMARKED_BUS_STOP_TYPE = 'CUS'
+# a flexible stop is a zone the bus serves on demand, with no single point to put on the map
+_ZONE_BUS_STOP_TYPE = 'FLX'
+# an unmarked stop, where buses halt on request with no pole or sign, and a hail-and-ride
+# section, where they stop anywhere along the road and NaPTAN gives its middle; still a
+# place on the map, but tagged so nobody goes looking for a pole
+_POLELESS_BUS_STOP_TYPES = frozenset(('CUS', 'HAR'))
 
 _TAG_COLUMNS = (
     ('naptan:AtcoCode', 'ATCOCode'),
@@ -48,7 +49,7 @@ _TAG_COLUMNS = (
 
 # bumped whenever what the database stores changes, so an older one is rebuilt on start
 # rather than serving stale tags until the next daily refresh
-DATA_VERSION = 6
+DATA_VERSION = 7
 
 # a platform nearer than this to its stop position, or to the road, could be standing at
 # either kerb
@@ -70,7 +71,7 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     if (
         row['StopType'] not in _BUS_STOP_TYPES
         or row['Status'] != 'active'
-        or row['BusStopType'] in _POLELESS_BUS_STOP_TYPES
+        or row['BusStopType'] == _ZONE_BUS_STOP_TYPE
     ):
         return None
 
@@ -102,8 +103,8 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     if naptan_code := row['NaptanCode'].strip():
         tags['ref'] = naptan_code
 
-    if row['BusStopType'] == _UNMARKED_BUS_STOP_TYPE:
-        tags['naptan:BusStopType'] = _UNMARKED_BUS_STOP_TYPE
+    if row['BusStopType'] in _POLELESS_BUS_STOP_TYPES:
+        tags['naptan:BusStopType'] = row['BusStopType']
 
     # taken from NaPTAN rather than surveyed; a mapper removes it after checking the stop
     tags['naptan:verified'] = 'no'
