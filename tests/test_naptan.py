@@ -105,7 +105,6 @@ def test_empty_fields_are_left_out():
     [
         {'Status': 'inactive'},
         {'StopType': 'RSE'},
-        {'BusStopType': 'HAR'},
         {'BusStopType': 'FLX'},
         {'CommonName': ' '},
         {'Latitude': '', 'Easting': ''},
@@ -129,10 +128,11 @@ def test_a_backtick_in_the_name_becomes_an_apostrophe():
     assert tags['naptan:CommonName'] == 'St Mihangel`s Church'
 
 
-def test_unmarked_stop_is_kept_and_tagged_as_such():
-    tags = parse_row(_row(BusStopType='CUS')).tags
+@pytest.mark.parametrize('bus_stop_type', ['CUS', 'HAR'])
+def test_stop_without_a_pole_is_kept_and_tagged_as_such(bus_stop_type):
+    tags = parse_row(_row(BusStopType=bus_stop_type)).tags
 
-    assert tags['naptan:BusStopType'] == 'CUS'
+    assert tags['naptan:BusStopType'] == bus_stop_type
     assert tags['name'] == 'Union Grove'
 
 
