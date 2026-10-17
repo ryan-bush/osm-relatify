@@ -23,7 +23,7 @@ import {
     setRouteEditHandler,
     setRouteMasterView,
 } from "./masterPicker.js"
-import { hideDownloadBar, map, showDownloadBar } from "./map.js"
+import { hideDownloadBar, imageryUsedPayload, map, resetImageryUsed, showDownloadBar } from "./map.js"
 import {
     detachingRouteMasters,
     pendingRouteMaster,
@@ -1126,6 +1126,7 @@ submitUploadBtn.onclick = async () => {
             tags: relationTags,
             tagsOriginal: relationTagsOriginal,
             comment: submitComment.value,
+            imageryUsed: imageryUsedPayload(),
             newStops: newStopsPayload(),
             newStopPositions: stopPositionsPayload(),
             stopAreas: stopAreasPayload(createdPlaceholders()),
@@ -1173,6 +1174,8 @@ submitUploadBtn.onclick = async () => {
                 "✅ Upload successful",
                 `The changeset <a href="${osmUrl}/changeset/${data.changeset_id}" target="_blank">${data.changeset_id}</a> has been uploaded.${created}${revert}`,
             )
+
+            resetImageryUsed()
 
             // Stop areas are read back from Overpass, which is minutes behind: the next
             // variant of this line calls at the same places, and would be offered a

@@ -156,6 +156,18 @@ def test_naptan_is_still_credited_when_it_supplied_something():
     assert model.make_changeset_tags()['source'] == 'NaPTAN'
 
 
+def test_no_imagery_used_without_imagery():
+    assert 'imagery_used' not in make({'name': 'Bus 12'}).make_changeset_tags()
+
+
+def test_imagery_used_lists_each_layer_once():
+    model = make(
+        {'name': 'Bus 12'}, imageryUsed=['Esri World Imagery', ' ', 'Other Imagery', 'Esri World Imagery']
+    )
+
+    assert model.make_changeset_tags()['imagery_used'] == 'Esri World Imagery;Other Imagery'
+
+
 MASTER_TAGS = {'type': 'route_master', 'route_master': 'bus', 'ref': '12', 'name': 'Bus 12'}
 
 
