@@ -270,8 +270,8 @@ const removeGroupFromLayers = (id) => {
     idGroupMap.delete(id)
 }
 
-// the colours are chosen when a way is drawn, so a new base layer draws them all again
-map.on("baselayerchange", () => {
+// the colours are chosen when a way is drawn, so imagery coming or going draws them all again
+map.on("imagerychange", () => {
     if (!waysData) return
 
     idGroupMap = new Map()
