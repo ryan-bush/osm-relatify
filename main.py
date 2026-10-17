@@ -608,6 +608,8 @@ class PostDownloadOsmChangeModel(BaseModel):
     tagsOriginal: dict[str, str] | None = None
     # overrides the generated changeset comment when the user provides one
     comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
+    # names of the imagery layers shown on the map while this was edited
+    imageryUsed: list[str] = Field(default_factory=list, max_length=10)
     # bus stops placed on the map, created by this changeset
     newStops: list[NewBusStop] = Field(default_factory=list)
     # stop positions to put on the road, for new stops and for stops already in OSM
@@ -689,6 +691,9 @@ class PostDownloadOsmChangeModel(BaseModel):
             'naptan:AtcoCode' in stop.tags for stop in self.newStops
         ):
             tags['source'] = 'NaPTAN'
+
+        if imagery := ';'.join(dict.fromkeys(name.strip() for name in self.imageryUsed if name.strip())):
+            tags['imagery_used'] = imagery[:TAG_MAX_LENGTH]
 
         return tags
 

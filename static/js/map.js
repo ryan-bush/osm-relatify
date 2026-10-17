@@ -71,17 +71,49 @@ const baseLayers = {
         maxZoom: MAX_ZOOM,
         maxNativeZoom: MAX_TILE_ZOOM,
     }),
+    // Esri permits tracing its imagery into OSM; the name is what goes in imagery_used
+    "Esri World Imagery": L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        {
+            attribution:
+                'Imagery &copy; <a href="https://www.esri.com/" target="_blank">Esri</a> and its providers',
+            maxZoom: MAX_ZOOM,
+            maxNativeZoom: MAX_TILE_ZOOM,
+            imagery: true,
+        },
+    ),
 }
 
 const selectedBaseLayer = localStorage.getItem("baseLayer")
+let activeBaseLayerName = selectedBaseLayer in baseLayers ? selectedBaseLayer : "OpenStreetMap"
 
-if (selectedBaseLayer in baseLayers) baseLayers[selectedBaseLayer].addTo(map)
-else baseLayers.OpenStreetMap.addTo(map)
+baseLayers[activeBaseLayerName].addTo(map)
 
 L.control.layers(baseLayers).addTo(map)
 
+// the imagery shown since the last upload, which the next changeset credits
+const imageryUsed = new Set()
+
+export const isImageryActive = () => baseLayers[activeBaseLayerName].options.imagery === true
+
+const noteImageryUsed = () => {
+    if (isImageryActive()) imageryUsed.add(activeBaseLayerName)
+}
+
+noteImageryUsed()
+
+export const imageryUsedPayload = () => [...imageryUsed]
+
+// after an upload, only what stays on screen is used for the next one
+export function resetImageryUsed() {
+    imageryUsed.clear()
+    noteImageryUsed()
+}
+
 map.on("baselayerchange", (e) => {
     localStorage.setItem("baseLayer", e.name)
+    activeBaseLayerName = e.name
+    noteImageryUsed()
 })
 
 // map controls
