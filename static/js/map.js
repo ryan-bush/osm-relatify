@@ -19,10 +19,21 @@ export const canvasRenderer = L.canvas({
     padding: 0,
 })
 
+// Neither tile server draws past z19, so beyond that the z19 tiles are stretched rather
+// than asked for tiles that do not exist. Blurry, but the two sides of a road and the
+// stop position between them are far easier to tell apart with the room to spare.
+const MAX_ZOOM = 21
+const MAX_TILE_ZOOM = 19
+const IMAGERY_MIN_ZOOM = 17
+
 export const map = L.map("map", {
     center: [defaultLat, defaultLng],
     zoom: defaultZoom,
     zoomControl: false,
+    // Fixed, rather than taken from the tile layers: the imagery's two halves each cover
+    // only part of the range, and switching to it would zoom the map into their limits.
+    minZoom: 0,
+    maxZoom: MAX_ZOOM,
 })
 
 // openstreetmap-like url hash
@@ -53,13 +64,6 @@ map.on("contextmenu", (e) => {
 
 // map tiles
 const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-
-// Neither tile server draws past z19, so beyond that the z19 tiles are stretched rather
-// than asked for tiles that do not exist. Blurry, but the two sides of a road and the
-// stop position between them are far easier to tell apart with the room to spare.
-const MAX_ZOOM = 21
-const MAX_TILE_ZOOM = 19
-const IMAGERY_MIN_ZOOM = 17
 
 const baseLayers = {
     OpenStreetMap: L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
