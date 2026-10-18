@@ -356,12 +356,15 @@ const makeCandidateChooser = () => {
                     },
                     { primary: true },
                 ),
+            // an answer can still be asked for again: the master may have been made, or
+            // the area grown, since the one that came down with the download
             ref &&
-                unanswered &&
                 !searching &&
-                makeButton("Find route masters", searchRouteMasters, {
-                    primary: true,
-                }),
+                makeButton(
+                    unanswered ? "Find route masters" : "Search again",
+                    searchRouteMasters,
+                    { primary: unanswered },
+                ),
             makeButton("Create one", () => {
                 createRouteMaster(routeTags)
                 changed()
