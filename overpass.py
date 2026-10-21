@@ -2,6 +2,7 @@ import asyncio
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import chain
@@ -20,8 +21,9 @@ from config import (
     DOWNLOAD_RELATION_GRID_SIZE,
     DOWNLOAD_RELATION_WAY_BB_EXPAND,
     OVERPASS_API_ATTEMPTS,
-    OVERPASS_API_INTERPRETERS,
+    OVERPASS_INSTANCES,
     OVERPASS_MAX_DATA_AGE,
+    OverpassInstance,
 )
 from driving_side import DrivingSide, build_driving_side_statements, parse_driving_side
 from models.bounding_box import BoundingBox
@@ -48,6 +50,9 @@ from xmltodict_postprocessor import postprocessor
 # (rate limit, gateway timeout, server overloaded); retry and fall back to the
 # other configured instances instead of failing the whole request.
 _RETRY_STATUS_CODES = frozenset((429, 502, 503, 504))
+
+# what an instance that needs a key answers when it does not accept the one it was sent
+_KEY_REFUSED_STATUS_CODES = frozenset((401, 403))
 
 
 class OverpassReplyError(Exception):
@@ -129,17 +134,17 @@ _MAX_SLOT_WAIT = 20.0
 _CONNECT_TIMEOUT = 5.0
 
 
-async def slot_wait(url: str) -> float | None:
+async def slot_wait(instance: OverpassInstance) -> float | None:
     """
     How many seconds until this instance has a free query slot, or None when it cannot say.
 
     0 means one is free already, which happens when the slot that refused the query has
     since been given back.
     """
-    status_url = url.removesuffix('/').removesuffix('interpreter') + 'status'
+    status_url = instance.url.removesuffix('/').removesuffix('interpreter') + 'status'
 
     try:
-        r = await HTTP.get(status_url, timeout=10)
+        r = await HTTP.get(status_url, headers=instance.headers, timeout=10)
         r.raise_for_status()
     except httpx.HTTPError:
         return None
@@ -201,6 +206,23 @@ def describe_transport_error(error: BaseException) -> str:
     return f'{type(error).__name__}: {error}' if str(error) else type(error).__name__
 
 
+# The instance the person asked for in the navbar, set per request by
+# OverpassChoiceMiddleware. None tries every instance in order.
+OVERPASS_CHOICE: ContextVar[str | None] = ContextVar('OVERPASS_CHOICE', default=None)
+
+
+def overpass_instances() -> tuple[OverpassInstance, ...]:
+    """
+    The instances to try for this request.
+
+    A chosen instance is used on its own, with no fallback: choosing one is how to see
+    what it answers, and quietly asking another when it fails would hide exactly that.
+    """
+    choice = OVERPASS_CHOICE.get()
+    chosen = tuple(i for i in OVERPASS_INSTANCES if i.name == choice)
+    return chosen or OVERPASS_INSTANCES
+
+
 async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
     last_error: Exception | None = None
     # whether any instance answered at all, whatever it said: none did points at the
@@ -209,7 +231,9 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
     # the least far behind of the instances that answered but are too old to use
     stale: tuple[float, str] | None = None
 
-    for url in OVERPASS_API_INTERPRETERS:
+    for instance in overpass_instances():
+        url, name = instance.url, instance.name
+
         for attempt in range(1, OVERPASS_API_ATTEMPTS + 1):
             # how long this instance said to wait for a free slot, used in place of the
             # backoff below once it has answered a 429
@@ -222,22 +246,32 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                 r = await HTTP.post(
                     url,
                     data={'data': query},
+                    headers=instance.headers,
                     timeout=httpx.Timeout(query_timeout * 2, connect=_CONNECT_TIMEOUT),
                 )
             except httpx.HTTPError as e:
                 last_error = e
-                print(f'[OVERPASS] ⚠️ {url} unreachable (attempt {attempt}): {describe_transport_error(e)}')
+                print(f'[OVERPASS] ⚠️ {name} unreachable (attempt {attempt}): {describe_transport_error(e)}')
             else:
                 answered = True
 
+                if r.status_code in _KEY_REFUSED_STATUS_CODES:
+                    # a key that has lapsed or been mistyped is refused every time, so
+                    # the remaining attempts on it are skipped
+                    last_error = httpx.HTTPStatusError(
+                        f'{name} refused the key ({r.status_code})', request=r.request, response=r
+                    )
+                    print(f'[OVERPASS] ⚠️ {name} refused the key ({r.status_code}), trying another instance')
+                    break
+
                 if r.status_code in _RETRY_STATUS_CODES:
                     last_error = httpx.HTTPStatusError(
-                        f'{url} returned {r.status_code}', request=r.request, response=r
+                        f'{name} returned {r.status_code}', request=r.request, response=r
                     )
-                    print(f'[OVERPASS] ⚠️ {url} returned {r.status_code} (attempt {attempt})')
+                    print(f'[OVERPASS] ⚠️ {name} returned {r.status_code} (attempt {attempt})')
 
                     if r.status_code == 429:
-                        wait_for_slot = await slot_wait(url)
+                        wait_for_slot = await slot_wait(instance)
 
                         # Another instance is quicker than sitting out a long query
                         # someone else is running, and an instance that will not say is
@@ -248,12 +282,12 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                                 if wait_for_slot is None
                                 else f'has no slot for another {wait_for_slot:.0f}s'
                             )
-                            print(f'[OVERPASS] ⚠️ {url} {said}, trying another instance')
+                            print(f'[OVERPASS] ⚠️ {name} {said}, trying another instance')
                             break
 
                 elif (reported := reply_error(r)) is not None:
-                    last_error = OverpassReplyError(f'{url} reported: {reported}')
-                    print(f'[OVERPASS] ⚠️ {url} answered 200 with an error (attempt {attempt}): {reported}')
+                    last_error = OverpassReplyError(f'{name} reported: {reported}')
+                    print(f'[OVERPASS] ⚠️ {name} answered 200 with an error (attempt {attempt}): {reported}')
 
                 else:
                     r.raise_for_status()
@@ -265,9 +299,9 @@ async def overpass_post(query: str, query_timeout: float) -> httpx.Response:
                     # An instance this far behind answers everything successfully and
                     # wrongly, so it is passed over for one that has caught up. Waiting
                     # would not help, so the remaining attempts on it are skipped.
-                    print(f'[OVERPASS] ⚠️ {url} is {_describe_age(age)} behind, trying another instance')
+                    print(f'[OVERPASS] ⚠️ {name} is {_describe_age(age)} behind, trying another instance')
                     if stale is None or age < stale[0]:
-                        stale = (age, url)
+                        stale = (age, name)
                     break
 
             if attempt < OVERPASS_API_ATTEMPTS:

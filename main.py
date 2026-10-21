@@ -32,6 +32,8 @@ from config import (
     OSM_SCOPES,
     OSM_SECRET,
     OSM_URL,
+    OVERPASS_INSTANCE_COOKIE,
+    OVERPASS_INSTANCES,
     TAG_MAX_LENGTH,
     TEST_ENV,
     WEBSITE,
@@ -57,6 +59,7 @@ from naptan import NAPTAN, Roads
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
+from overpass_choice_middleware import OverpassChoiceMiddleware
 from placeholder_ids import RelationPlaceholders
 from relation_builder import (
     build_osm_change,
@@ -89,6 +92,8 @@ _TEMPLATES.env.globals.update(
     osm_is_live=OSM_IS_LIVE,
     app_version=APP_VERSION,
     download_grid_size=DOWNLOAD_RELATION_GRID_SIZE,
+    overpass_instance_names=[i.name for i in OVERPASS_INSTANCES],
+    overpass_instance_cookie=OVERPASS_INSTANCE_COOKIE,
 )
 
 _PROCESS_EXECUTOR = ProcessPoolExecutor(CALC_ROUTE_MAX_PROCESSES)
@@ -117,6 +122,7 @@ app = FastAPI(
     redoc_url=None,
 )
 app.router.route_class = DeflateRoute
+app.add_middleware(OverpassChoiceMiddleware)
 
 
 class RevalidatedStaticFiles(StaticFiles):

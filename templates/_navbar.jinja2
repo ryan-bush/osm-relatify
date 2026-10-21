@@ -62,6 +62,18 @@
 
         <ul class="navbar-nav ms-auto">
             <li class="nav-item d-flex align-items-center">
+                {% if overpass_instance_names | length > 1 %}
+                {% set chosen = request.cookies.get(overpass_instance_cookie) %}
+                <select id="overpass-instance" class="form-select form-select-sm w-auto me-2"
+                    data-cookie="{{ overpass_instance_cookie }}"
+                    title="Which Overpass instance map data comes from">
+                    <option value="">Overpass: automatic</option>
+                    {% for name in overpass_instance_names %}
+                    <option value="{{ name }}" {{ 'selected' if name == chosen }}>Overpass: {{ name }}</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
+
                 {% if not osm_is_live %}
                 <span class="badge text-bg-warning me-2" title="Uploads go to {{ osm_url }}, not live OpenStreetMap">
                     {{ osm_url | replace('https://', '') }}

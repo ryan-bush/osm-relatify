@@ -1,7 +1,11 @@
 import os
 import secrets
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
+from typing import NamedTuple
+from urllib.parse import urlsplit
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -108,8 +112,52 @@ OVERPASS_API_INTERPRETER = os.getenv(
     'https://overpass-api.de/api/interpreter,'
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 )
-OVERPASS_API_INTERPRETERS = tuple(u.strip() for u in OVERPASS_API_INTERPRETER.split(',') if u.strip())
-assert OVERPASS_API_INTERPRETERS, 'OVERPASS_API_INTERPRETER must contain at least one URL'
+
+
+class OverpassInstance(NamedTuple):
+    url: str
+    # what logs, error messages and the instance picker call it, and what the picker's
+    # cookie stores; a keyed URL carries its key, so never the URL
+    name: str
+    headers: Mapping[str, str] = MappingProxyType({})
+
+
+# Instances that need a key of their own, tried ahead of the public ones when their key
+# is set. Fewer people share them, so they are less often the busy one; the data age
+# check below still applies to them.
+#
+# NextGIS (https://overpass.nextgis.com) puts the key in the path: the URL it gives out
+# is https://overpass.nextgis.com/my-<key>/api/interpreter, and the key is the part
+# after "my-". FairwayMapper (https://www.fairwaymapper.com) hands out free keys to OSM
+# contributors, sent as a bearer token.
+OVERPASS_NEXTGIS_KEY = os.getenv('OVERPASS_NEXTGIS_KEY', '').strip()
+OVERPASS_FAIRWAYMAPPER_KEY = os.getenv('OVERPASS_FAIRWAYMAPPER_KEY', '').strip()
+
+_keyed_overpass_instances: list[OverpassInstance] = []
+if OVERPASS_NEXTGIS_KEY:
+    _keyed_overpass_instances.append(
+        OverpassInstance(
+            f'https://overpass.nextgis.com/my-{OVERPASS_NEXTGIS_KEY}/api/interpreter',
+            'overpass.nextgis.com',
+        )
+    )
+if OVERPASS_FAIRWAYMAPPER_KEY:
+    _keyed_overpass_instances.append(
+        OverpassInstance(
+            'https://api.fairwaymapper.com/api/interpreter',
+            'api.fairwaymapper.com',
+            MappingProxyType({'Authorization': f'Bearer {OVERPASS_FAIRWAYMAPPER_KEY}'}),
+        )
+    )
+
+OVERPASS_INSTANCES = (
+    *_keyed_overpass_instances,
+    *(OverpassInstance(u, urlsplit(u).netloc or u) for u in (u.strip() for u in OVERPASS_API_INTERPRETER.split(',')) if u),
+)
+assert OVERPASS_INSTANCES, 'OVERPASS_API_INTERPRETER must contain at least one URL'
+
+# the cookie the navbar's instance picker sets; unset or unknown means every instance in order
+OVERPASS_INSTANCE_COOKIE = 'overpass_instance'
 
 # Number of attempts per endpoint before moving on to the next one
 OVERPASS_API_ATTEMPTS = int(os.getenv('OVERPASS_API_ATTEMPTS', '2'))
