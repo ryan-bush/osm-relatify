@@ -19,10 +19,21 @@ export const canvasRenderer = L.canvas({
     padding: 0,
 })
 
+// Neither tile server draws past z19, so beyond that the z19 tiles are stretched rather
+// than asked for tiles that do not exist. Blurry, but the two sides of a road and the
+// stop position between them are far easier to tell apart with the room to spare.
+const MAX_ZOOM = 21
+const MAX_TILE_ZOOM = 19
+const IMAGERY_MIN_ZOOM = 17
+
 export const map = L.map("map", {
     center: [defaultLat, defaultLng],
     zoom: defaultZoom,
     zoomControl: false,
+    // Fixed, rather than taken from the tile layers: the imagery's two halves each cover
+    // only part of the range, and switching to it would zoom the map into their limits.
+    minZoom: 0,
+    maxZoom: MAX_ZOOM,
 })
 
 // openstreetmap-like url hash
@@ -54,12 +65,6 @@ map.on("contextmenu", (e) => {
 // map tiles
 const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 
-// Neither tile server draws past z19, so beyond that the z19 tiles are stretched rather
-// than asked for tiles that do not exist. Blurry, but the two sides of a road and the
-// stop position between them are far easier to tell apart with the room to spare.
-const MAX_ZOOM = 21
-const MAX_TILE_ZOOM = 19
-
 const baseLayers = {
     OpenStreetMap: L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: attribution,
@@ -71,18 +76,77 @@ const baseLayers = {
         maxZoom: MAX_ZOOM,
         maxNativeZoom: MAX_TILE_ZOOM,
     }),
+    // Esri permits tracing its imagery into OSM. It is there for placing stops, so it only
+    // shows from IMAGERY_MIN_ZOOM: further out the OSM map is drawn in its place.
+    "Esri World Imagery (zoom 17+)": L.layerGroup(
+        [
+            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                attribution: attribution,
+                maxZoom: IMAGERY_MIN_ZOOM - 1,
+            }),
+            L.tileLayer(
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                {
+                    attribution:
+                        'Imagery &copy; <a href="https://www.esri.com/" target="_blank">Esri</a> and its providers',
+                    minZoom: IMAGERY_MIN_ZOOM,
+                    maxZoom: MAX_ZOOM,
+                    maxNativeZoom: MAX_TILE_ZOOM,
+                },
+            ),
+        ],
+        // what goes in imagery_used
+        { imagery: "Esri World Imagery" },
+    ),
 }
 
 const selectedBaseLayer = localStorage.getItem("baseLayer")
+let activeBaseLayerName = selectedBaseLayer in baseLayers ? selectedBaseLayer : "OpenStreetMap"
 
-if (selectedBaseLayer in baseLayers) baseLayers[selectedBaseLayer].addTo(map)
-else baseLayers.OpenStreetMap.addTo(map)
+baseLayers[activeBaseLayerName].addTo(map)
 
 L.control.layers(baseLayers).addTo(map)
 
+// the imagery shown since the last upload, which the next changeset credits
+const imageryUsed = new Set()
+
+const shownImagery = () =>
+    map.getZoom() >= IMAGERY_MIN_ZOOM ? baseLayers[activeBaseLayerName].options.imagery : undefined
+
+export const isImageryActive = () => shownImagery() !== undefined
+
+const noteImageryUsed = () => {
+    if (isImageryActive()) imageryUsed.add(shownImagery())
+}
+
+noteImageryUsed()
+
+export const imageryUsedPayload = () => [...imageryUsed]
+
+// after an upload, only what stays on screen is used for the next one
+export function resetImageryUsed() {
+    imageryUsed.clear()
+    noteImageryUsed()
+}
+
+// "imagerychange" tells the layers drawn over the map when imagery comes or goes, be it
+// from picking another base layer or from zooming across IMAGERY_MIN_ZOOM
+let imageryWasActive = isImageryActive()
+
+const onImageryMaybeChanged = () => {
+    noteImageryUsed()
+    if (isImageryActive() === imageryWasActive) return
+    imageryWasActive = isImageryActive()
+    map.fire("imagerychange")
+}
+
 map.on("baselayerchange", (e) => {
     localStorage.setItem("baseLayer", e.name)
+    activeBaseLayerName = e.name
+    onImageryMaybeChanged()
 })
+
+map.on("zoomend", onImageryMaybeChanged)
 
 // map controls
 L.control.zoom({ position: "topright" }).addTo(map)

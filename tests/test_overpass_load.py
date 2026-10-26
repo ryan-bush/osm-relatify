@@ -13,6 +13,7 @@ import asyncio
 import httpx
 import pytest
 
+from config import OverpassInstance
 from models.bounding_box import BoundingBox
 from overpass import (
     _MAX_SLOT_WAIT,
@@ -39,6 +40,7 @@ Rate limit: 2
 """
 
 URL = 'https://overpass-api.de/api/interpreter'
+INSTANCE = OverpassInstance(URL, URL)
 
 
 def _status(monkeypatch, handler):
@@ -61,30 +63,30 @@ class TestSlotWait:
             return httpx.Response(200, text=FREE_STATUS, request=httpx.Request('GET', url))
 
         _status(monkeypatch, handler)
-        asyncio.run(slot_wait(URL))
+        asyncio.run(slot_wait(INSTANCE))
 
         assert asked == ['https://overpass-api.de/api/status']
 
     def test_reads_how_long_until_a_slot_frees_up(self, monkeypatch):
         _status(monkeypatch, _ok(BUSY_STATUS))
 
-        assert asyncio.run(slot_wait(URL)) == 12
+        assert asyncio.run(slot_wait(INSTANCE)) == 12
 
     def test_a_slot_that_is_free_again_is_no_wait_at_all(self, monkeypatch):
         _status(monkeypatch, _ok(FREE_STATUS))
 
-        assert asyncio.run(slot_wait(URL)) == 0
+        assert asyncio.run(slot_wait(INSTANCE)) == 0
 
     def test_the_free_line_is_read_rather_than_just_matched(self, monkeypatch):
         """Both lines appear together, and none free is a wait, not a slot."""
         _status(monkeypatch, _ok('0 slots available now.\nSlot available after: now, in 9 seconds.'))
 
-        assert asyncio.run(slot_wait(URL)) == 9
+        assert asyncio.run(slot_wait(INSTANCE)) == 9
 
     def test_an_instance_that_does_not_say_is_not_waited_for(self, monkeypatch):
         _status(monkeypatch, _ok('nothing useful here'))
 
-        assert asyncio.run(slot_wait(URL)) is None
+        assert asyncio.run(slot_wait(INSTANCE)) is None
 
     def test_a_status_endpoint_that_is_down_is_not_waited_for(self, monkeypatch):
         def handler(url):
@@ -92,7 +94,7 @@ class TestSlotWait:
 
         _status(monkeypatch, handler)
 
-        assert asyncio.run(slot_wait(URL)) is None
+        assert asyncio.run(slot_wait(INSTANCE)) is None
 
 
 class TestWaitingForASlot:
@@ -111,7 +113,7 @@ class TestWaitingForASlot:
         async def fake_sleep(delay):
             slept.append(delay)
 
-        async def fake_slot_wait(url):  # noqa: ARG001
+        async def fake_slot_wait(instance):  # noqa: ARG001
             return slot
 
         monkeypatch.setattr('overpass.HTTP.post', fake_post)

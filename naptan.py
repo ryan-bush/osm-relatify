@@ -23,6 +23,7 @@ from models.download_history import DownloadHistory
 from models.fetch_relation import FetchRelationBusStopCollection
 from models.naptan_stop import NaptanStop, NaptanTagSuggestion
 from naptan_tags import differing_tags, indicator_letter, missing_tags, stop_letter
+from osgb import grid_to_lat_lng
 from overpass import optimize_cells_and_get_bbs
 from utils import HTTP, normalize_name
 
@@ -30,11 +31,12 @@ NAPTAN_URL = 'https://naptan.api.dft.gov.uk/v1/access-nodes?dataFormat=csv'
 
 # on-street stops, and bays in a bus station
 _BUS_STOP_TYPES = frozenset(('BCT', 'BCS', 'BCQ'))
-# hail-and-ride and flexible stops have no single point to put on the map
-_POLELESS_BUS_STOP_TYPES = frozenset(('HAR', 'FLX'))
-# an unmarked stop, where buses halt on request with no pole or sign; still a place on
-# the map, but tagged so nobody goes looking for a pole
-_UNMARKED_BUS_STOP_TYPE = 'CUS'
+# a flexible stop is a zone the bus serves on demand, with no single point to put on the map
+_ZONE_BUS_STOP_TYPE = 'FLX'
+# an unmarked stop, where buses halt on request with no pole or sign, and a hail-and-ride
+# section, where they stop anywhere along the road and NaPTAN gives its middle; still a
+# place on the map, but tagged so nobody goes looking for a pole
+_POLELESS_BUS_STOP_TYPES = frozenset(('CUS', 'HAR'))
 
 _TAG_COLUMNS = (
     ('naptan:AtcoCode', 'ATCOCode'),
@@ -47,7 +49,7 @@ _TAG_COLUMNS = (
 
 # bumped whenever what the database stores changes, so an older one is rebuilt on start
 # rather than serving stale tags until the next daily refresh
-DATA_VERSION = 5
+DATA_VERSION = 7
 
 # a platform nearer than this to its stop position, or to the road, could be standing at
 # either kerb
@@ -69,14 +71,22 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     if (
         row['StopType'] not in _BUS_STOP_TYPES
         or row['Status'] != 'active'
-        or row['BusStopType'] in _POLELESS_BUS_STOP_TYPES
+        or row['BusStopType'] == _ZONE_BUS_STOP_TYPE
     ):
         return None
 
     # NaPTAN writes an apostrophe as a backtick, "St Mihangel`s Church"; naptan:CommonName
     # below keeps it as NaPTAN has it
     name = row['CommonName'].strip().replace('`', "'")
-    if not name or not row['Latitude'] or not row['Longitude']:
+    if not name:
+        return None
+
+    if (lat := row['Latitude'].strip()) and (lon := row['Longitude'].strip()):
+        lat_lng = (float(lat), float(lon))
+    # some areas, Shropshire and much of Scotland among them, give only a grid reference
+    elif (easting := row['Easting'].strip()) and (northing := row['Northing'].strip()):
+        lat_lng = grid_to_lat_lng(float(easting), float(northing))
+    else:
         return None
 
     indicator = row['Indicator'].strip()
@@ -93,8 +103,8 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
     if naptan_code := row['NaptanCode'].strip():
         tags['ref'] = naptan_code
 
-    if row['BusStopType'] == _UNMARKED_BUS_STOP_TYPE:
-        tags['naptan:BusStopType'] = _UNMARKED_BUS_STOP_TYPE
+    if row['BusStopType'] in _POLELESS_BUS_STOP_TYPES:
+        tags['naptan:BusStopType'] = row['BusStopType']
 
     # taken from NaPTAN rather than surveyed; a mapper removes it after checking the stop
     tags['naptan:verified'] = 'no'
@@ -103,7 +113,7 @@ def parse_row(row: dict[str, str]) -> NaptanStop | None:
         atcoCode=row['ATCOCode'].strip(),
         name=name,
         indicator=indicator,
-        latLng=(float(row['Latitude']), float(row['Longitude'])),
+        latLng=lat_lng,
         tags=tags,
     )
 

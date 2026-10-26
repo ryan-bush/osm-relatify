@@ -1,6 +1,6 @@
 import { updateBusStopsVisibility } from "./busStopsLayer.js"
 import { downloadTrigger } from "./downloadTriggers.js"
-import { canvasRenderer, map } from "./map.js"
+import { canvasRenderer, isImageryActive, map } from "./map.js"
 import { showContextMenu, startWay, stopWay } from "./waysEndpoint.js"
 import { requestCalcBusRoute } from "./waysRoute.js"
 import {
@@ -149,10 +149,12 @@ function updateWaysVisibility() {
 const addWay = (way) => {
     if (idGroupMap.has(way.id)) return
 
-    const lineColor = way.member ? "orangered" : "#444"
-    const lineHoverColor = way.member ? "darkred" : "#000"
+    // the dark grey of ways not in the route is lost on imagery, so they turn light there
+    const imagery = isImageryActive()
+    const lineColor = way.member ? "orangered" : imagery ? "#f8f9fa" : "#444"
+    const lineHoverColor = way.member ? (imagery ? "#ffd8a8" : "darkred") : imagery ? "#fff" : "#000"
     const lineWeight = way.member ? 7 : 5
-    const opacity = way.member ? 1 : 0.55
+    const opacity = way.member ? 1 : imagery ? 0.7 : 0.55
 
     const line = L.polyline(way.latLngs, {
         renderer: canvasRenderer,
@@ -267,6 +269,15 @@ const removeGroupFromLayers = (id) => {
 
     idGroupMap.delete(id)
 }
+
+// the colours are chosen when a way is drawn, so imagery coming or going draws them all again
+map.on("imagerychange", () => {
+    if (!waysData) return
+
+    idGroupMap = new Map()
+    waysLayer.clearLayers()
+    updateWaysVisibility()
+})
 
 function fitToBounds(bounds) {
     const southWest = L.latLng(bounds.minlat, bounds.minlon)

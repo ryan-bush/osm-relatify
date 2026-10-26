@@ -1,5 +1,6 @@
 import asyncio
 import time
+from collections import Counter
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
@@ -15,6 +16,7 @@ from cython_lib.geoutils import haversine_distance
 from models.element_id import ElementId
 from models.fetch_relation import FetchRelationBusStopCollection, FetchRelationElement
 from models.final_route import FinalRoute, FinalRouteWay
+from models.stop_plan import StopPlanEntry
 from relation_builder import SortedBusEntry, sort_bus_on_path
 from utils import print_run_time
 
@@ -890,11 +892,160 @@ def insert_skipped_detours(
     return _with_path(best_path, path, ways, id_sorted_bus_map)
 
 
+def route_stop_visits(
+    path: Sequence[GraphKey],
+    id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]],
+    repeats: dict[ElementId, int],
+) -> list[ElementId]:
+    """The stops the route lists, in the order it reaches them.
+
+    A stop is listed where the route first serves it, or where it first passes it if it
+    only ever passes on the wrong side. A stop the mapper has the bus serve more than once
+    is listed again at as many of the later times it is served as they asked for.
+    """
+    served_at: dict[ElementId, list[int]] = {}
+    passed_at: dict[ElementId, int] = {}
+    position = 0
+
+    for key in path:
+        visited_bus_stops, almost_visited_bus_stops = get_bus_stops_at(key, id_sorted_bus_map)
+        for b in visited_bus_stops:
+            served_at.setdefault(b.bus_stop_collection.best.id, []).append(position)
+            position += 1
+        for b in almost_visited_bus_stops:
+            passed_at.setdefault(b.bus_stop_collection.best.id, position)
+            position += 1
+
+    positions = {position: stop_id for stop_id, position in passed_at.items() if stop_id not in served_at}
+    for stop_id, served_positions in served_at.items():
+        for position in served_positions[: max(repeats.get(stop_id, 1), 1)]:
+            positions[position] = stop_id
+
+    return [positions[position] for position in sorted(positions)]
+
+
+def _in_order_count(plan: Sequence[ElementId], visits: Sequence[ElementId]) -> int:
+    """How many of the planned visits the route makes in the planned order: their longest common subsequence."""
+    row = [0] * (len(plan) + 1)
+
+    for visit in visits:
+        diagonal = 0
+        for j, planned in enumerate(plan, 1):
+            above = row[j]
+            if planned == visit:
+                row[j] = diagonal + 1
+            elif row[j - 1] > above:
+                row[j] = row[j - 1]
+            diagonal = above
+
+    return row[-1]
+
+
+def stops_out_of_order(plan: Sequence[ElementId], visits: Sequence[ElementId]) -> int:
+    """How many of the planned visits the route does not make where the plan has them."""
+    return len(plan) - _in_order_count(plan, visits)
+
+
+# The most time spent rearranging the route to follow the mapper's stop order.
+FOLLOW_STOP_PLAN_TIME = 0.5  # seconds; with MAX_SEARCH_TIME, must stay below the request timeout in main.py
+
+
+def follow_stop_plan(
+    best_path: BestPath,
+    graph: dict[GraphKey, GraphValue],
+    ways: dict[ElementId, FetchRelationElement],
+    id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]],
+    plan: Sequence[ElementId],
+) -> BestPath:
+    """Drive the loops of the route on the passes that serve the stops in the mapper's order.
+
+    A route often goes through one point more than once - into a village and out again -
+    and a loop off that point, like a lane the bus runs up and back down, can be driven on
+    any of those passes. The search has no reason to prefer one: through Worton, the lane
+    to Marston can be served on the way in or on the way out. Moving a loop to another pass
+    drives the same ways and serves the same stops; only the order they come in changes,
+    and the order is what the mapper set.
+    """
+    if not plan:
+        return best_path
+
+    deadline = time.monotonic() + FOLLOW_STOP_PLAN_TIME
+    repeats = Counter(plan)
+
+    def exit_point(key: GraphKey) -> tuple[float, float]:
+        lat_lngs = ways[key.way_id].latLngs
+        return lat_lngs[-1] if key.is_start else lat_lngs[0]
+
+    def joins(before: GraphKey, after: GraphKey) -> bool:
+        return after in graph[before._replace(is_start=not before.is_start)].connected_to
+
+    def out_of_order(path: Sequence[GraphKey]) -> int:
+        return stops_out_of_order(plan, route_stop_visits(path, id_sorted_bus_map, repeats))
+
+    path = best_path.path
+    current = out_of_order(path)
+
+    while current and time.monotonic() < deadline:
+        # how many ways with a stop come before each index; a loop without one cannot change the order
+        stop_ways_before = [0]
+        for key in path:
+            stop_ways_before.append(stop_ways_before[-1] + (key.way_id in id_sorted_bus_map))
+
+        # the indexes of the ways the route leaves each point by
+        passes: dict[tuple[float, float], list[int]] = {}
+        for index, key in enumerate(path[:-1]):
+            passes.setdefault(exit_point(key), []).append(index)
+
+        best: tuple[int, tuple[GraphKey, ...]] | None = None
+
+        for indexes in passes.values():
+            for i, start in enumerate(indexes):
+                for end in indexes[i + 1 :]:
+                    # the loop is path[start + 1 : end + 1], leaving the point and coming back to it
+                    if stop_ways_before[end + 1] == stop_ways_before[start + 1]:
+                        continue
+                    # without it, the way after it has to follow straight on from the way before it
+                    if not joins(path[start], path[end + 1]):
+                        continue
+
+                    loop = path[start + 1 : end + 1]
+
+                    for other in indexes:
+                        if start <= other <= end:
+                            continue
+                        if not (joins(path[other], loop[0]) and joins(loop[-1], path[other + 1])):
+                            continue
+
+                        if other < start:
+                            candidate = (*path[: other + 1], *loop, *path[other + 1 : start + 1], *path[end + 1 :])
+                        else:
+                            candidate = (*path[: start + 1], *path[end + 1 : other + 1], *loop, *path[other + 1 :])
+
+                        cost = out_of_order(candidate)
+                        if cost < current and (best is None or cost < best[0]):
+                            best = (cost, candidate)
+
+            if time.monotonic() >= deadline:
+                break
+
+        if best is None:
+            break
+
+        current, path = best
+
+    if path is best_path.path:
+        return best_path
+
+    return _with_path(best_path, path, ways, id_sorted_bus_map)
+
+
 def finalize_route(
     best_path: BestPath,
     ways: dict[ElementId, FetchRelationElement],
     bus_stop_collections: Sequence[FetchRelationBusStopCollection],
     tags: dict[str, str],
+    id_sorted_bus_map: dict[ElementId, list[SortedBusEntry]],
+    stop_plan: Sequence[StopPlanEntry] = (),
 ) -> FinalRoute:
     route_ways = tuple(
         FinalRouteWay(
@@ -918,7 +1069,9 @@ def finalize_route(
 
     route_bus_stops = []
 
-    for stop_id, _ in sorted(best_path.visited_bus_stops.items(), key=lambda x: x[1]):
+    repeats = Counter(entry.id for entry in stop_plan)
+
+    for stop_id in route_stop_visits(best_path.path, id_sorted_bus_map, repeats):
         collection = id_collection_map[stop_id]
 
         if collection.stop is not None and collection.stop.latLng not in route_latlons_set:
@@ -946,6 +1099,7 @@ async def calc_bus_route(
     executor: ProcessPoolExecutor,
     n_processes: cython.int,
     driving_side: str = 'right',
+    stop_plan: Sequence[StopPlanEntry] = (),
 ) -> FinalRoute:
     with print_run_time('Sorting bus stops'):
         sorted_buses = sort_bus_on_path(bus_stop_collections, ways_members.values(), driving_side)
@@ -975,4 +1129,11 @@ async def calc_bus_route(
     with print_run_time('Dropping redundant loops'):
         best_path = drop_redundant_loops(best_path, graph, ways_members, id_sorted_bus_map)
 
-    return finalize_route(best_path, ways_members, bus_stop_collections, tags)
+    if stop_plan:
+        with print_run_time('Following the stop order'):
+            # a stop taken off the route since the mapper arranged them has no place to be put in
+            member_ids = {collection.best.id for collection in bus_stop_collections}
+            plan = [entry.id for entry in stop_plan if entry.id in member_ids]
+            best_path = follow_stop_plan(best_path, graph, ways_members, id_sorted_bus_map, plan)
+
+    return finalize_route(best_path, ways_members, bus_stop_collections, tags, id_sorted_bus_map, stop_plan)

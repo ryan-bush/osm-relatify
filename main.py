@@ -2,7 +2,7 @@ import asyncio
 import os
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Annotated
 from urllib.parse import urlencode
@@ -32,6 +32,8 @@ from config import (
     OSM_SCOPES,
     OSM_SECRET,
     OSM_URL,
+    OVERPASS_INSTANCE_COOKIE,
+    OVERPASS_INSTANCES,
     TAG_MAX_LENGTH,
     TEST_ENV,
     WEBSITE,
@@ -52,10 +54,12 @@ from models.fetch_relation import (
 )
 from models.final_route import FinalRoute, WarningSeverity
 from models.route_master import RouteMaster
+from models.stop_plan import StopPlanEntry
 from naptan import NAPTAN, Roads
 from naptan_tags import StopTagAddition
 from openstreetmap import OpenStreetMap
 from overpass import Overpass
+from overpass_choice_middleware import OverpassChoiceMiddleware
 from placeholder_ids import RelationPlaceholders
 from relation_builder import (
     build_osm_change,
@@ -88,6 +92,8 @@ _TEMPLATES.env.globals.update(
     osm_is_live=OSM_IS_LIVE,
     app_version=APP_VERSION,
     download_grid_size=DOWNLOAD_RELATION_GRID_SIZE,
+    overpass_instance_names=[i.name for i in OVERPASS_INSTANCES],
+    overpass_instance_cookie=OVERPASS_INSTANCE_COOKIE,
 )
 
 _PROCESS_EXECUTOR = ProcessPoolExecutor(CALC_ROUTE_MAX_PROCESSES)
@@ -116,6 +122,7 @@ app = FastAPI(
     redoc_url=None,
 )
 app.router.route_class = DeflateRoute
+app.add_middleware(OverpassChoiceMiddleware)
 
 
 class RevalidatedStaticFiles(StaticFiles):
@@ -496,6 +503,9 @@ class PostCalcBusRouteModel:
     tags: dict[str, str]
     # which side of the road traffic keeps to; right until the client says otherwise
     drivingSide: str = 'right'
+    # the stops in the order the mapper arranged them, with the role of each visit;
+    # absent until they arrange them, when the route decides
+    stopPlan: list[StopPlanEntry] = field(default_factory=list)  # noqa: N815
 
 
 @app.websocket('/ws/calc_bus_route')
@@ -550,8 +560,9 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
                                     _PROCESS_EXECUTOR,
                                     driving_side=model.drivingSide,
                                     n_processes=CALC_ROUTE_N_PROCESSES,
+                                    stop_plan=model.stopPlan,
                                 ),
-                                # MAX_SEARCH_TIME plus room for building the graph and
+                                # MAX_SEARCH_TIME and FOLLOW_STOP_PLAN_TIME, plus room for building the graph and
                                 # for the workers still running when the search stops
                                 timeout=4,
                             )
@@ -568,7 +579,7 @@ async def post_calc_bus_route(ws: WebSocket, _=Depends(require_user_details)):
 
                 route = route_task.result()
                 route = replace(route, extraWaysToUpdate=tuple(ways_non_members.values()))
-                route = sort_and_upgrade_members(route, relation_members)
+                route = sort_and_upgrade_members(route, relation_members, model.stopPlan)
 
                 inactive_naptan_codes = await NAPTAN.find_inactive(route.busStops) if NAPTAN_ENABLED else frozenset()
 
@@ -603,6 +614,8 @@ class PostDownloadOsmChangeModel(BaseModel):
     tagsOriginal: dict[str, str] | None = None
     # overrides the generated changeset comment when the user provides one
     comment: str | None = Field(default=None, max_length=TAG_MAX_LENGTH)
+    # names of the imagery layers shown on the map while this was edited
+    imageryUsed: list[str] = Field(default_factory=list, max_length=10)
     # bus stops placed on the map, created by this changeset
     newStops: list[NewBusStop] = Field(default_factory=list)
     # stop positions to put on the road, for new stops and for stops already in OSM
@@ -684,6 +697,9 @@ class PostDownloadOsmChangeModel(BaseModel):
             'naptan:AtcoCode' in stop.tags for stop in self.newStops
         ):
             tags['source'] = 'NaPTAN'
+
+        if imagery := ';'.join(dict.fromkeys(name.strip() for name in self.imageryUsed if name.strip())):
+            tags['imagery_used'] = imagery[:TAG_MAX_LENGTH]
 
         return tags
 

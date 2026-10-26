@@ -78,6 +78,8 @@ Everything below has a working default and can be set in `.env`:
 | Variable | Purpose |
 | --- | --- |
 | `OVERPASS_API_INTERPRETER` | Comma-separated Overpass endpoints, tried in order. |
+| `OVERPASS_NEXTGIS_KEY` | Key for [NextGIS Overpass](https://overpass.nextgis.com): the part of your URL after `my-`. Tried before the public endpoints when set. |
+| `OVERPASS_FAIRWAYMAPPER_KEY` | Key for the [FairwayMapper](https://www.fairwaymapper.com) Overpass mirror. Tried before the public endpoints when set. |
 | `OVERPASS_API_ATTEMPTS` | Attempts per endpoint before moving to the next one. |
 | `OVERPASS_MAX_DATA_AGE` | How far behind live OSM an instance may be before its answers are refused. Seconds; defaults to an hour, and 0 turns the check off. |
 | `WEBSITE` | The URL recorded in changesets and the user agent. |
