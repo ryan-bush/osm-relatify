@@ -1,4 +1,4 @@
-import { createElementFromHTML } from "./utils.js"
+import { createElementFromHTML, mapboxToken } from "./utils.js"
 
 // map
 function getInitialMapView() {
@@ -65,6 +65,25 @@ map.on("contextmenu", (e) => {
 // map tiles
 const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 
+// Imagery is there for placing stops, so it only shows from IMAGERY_MIN_ZOOM: further out
+// the OSM map is drawn in its place. The name is what goes in imagery_used.
+const imageryLayer = (name, url, imageryAttribution) =>
+    L.layerGroup(
+        [
+            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                attribution: attribution,
+                maxZoom: IMAGERY_MIN_ZOOM - 1,
+            }),
+            L.tileLayer(url, {
+                attribution: imageryAttribution,
+                minZoom: IMAGERY_MIN_ZOOM,
+                maxZoom: MAX_ZOOM,
+                maxNativeZoom: MAX_TILE_ZOOM,
+            }),
+        ],
+        { imagery: name },
+    )
+
 const baseLayers = {
     OpenStreetMap: L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: attribution,
@@ -76,28 +95,24 @@ const baseLayers = {
         maxZoom: MAX_ZOOM,
         maxNativeZoom: MAX_TILE_ZOOM,
     }),
-    // Esri permits tracing its imagery into OSM. It is there for placing stops, so it only
-    // shows from IMAGERY_MIN_ZOOM: further out the OSM map is drawn in its place.
-    "Esri World Imagery (zoom 17+)": L.layerGroup(
-        [
-            L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                attribution: attribution,
-                maxZoom: IMAGERY_MIN_ZOOM - 1,
-            }),
-            L.tileLayer(
-                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                {
-                    attribution:
-                        'Imagery &copy; <a href="https://www.esri.com/" target="_blank">Esri</a> and its providers',
-                    minZoom: IMAGERY_MIN_ZOOM,
-                    maxZoom: MAX_ZOOM,
-                    maxNativeZoom: MAX_TILE_ZOOM,
-                },
-            ),
-        ],
-        // what goes in imagery_used
-        { imagery: "Esri World Imagery" },
+    // Esri permits tracing its imagery into OSM
+    "Esri World Imagery (zoom 17+)": imageryLayer(
+        "Esri World Imagery",
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        'Imagery &copy; <a href="https://www.esri.com/" target="_blank">Esri</a> and its providers',
     ),
+}
+
+// Mapbox permits tracing its imagery into OSM too, but needs a token of our own; see
+// MAPBOX_TOKEN in config.py
+if (mapboxToken) {
+    baseLayers["Mapbox Satellite (zoom 17+)"] = imageryLayer(
+        "Mapbox Satellite",
+        `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}{r}.jpg?access_token=${encodeURIComponent(mapboxToken)}`,
+        '&copy; <a href="https://www.mapbox.com/about/maps/" target="_blank">Mapbox</a> ' +
+            '&copy; <a href="https://www.maxar.com/" target="_blank">Maxar</a> ' +
+            '<strong><a href="https://apps.mapbox.com/feedback/" target="_blank">Improve this map</a></strong>',
+    )
 }
 
 const selectedBaseLayer = localStorage.getItem("baseLayer")

@@ -1,7 +1,7 @@
 {% import '_message_modal.jinja2' as message_modal with context %}
 <!DOCTYPE html>
 <html lang="en" data-osm-url="{{ osm_url }}" data-osm-live="{{ 'true' if osm_is_live else 'false' }}"
-    data-download-grid-size="{{ download_grid_size }}">
+    data-download-grid-size="{{ download_grid_size }}" data-mapbox-token="{{ mapbox_token }}">
 
 <head>
   <meta charset="utf-8" />

@@ -5,6 +5,8 @@ export const osmUrl = document.documentElement.dataset.osmUrl
 export const osmIsLive = document.documentElement.dataset.osmLive === "true"
 // the size in degrees of a download cell; see DOWNLOAD_RELATION_GRID_SIZE in config.py
 export const downloadGridSize = Number.parseFloat(document.documentElement.dataset.downloadGridSize)
+// empty unless MAPBOX_TOKEN is set; see config.py
+export const mapboxToken = document.documentElement.dataset.mapboxToken
 
 export const escapeHtml = (text) => {
     const div = document.createElement("div")

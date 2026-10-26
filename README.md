@@ -89,6 +89,7 @@ Everything below has a working default and can be set in `.env`:
 | `STOP_AREA_SEARCH_AREA` | How far apart the stops of one place can be, for stop areas. Metres; defaults to 300. |
 | `NAPTAN_ENABLED` | Suggests and checks stops using NaPTAN. On by default; set to `0` to turn off. |
 | `NAPTAN_DATA_DIR` | Where the NaPTAN download is kept. Defaults to `data`. |
+| `MAPBOX_TOKEN` | Adds Mapbox Satellite to the map's layers. A public token from your own Mapbox account; restrict it to your site's URL, as browsers are sent it. Off unless set. |
 | `UPDATE_CHECK_REPO` | The `owner/repo` whose releases are checked for a newer version. Leave empty to turn the check off. |
 | `UPDATE_CHECK_TTL` | How long an answer from GitHub is reused. Seconds; defaults to six hours. |
 | `UPDATE_CHECK_RETRY_TTL` | How long to wait before asking again after a failed check. Seconds; defaults to ten minutes. |
