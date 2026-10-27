@@ -67,7 +67,7 @@ const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">Op
 
 // Imagery is there for placing stops, so it only shows from IMAGERY_MIN_ZOOM: further out
 // the OSM map is drawn in its place. The name is what goes in imagery_used.
-const imageryLayer = (name, url, imageryAttribution) =>
+const imageryLayer = (name, url, imageryAttribution, tileOptions = {}) =>
     L.layerGroup(
         [
             L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -79,6 +79,7 @@ const imageryLayer = (name, url, imageryAttribution) =>
                 minZoom: IMAGERY_MIN_ZOOM,
                 maxZoom: MAX_ZOOM,
                 maxNativeZoom: MAX_TILE_ZOOM,
+                ...tileOptions,
             }),
         ],
         { imagery: name },
@@ -104,14 +105,17 @@ const baseLayers = {
 }
 
 // Mapbox permits tracing its imagery into OSM too, but needs a token of our own; see
-// MAPBOX_TOKEN in config.py
+// MAPBOX_TOKEN in config.py. The tiles come from the satellite style through the Static
+// Tiles API: newer accounts are refused the older /v4/mapbox.satellite raster tiles with
+// a 429. They are 512px, one level up, as each tile is billed: a quarter of the requests.
 if (mapboxToken) {
     baseLayers["Mapbox Satellite (zoom 17+)"] = imageryLayer(
         "Mapbox Satellite",
-        `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}{r}.jpg?access_token=${encodeURIComponent(mapboxToken)}`,
+        `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/512/{z}/{x}/{y}{r}?access_token=${encodeURIComponent(mapboxToken)}`,
         '&copy; <a href="https://www.mapbox.com/about/maps/" target="_blank">Mapbox</a> ' +
             '&copy; <a href="https://www.maxar.com/" target="_blank">Maxar</a> ' +
             '<strong><a href="https://apps.mapbox.com/feedback/" target="_blank">Improve this map</a></strong>',
+        { tileSize: 512, zoomOffset: -1 },
     )
 }
 
