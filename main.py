@@ -26,6 +26,7 @@ from config import (
     CALC_ROUTE_N_PROCESSES,
     CREATED_BY,
     DOWNLOAD_RELATION_GRID_SIZE,
+    MAPBOX_TOKEN,
     NAPTAN_ENABLED,
     OSM_CLIENT,
     OSM_IS_LIVE,
@@ -92,6 +93,7 @@ _TEMPLATES.env.globals.update(
     osm_is_live=OSM_IS_LIVE,
     app_version=APP_VERSION,
     download_grid_size=DOWNLOAD_RELATION_GRID_SIZE,
+    mapbox_token=MAPBOX_TOKEN,
     overpass_instance_names=[i.name for i in OVERPASS_INSTANCES],
     overpass_instance_cookie=OVERPASS_INSTANCE_COOKIE,
 )

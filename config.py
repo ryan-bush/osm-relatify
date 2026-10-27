@@ -156,6 +156,11 @@ OVERPASS_INSTANCES = (
 )
 assert OVERPASS_INSTANCES, 'OVERPASS_API_INTERPRETER must contain at least one URL'
 
+# Mapbox Satellite imagery, offered beside Esri's when set. Mapbox permits tracing it into
+# OSM, but only with a token of your own: the ones built into iD and JOSM are theirs. It
+# is sent to every browser, so restrict it to your site's URL in the Mapbox account.
+MAPBOX_TOKEN = os.getenv('MAPBOX_TOKEN', '').strip()
+
 # the cookie the navbar's instance picker sets; unset or unknown means every instance in order
 OVERPASS_INSTANCE_COOKIE = 'overpass_instance'
 
