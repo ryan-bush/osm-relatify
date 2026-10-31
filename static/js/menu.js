@@ -124,8 +124,12 @@ setRecalcHandler(() => requestCalcBusRoute())
 // the route, so the warnings are rebuilt from the calculation already in hand rather than
 // asking for another one.
 // a route's siblings are found by its ref, so an edit to it makes whatever was found for
-// the old one no longer an answer; looking again is the mapper's to ask for
-setTagsChangedHandler((tags) => noteRouteTags(tags))
+// the old one no longer an answer; looking again is the mapper's to ask for. A tag edit
+// can also be the only change there is, which decides whether the route can be uploaded.
+setTagsChangedHandler((tags) => {
+    noteRouteTags(tags)
+    if (routeData !== null) processRouteWarnings(routeData)
+})
 
 // a variant listed beside the route being edited is as often the next thing to edit as
 // it is something to go and look at
@@ -428,9 +432,12 @@ export const processRouteWarnings = (data) => {
     let highestSeverityLevel = 0
 
     for (const warning of data.warnings) {
-        // the relation is untouched, but the changeset still has stop tags to add, or a
-        // route master to put it in
-        if (warning.severity === 10 && (tagChangeCount() > 0 || stopAreaCount() > 0 || routeMasterChangeCount() > 0))
+        // the relation's members are untouched, but the changeset still has its tags or
+        // stop tags to change, or a route master to put it in
+        if (
+            warning.severity === 10 &&
+            (relationTagsEdited() || tagChangeCount() > 0 || stopAreaCount() > 0 || routeMasterChangeCount() > 0)
+        )
             continue
 
         const severityLevel = warning.severity
