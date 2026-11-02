@@ -83,7 +83,7 @@ def test_new_relation_is_created_not_modified(route):
 
 def test_new_relation_carries_the_edited_tags(route):
     created = xmltodict.parse(_build(route, None))['osmChange']['create']['relation']
-    tags = {t['@k']: t['@v'] for t in created['tag']}
+    tags = {t['@k']: t['@v'] for t in created['tag'] if t['@k'] != 'check_date'}
 
     assert tags == NEW_TAGS
 

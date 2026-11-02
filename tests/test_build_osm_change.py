@@ -1,6 +1,7 @@
 """End-to-end coverage of the tag-editing wiring in build_osm_change()."""
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 import xmltodict
@@ -114,16 +115,24 @@ def tags_of(relation: dict) -> dict[str, str]:
     return {t['@k']: t['@v'] for t in tag}
 
 
+def tags_without_check_date(relation: dict) -> dict[str, str]:
+    return {k: v for k, v in tags_of(relation).items() if k != 'check_date'}
+
+
+def today() -> str:
+    return datetime.now(UTC).date().isoformat()
+
+
 def test_tags_are_untouched_without_edits(route):
     """Omitting the tag arguments must reproduce the pre-feature behaviour exactly."""
     relation = build(route)
-    assert tags_of(relation) == ORIGINAL_TAGS
+    assert tags_without_check_date(relation) == ORIGINAL_TAGS
 
 
 def test_tags_are_untouched_when_original_is_missing(route):
     """An older client sends tags but no tagsOriginal; that must not be read as a change."""
     relation = build(route, tags_edited={'name': 'Something Else'})
-    assert tags_of(relation) == ORIGINAL_TAGS
+    assert tags_without_check_date(relation) == ORIGINAL_TAGS
 
 
 def test_edited_tag_reaches_the_osm_change(route):
@@ -234,3 +243,32 @@ def test_a_relation_being_created_is_always_sent():
     change = build_change(new_route, relation_id=None, tags_edited=dict(ORIGINAL_TAGS))
 
     assert change['create']['relation']['@id'] == '-1'
+
+
+def test_an_uploaded_relation_gets_a_check_date(route):
+    assert tags_of(build(route))['check_date'] == today()
+
+
+def test_an_old_check_date_is_replaced(route):
+    relation = build(
+        route,
+        tags_original=ORIGINAL_TAGS,
+        tags_edited={**ORIGINAL_TAGS, 'check_date': '2020-01-01'},
+    )
+
+    assert tags_of(relation)['check_date'] == today()
+
+
+def test_a_created_relation_gets_a_check_date():
+    new_route = FinalRoute(
+        ways=(),
+        latLngs=(),
+        busStops=(),
+        tags=dict(ORIGINAL_TAGS),
+        extraWaysToUpdate=(),
+        members=(RelationMember(id='10', type='way', role=''),),
+        warnings=(),
+    )
+    change = build_change(new_route, relation_id=None, tags_edited=dict(ORIGINAL_TAGS))
+
+    assert tags_of(change['create']['relation'])['check_date'] == today()
