@@ -2,6 +2,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from itertools import chain, cycle, islice, zip_longest
 from typing import NamedTuple
 
@@ -780,6 +781,9 @@ async def build_osm_change(
     )
 
     if not unchanged:
+        # Decided after the no-op check, or every upload would count as a change. The
+        # date says when the route was last checked, so it replaces any older one.
+        _set_check_date(relation_data)
         result['osmChange'][relation_action]['relation'].append(relation_data)
 
     # Last, because the API resolves placeholders strictly in document order: a master
@@ -797,6 +801,12 @@ async def build_osm_change(
 
 def _relation_tags(relation_data: dict) -> dict[str, str]:
     return {tag['@k']: tag['@v'] for tag in ensure_list(relation_data.get('tag') or [])}
+
+
+def _set_check_date(relation_data: dict) -> None:
+    tags = _relation_tags(relation_data)
+    tags['check_date'] = datetime.now(UTC).date().isoformat()
+    relation_data['tag'] = [{'@k': k, '@v': v} for k, v in tags.items()]
 
 
 def _member_signature(members) -> list[tuple[str, str, str]]:
