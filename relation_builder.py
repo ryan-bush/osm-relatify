@@ -685,8 +685,23 @@ async def build_osm_change(
             way_data.pop('@uid', None)
             _set_changeset_placeholder(way_data, include_changeset_id)
 
+            # Split conflict check: the pieces join end to start, so put back together they
+            # must be the way as it is now. Comparing only the ends is not enough, as a way
+            # that passes through one of its own nodes twice is split there too, and its
+            # first piece can then end where the whole way does.
+            pieces = native_id_element_ids_map[way_id]
+            loaded_nodes = list(id_way_map[pieces[1]].nodes)
+            for extra_num in range(2, len(pieces) + 1):
+                loaded_nodes.extend(id_way_map[pieces[extra_num]].nodes[1:])
+
+            if [int(nd['@ref']) for nd in ensure_list(way_data.get('nd') or [])] != loaded_nodes:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f'Conflict: Way {way_id} was modified. Go back and click the relation reload button.',
+                )
+
             # perform splits
-            for extra_num, element_id in native_id_element_ids_map[way_id].items():
+            for extra_num, element_id in pieces.items():
                 element_way = id_way_map[element_id]
 
                 new_data = way_data.copy()
@@ -694,18 +709,6 @@ async def build_osm_change(
 
                 if extra_num == 1:
                     action = 'modify'
-
-                    # split conflict check
-                    way_data_nd = way_data.get('nd')
-                    if (
-                        way_data_nd
-                        and int(way_data_nd[0]['@ref']) == new_data['nd'][0]['@ref']
-                        and int(way_data_nd[-1]['@ref']) == new_data['nd'][-1]['@ref']
-                    ):
-                        raise HTTPException(
-                            status.HTTP_409_CONFLICT,
-                            f'Conflict: Way {way_id} was modified. Go back and click the relation reload button.',
-                        )
                 else:
                     action = 'create'
                     new_data['@id'] = element_id_unique_map[element_id]
