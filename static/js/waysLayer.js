@@ -108,6 +108,23 @@ function onWaysDataChanged() {
     requestCalcBusRoute()
 }
 
+// On a long route, what follows a change of the ways takes long enough to be felt, so a click
+// lets the map draw the way it changed first. Clicks in quick succession are caught up
+// with together.
+let waysDataChangeScheduled = false
+
+function scheduleWaysDataChanged() {
+    if (waysDataChangeScheduled) return
+    waysDataChangeScheduled = true
+
+    requestAnimationFrame(() =>
+        setTimeout(() => {
+            waysDataChangeScheduled = false
+            onWaysDataChanged()
+        }),
+    )
+}
+
 function updateWaysVisibility() {
     if (!waysData) {
         idGroupMap = new Map()
@@ -199,7 +216,8 @@ const addWay = (way) => {
 
         waysData[way.id].member = newMember
         removeGroupFromLayers(way.id)
-        onWaysDataChanged()
+        addWay(way)
+        scheduleWaysDataChanged()
 
         if (newMember) downloadTrigger(way.id)
     }

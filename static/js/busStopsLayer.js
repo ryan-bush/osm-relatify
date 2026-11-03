@@ -219,25 +219,48 @@ function keepsItsPendingStopPosition(entry) {
     return Boolean(entry.platform.member)
 }
 
+// The markers drawn for each stop, by the stop they are for. A long route has thousands of
+// stops along it, and drawing them all again on every click is what makes the map lag, so
+// a stop's markers are kept for as long as nothing they show has changed.
+const drawnStops = new Map()
+let seenStops = new Set()
+
+function drawStop(key, parent, signature, draw) {
+    seenStops.add(key)
+
+    const drawn = drawnStops.get(key)
+    if (drawn && drawn.parent === parent && drawn.signature === signature) return
+    if (drawn) drawn.parent.removeLayer(drawn.group)
+
+    const group = L.layerGroup()
+    draw(group)
+    parent.addLayer(group)
+    drawnStops.set(key, { parent: parent, signature: signature, group: group })
+}
+
 export function updateBusStopsVisibility() {
-    activeBusStopsLayer.clearLayers()
-    inactiveBusStopsLayer.clearLayers()
-    naptanStopsLayer.clearLayers()
+    seenStops = new Set()
 
-    if (!(busStopData && waysRBush)) return
+    if (busStopData && waysRBush) {
+        addNaptanStopsToLayer()
 
-    addNaptanStopsToLayer()
+        for (const [i, busStopCollection] of busStopData.entries()) {
+            const name = getBusCollectionName(busStopCollection)
 
-    for (const [i, busStopCollection] of busStopData.entries()) {
-        const name = getBusCollectionName(busStopCollection)
-
-        if (isNewStop(busStopCollection.platform)) {
-            addNewStopToLayer(busStopCollection.platform)
-        } else if (busStopCollection.platform) {
-            addBusStopToLayer(i, busStopCollection.platform, name, "platform")
-        } else if (busStopCollection.stop) {
-            addBusStopToLayer(i, busStopCollection.stop, name, "stop")
+            if (isNewStop(busStopCollection.platform)) {
+                addNewStopToLayer(busStopCollection.platform)
+            } else if (busStopCollection.platform) {
+                addBusStopToLayer(i, busStopCollection.platform, name, "platform")
+            } else if (busStopCollection.stop) {
+                addBusStopToLayer(i, busStopCollection.stop, name, "stop")
+            }
         }
+    }
+
+    for (const [key, drawn] of drawnStops) {
+        if (seenStops.has(key)) continue
+        drawn.parent.removeLayer(drawn.group)
+        drawnStops.delete(key)
     }
 }
 
@@ -281,25 +304,15 @@ const isNearRoute = (latLng) =>
 function addBusStopToLayer(i, stop, name, role) {
     if (!stop.member && !isNearRoute(stop.latLng)) return
 
-    const addToLayer = stop.member ? activeBusStopsLayer : inactiveBusStopsLayer
-
     const suggestion = naptanTagSuggestions.get(stopKey(stop))
     const addition = getTagAddition(stop)
     // only a stop the route calls at has to be decided before uploading
     const undecided = stop.member && hasUndecided(stop, suggestion?.differing)
-
-    const marker = L.marker(stop.latLng, {
-        icon: createBusStopIcon(
-            `/static/img/bus_stop_${stop.member ? "on" : "off"}.webp`,
-            stop.member ? 24 : 20,
-            undecided
-                ? "bus-stop-icon bus-stop-naptan-undecided"
-                : addition
-                  ? "bus-stop-icon bus-stop-tags-added"
-                  : "bus-stop-icon",
-        ),
-        opacity: stop.member ? 1 : 0.8,
-    }).addTo(addToLayer)
+    const className = undecided
+        ? "bus-stop-icon bus-stop-naptan-undecided"
+        : addition
+          ? "bus-stop-icon bus-stop-tags-added"
+          : "bus-stop-icon"
 
     const naptanNote = undecided
         ? "<br><small>NaPTAN disagrees — needs a decision</small>"
@@ -315,30 +328,49 @@ function addBusStopToLayer(i, stop, name, role) {
         : platformMissing
           ? `<br><small>Missing ${escapeHtml(tagList(platformMissing))}</small>`
           : ""
+    const tooltip = name + naptanNote + platformNote
 
-    marker.bindTooltip(name + naptanNote + platformNote, {
-        direction: "top",
-        offset: [0, -10],
+    const newStopPosition = busStopData[i].stop && isNewStop(busStopData[i].stop) ? busStopData[i].stop : null
+    const signature = JSON.stringify([
+        i,
+        role,
+        stop.member,
+        stop.latLng,
+        className,
+        tooltip,
+        newStopPosition && [newStopPosition.latLng, newStopPosition.name],
+    ])
+
+    drawStop(stop, stop.member ? activeBusStopsLayer : inactiveBusStopsLayer, signature, (group) => {
+        const marker = L.marker(stop.latLng, {
+            icon: createBusStopIcon(`/static/img/bus_stop_${stop.member ? "on" : "off"}.webp`, stop.member ? 24 : 20, className),
+            opacity: stop.member ? 1 : 0.8,
+        }).addTo(group)
+
+        marker.bindTooltip(tooltip, {
+            direction: "top",
+            offset: [0, -10],
+        })
+
+        marker.on("click", () => setMemberState(i, !stop.member))
+        marker.on("contextmenu", (e) => {
+            // looked up again, as the marker outlives changes that do not alter how it looks
+            const suggestion = naptanTagSuggestions.get(stopKey(stop))
+            showContextMenu(
+                e,
+                stop,
+                naptanTagsAction(e, stop, suggestion, getTagAddition(stop)),
+                () => showAllTagsForm(e.latlng, tagSections(busStopData[i])),
+                stopPositionAction(e, busStopData[i]),
+                naptanDifferencesAction(e, stop, suggestion, busStopData[i]),
+                stopAreaAction(e, busStopData[i]),
+                editStopAction(e, busStopData[i]),
+                role === "platform" ? platformTagsAction(e, stop) : null,
+            )
+        })
+
+        if (newStopPosition) addStopPositionToLayer(stop.latLng, newStopPosition, group)
     })
-
-    marker.on("click", () => setMemberState(i, !stop.member))
-    marker.on("contextmenu", (e) =>
-        showContextMenu(
-            e,
-            stop,
-            naptanTagsAction(e, stop, suggestion, addition),
-            () => showAllTagsForm(e.latlng, tagSections(busStopData[i])),
-            stopPositionAction(e, busStopData[i]),
-            naptanDifferencesAction(e, stop, suggestion, busStopData[i]),
-            stopAreaAction(e, busStopData[i]),
-            editStopAction(e, busStopData[i]),
-            role === "platform" ? platformTagsAction(e, stop) : null,
-        ),
-    )
-
-    if (busStopData[i].stop && isNewStop(busStopData[i].stop)) {
-        addStopPositionToLayer(stop.latLng, busStopData[i].stop, addToLayer)
-    }
 }
 
 // Offers a stop position on the road for a stop already in OSM that has none, or takes
@@ -1082,69 +1114,76 @@ function addNaptanStopsToLayer() {
     for (const naptanStop of naptanStops) {
         if (added.has(naptanStop.atcoCode) || !isNearRoute(naptanStop.latLng)) continue
 
-        const marker = L.marker(naptanStop.latLng, {
-            icon: createBusStopIcon("/static/img/bus_stop_off.webp", 20, "bus-stop-icon naptan-stop-icon"),
-        }).addTo(naptanStopsLayer)
+        // it looks the same for as long as it is shown
+        drawStop(naptanStop, naptanStopsLayer, "", (group) => {
+            const marker = L.marker(naptanStop.latLng, {
+                icon: createBusStopIcon("/static/img/bus_stop_off.webp", 20, "bus-stop-icon naptan-stop-icon"),
+            }).addTo(group)
 
-        const indicator = naptanStop.indicator ? ` <i>${escapeHtml(naptanStop.indicator)}</i>` : ""
-        const unmarked = naptanStop.tags["naptan:BusStopType"] === "CUS" ? " (unmarked stop)" : ""
-        marker.bindTooltip(`${escapeHtml(naptanStop.name)}${indicator}<br><small>In NaPTAN, missing from OSM${unmarked}</small>`, {
-            direction: "top",
-            offset: [0, -10],
-        })
-
-        const suggest = () => {
-            const naptanPlacement = planStopPosition(naptanStop.latLng, waysData)
-
-            showNewStopForm(L.latLng(naptanStop.latLng), {
-                tags: naptanStop.tags,
-                nearby: findNearbyStop(naptanStop.latLng, null),
-                routeType: relationTags?.route,
-                stopPosition: {
-                    available: Boolean(naptanPlacement),
-                    checked: true,
-                    direction: naptanPlacement && travelDirectionOn(naptanPlacement.segmentId),
-                },
-                onSave: (tags, wantStopPosition) => {
-                    const latLng = [...naptanStop.latLng]
-                    const chosen = stopPositionFor(latLng, wantStopPosition)
-                    addNewStop(latLng, tags, chosen, directionFor(chosen))
-                    syncNewStops()
-                },
+            const indicator = naptanStop.indicator ? ` <i>${escapeHtml(naptanStop.indicator)}</i>` : ""
+            const unmarked = naptanStop.tags["naptan:BusStopType"] === "CUS" ? " (unmarked stop)" : ""
+            marker.bindTooltip(`${escapeHtml(naptanStop.name)}${indicator}<br><small>In NaPTAN, missing from OSM${unmarked}</small>`, {
+                direction: "top",
+                offset: [0, -10],
             })
-        }
 
-        marker.on("click", suggest)
-        marker.on("contextmenu", suggest)
+            const suggest = () => {
+                const naptanPlacement = planStopPosition(naptanStop.latLng, waysData)
+
+                showNewStopForm(L.latLng(naptanStop.latLng), {
+                    tags: naptanStop.tags,
+                    nearby: findNearbyStop(naptanStop.latLng, null),
+                    routeType: relationTags?.route,
+                    stopPosition: {
+                        available: Boolean(naptanPlacement),
+                        checked: true,
+                        direction: naptanPlacement && travelDirectionOn(naptanPlacement.segmentId),
+                    },
+                    onSave: (tags, wantStopPosition) => {
+                        const latLng = [...naptanStop.latLng]
+                        const chosen = stopPositionFor(latLng, wantStopPosition)
+                        addNewStop(latLng, tags, chosen, directionFor(chosen))
+                        syncNewStops()
+                    },
+                })
+            }
+
+            marker.on("click", suggest)
+            marker.on("contextmenu", suggest)
+        })
     }
 }
 
 function addNewStopToLayer(stop) {
-    const marker = L.marker(stop.latLng, {
-        icon: createBusStopIcon("/static/img/bus_stop_on.webp", 24, "bus-stop-icon bus-stop-new"),
-        draggable: true,
-        autoPan: true,
-    }).addTo(activeBusStopsLayer)
-
-    marker.bindTooltip(`${escapeHtml(stop.name)} <i>(new)</i>`, {
-        direction: "top",
-        offset: [0, -10],
-    })
-
-    marker.on("dragend", () => {
-        const { lat, lng } = marker.getLatLng()
-        const latLng = [lat, lng]
-        // a stop that had a stop position keeps one, worked out afresh for where it now is
-        const moved = hasStopPosition(stop) ? stopPositionFor(latLng, true) : null
-        moveNewStop(stop, latLng, moved, directionFor(moved))
-        syncNewStops()
-    })
-
-    marker.on("click", (e) => editNewStop(e, stop))
-    marker.on("contextmenu", (e) => editNewStop(e, stop))
-
     const node = getStopPositionNode(stop)
-    if (node) addStopPositionToLayer(stop.latLng, node, activeBusStopsLayer)
+    const signature = JSON.stringify([stop.name, stop.latLng, node && [node.latLng, node.name]])
+
+    drawStop(stop, activeBusStopsLayer, signature, (group) => {
+        const marker = L.marker(stop.latLng, {
+            icon: createBusStopIcon("/static/img/bus_stop_on.webp", 24, "bus-stop-icon bus-stop-new"),
+            draggable: true,
+            autoPan: true,
+        }).addTo(group)
+
+        marker.bindTooltip(`${escapeHtml(stop.name)} <i>(new)</i>`, {
+            direction: "top",
+            offset: [0, -10],
+        })
+
+        marker.on("dragend", () => {
+            const { lat, lng } = marker.getLatLng()
+            const latLng = [lat, lng]
+            // a stop that had a stop position keeps one, worked out afresh for where it now is
+            const moved = hasStopPosition(stop) ? stopPositionFor(latLng, true) : null
+            moveNewStop(stop, latLng, moved, directionFor(moved))
+            syncNewStops()
+        })
+
+        marker.on("click", (e) => editNewStop(e, stop))
+        marker.on("contextmenu", (e) => editNewStop(e, stop))
+
+        if (node) addStopPositionToLayer(stop.latLng, node, group)
+    })
 }
 
 // the node that will go on the road, shown so its place along the route is obvious
