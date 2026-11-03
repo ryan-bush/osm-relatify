@@ -212,11 +212,16 @@ const addWay = (way) => {
     const onClickHandler = () => {
         if (way.id === startWay?.id || way.id === stopWay?.id) return
 
-        const newMember = !way.member
+        // a download replaces the ways while keeping what is drawn of them, so this one
+        // may be out of date
+        const current = waysData[way.id]
+        if (!current) return
 
-        waysData[way.id].member = newMember
+        const newMember = !current.member
+
+        current.member = newMember
         removeGroupFromLayers(way.id)
-        addWay(way)
+        addWay(current)
         scheduleWaysDataChanged()
 
         if (newMember) downloadTrigger(way.id)
