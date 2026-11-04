@@ -245,6 +245,12 @@ DOWNLOAD_RELATION_WAY_BB_EXPAND = 500  # meters
 DOWNLOAD_RELATION_GRID_SIZE = 0.01  # degrees
 DOWNLOAD_RELATION_GRID_CELL_EXPAND = 0.001  # degrees, only used for internal calculations, not sent to the user
 
+# A full viewport at low zoom is far too much to download in one go. This bounds a
+# relation being created, the map's "download this view" button and an area picked on
+# the map: roughly 17 by 11 km of cells, which is a zoom 13 window on a laptop screen,
+# or some 100 km of a corridor drawn along a motorway.
+VIEW_DOWNLOAD_MAX_CELLS = 256
+
 print(f'[CONF] {DOWNLOAD_RELATION_GRID_SIZE * 111_111 = :.0f} meters')
 print(f'[CONF] {DOWNLOAD_RELATION_GRID_CELL_EXPAND * 111_111 = :.0f} meters')
 

@@ -1,5 +1,6 @@
 import asyncio
 import os
+from collections.abc import Iterable
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
@@ -37,6 +38,7 @@ from config import (
     OVERPASS_INSTANCES,
     TAG_MAX_LENGTH,
     TEST_ENV,
+    VIEW_DOWNLOAD_MAX_CELLS,
     WEBSITE,
 )
 from cython_lib.route import calc_bus_route
@@ -93,6 +95,7 @@ _TEMPLATES.env.globals.update(
     osm_is_live=OSM_IS_LIVE,
     app_version=APP_VERSION,
     download_grid_size=DOWNLOAD_RELATION_GRID_SIZE,
+    download_max_cells=VIEW_DOWNLOAD_MAX_CELLS,
     mapbox_token=MAPBOX_TOKEN,
     overpass_instance_names=[i.name for i in OVERPASS_INSTANCES],
     overpass_instance_cookie=OVERPASS_INSTANCE_COOKIE,
@@ -207,12 +210,6 @@ def logout():
     return response
 
 
-# A full viewport at low zoom is far too much to download in one go. This bounds both a
-# relation being created and the map's "download this view" button: roughly 17 by 11 km
-# of cells, which is a zoom 13 window on a laptop screen.
-VIEW_DOWNLOAD_MAX_CELLS = 256
-
-
 def view_download_targets(
     bounds: tuple[float, float, float, float],
     downloaded: frozenset[Cell] = frozenset(),
@@ -235,6 +232,27 @@ def view_download_targets(
     return tuple(sorted(cells, key=lambda c: (c.x, c.y)))
 
 
+def area_download_targets(
+    cells: Iterable[Cell],
+    downloaded: frozenset[Cell] = frozenset(),
+) -> tuple[Cell, ...]:
+    """
+    The cells of an area picked on the map still to download: a corridor drawn along a
+    motorway, say, where the view around it would take every town either side as well.
+
+    Held to the same limit as a view, and again only what is new counts against it.
+    """
+    new_cells = set(cells) - downloaded
+
+    if len(new_cells) > VIEW_DOWNLOAD_MAX_CELLS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            'The selected area is too large to download in one go; select a shorter stretch.',
+        )
+
+    return tuple(sorted(new_cells, key=lambda c: (c.x, c.y)))
+
+
 class PostQueryModel(BaseModel):
     # absent when creating a relation that does not exist yet
     relationId: int | None = None
@@ -248,6 +266,8 @@ class PostQueryModel(BaseModel):
     # the map viewport, as (minlat, minlon, maxlat, maxlon): the first download of a
     # relation being created, or a view asked for with the "download this view" button
     bounds: tuple[float, float, float, float] | None = None
+    # the cells of an area picked on the map, such as a corridor drawn along a motorway
+    area: tuple[dict, ...] | None = None
 
 
 # the tags that make a relation a PTv2 route, and that the app itself requires to
@@ -277,6 +297,13 @@ async def post_query(model: PostQueryModel, _=Depends(require_user_details)):
             )
             if not download_targets:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, 'Everything in view is already downloaded.')
+        elif model.area is not None:
+            download_targets = area_download_targets(
+                (from_dict(Cell, c, Config(cast=[], strict=True)) for c in model.area),
+                frozenset(chain.from_iterable(download_hist.history)),
+            )
+            if not download_targets:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, 'The selected area is already downloaded.')
     else:
         download_hist = None
         download_targets = None
