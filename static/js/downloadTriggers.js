@@ -1,14 +1,15 @@
+import { corridorCells } from "./areaCells.js"
 import { hideDownloadBar, map, showDownloadBar } from "./map.js"
 import { newRouteType, processFetchRelationData, relationId } from "./menu.js"
 import { showMessage } from "./messageBox.js"
-import { createElementFromHTML, deflateCompress, downloadGridSize } from "./utils.js"
+import { createElementFromHTML, deflateCompress, downloadGridSize, downloadMaxCells } from "./utils.js"
 
 export let downloadHistoryData = null
 export let downloadTriggersData = null
 let scheduledCells = []
 let downloadingCells = []
-// a "download this view" request in flight; one download at a time, as each answer
-// carries the history the next must be sent with
+// a "download this view" or selected area request in flight; one download at a time, as
+// each answer carries the history the next must be sent with
 let downloadingView = false
 
 let processDownloadTriggersAbortController = null
@@ -43,10 +44,12 @@ export function processRelationDownloadTriggers(fetchData) {
         scheduledCells = []
         downloadingCells = []
         downloadingView = false
+        stopAreaSelect()
     }
 
     updateDownloadViewButton()
     updateDownloadedArea()
+    updateAreaSelect()
 }
 
 // Everything outside the downloaded cells is shaded, so the edge of what is downloaded
@@ -222,14 +225,25 @@ function finishDownload() {
 // Everything in the map view at once, for a route too long to grow a few roads at a time
 // by clicking at the edge of what is downloaded. The server works out which cells are
 // new and refuses a view with too many of them.
-const downloadView = async () => {
-    if (!downloadHistoryData || isDownloading()) return
-
+const downloadView = () => {
     const bounds = map.getBounds()
+
+    downloadRegion(
+        {
+            bounds: [bounds.getSouth(), bounds.getWest(), bounds.getNorth(), bounds.getEast()],
+        },
+        "Downloading this view...",
+    )
+}
+
+// One download of a region asked for as a whole: the view's `bounds`, or the cells of an
+// `area` selected on the map.
+const downloadRegion = async (region, message) => {
+    if (!downloadHistoryData || isDownloading()) return
 
     downloadingView = true
     updateDownloadViewButton()
-    showDownloadBar("Downloading this view...")
+    showDownloadBar(message)
 
     processDownloadTriggersAbortController = new AbortController()
 
@@ -244,12 +258,7 @@ const downloadView = async () => {
             routeType: newRouteType,
             downloadHistory: downloadHistoryData,
             downloadTargets: [],
-            bounds: [
-                bounds.getSouth(),
-                bounds.getWest(),
-                bounds.getNorth(),
-                bounds.getEast(),
-            ],
+            ...region,
         }),
         signal: processDownloadTriggersAbortController.signal,
     })
@@ -282,6 +291,7 @@ const downloadView = async () => {
         .finally(() => {
             downloadingView = false
             updateDownloadViewButton()
+            updateAreaSelect()
 
             // edge clicks made while this was downloading were held back for it
             if (scheduledCells.length > 0) processDownloadTriggers()
@@ -294,16 +304,25 @@ class DownloadViewButton extends L.Control {
         const div = createElementFromHTML(`
             <div id="download-view" class="leaflet-bar leaflet-control leaflet-control-custom d-none">
                 <a href="javascript:;" role="button" title="Download this view" aria-label="Download this view"
-                    class="d-flex align-items-center justify-content-center">
+                    class="download-view-button d-flex align-items-center justify-content-center">
                     <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                         <path d="M1 1h4v1.5H2.5V5H1zm10 0h4v4h-1.5V2.5H11zM1 11h1.5v2.5H5V15H1zm12.5 0H15v4h-4v-1.5h2.5z"/>
                         <path d="M7.25 4h1.5v4.69l1.72-1.72 1.06 1.06L8 11.56 4.47 8.03l1.06-1.06 1.72 1.72z"/>
                     </svg>
                 </a>
+                <a href="javascript:;" role="button" title="Download along a line drawn on the map"
+                    aria-label="Download along a line drawn on the map" aria-pressed="false"
+                    class="area-select-button d-flex align-items-center justify-content-center">
+                    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true">
+                        <path d="M2 13.5 6 8l4 2.5 4-7" stroke-width="5" stroke-opacity=".25" stroke-linejoin="round" stroke-linecap="round"/>
+                        <path d="M2 13.5 6 8l4 2.5 4-7" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+                    </svg>
+                </a>
             </div>`)
 
         L.DomEvent.disableClickPropagation(div)
-        div.querySelector("a").onclick = downloadView
+        div.querySelector(".download-view-button").onclick = downloadView
+        div.querySelector(".area-select-button").onclick = () => (areaSelecting ? stopAreaSelect() : startAreaSelect())
 
         return div
     }
@@ -318,9 +337,211 @@ function setDownloadViewButtonVisible(visible) {
 }
 
 function updateDownloadViewButton() {
-    const link = document.querySelector("#download-view a")
+    const link = document.querySelector("#download-view .download-view-button")
     const busy = isDownloading()
 
     link.classList.toggle("leaflet-disabled", busy)
     link.setAttribute("aria-disabled", String(busy))
+}
+
+// Selecting an area to download: a line clicked out along the route, and the cells within
+// CORRIDOR_WIDTH of it. A coach on the motorway needs the motorway, where the view around
+// it at a zoom that fits the limit takes every town either side as well.
+
+let areaSelecting = false
+let areaPoints = []
+let areaMouse = null
+let areaLayer = null
+let areaOverlay = null
+
+map.createPane("areaSelect").style.zIndex = 460
+
+class AreaSelectPanel extends L.Control {
+    onAdd = () => {
+        const div = createElementFromHTML(`
+            <div id="area-select-panel" class="leaflet-bar leaflet-control area-select-panel d-none">
+                <p class="mb-1">Click along the route to select the area either side of it to download. Right-click or Backspace takes back a point.</p>
+                <p class="mb-2 small area-select-status"></p>
+                <div class="d-flex gap-1">
+                    <button type="button" class="btn btn-sm btn-primary area-select-download">Download</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary area-select-undo">Undo</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary area-select-cancel">Cancel</button>
+                </div>
+            </div>`)
+
+        L.DomEvent.disableClickPropagation(div)
+        L.DomEvent.disableScrollPropagation(div)
+        div.querySelector(".area-select-download").onclick = downloadSelectedArea
+        div.querySelector(".area-select-undo").onclick = undoAreaPoint
+        div.querySelector(".area-select-cancel").onclick = stopAreaSelect
+
+        return div
+    }
+}
+
+new AreaSelectPanel({ position: "bottomright" }).addTo(map)
+
+// the cells of the selection not yet downloaded
+function selectedNewCells() {
+    const downloaded = new Set((downloadHistoryData?.history.flat() ?? []).map(({ x, y }) => `${x},${y}`))
+
+    return corridorCells(areaPoints, downloadGridSize).filter(({ x, y }) => !downloaded.has(`${x},${y}`))
+}
+
+function startAreaSelect() {
+    if (areaSelecting || !downloadHistoryData) return
+
+    areaSelecting = true
+    areaPoints = []
+    areaMouse = null
+
+    // Over the map's layers, so a click while drawing neither adds a way to the route nor
+    // opens a stop; the map below still pans and zooms, as the events reach its container.
+    areaOverlay = L.DomUtil.create("div", "area-select-overlay", map.getContainer())
+    // a right-click takes back the last point, rather than adding a stop there
+    L.DomEvent.on(areaOverlay, "contextmenu", (e) => {
+        L.DomEvent.stop(e)
+        undoAreaPoint()
+    })
+
+    areaLayer = L.layerGroup().addTo(map)
+    map.doubleClickZoom.disable()
+    map.on("click", onAreaClick)
+    map.on("mousemove", onAreaMouseMove)
+    map.on("dblclick", downloadSelectedArea)
+    document.addEventListener("keydown", onAreaKeyDown)
+
+    updateAreaSelect()
+}
+
+function stopAreaSelect() {
+    if (!areaSelecting) return
+
+    areaSelecting = false
+    areaPoints = []
+    areaMouse = null
+
+    areaOverlay.remove()
+    areaOverlay = null
+    areaLayer.remove()
+    areaLayer = null
+
+    map.doubleClickZoom.enable()
+    map.off("click", onAreaClick)
+    map.off("mousemove", onAreaMouseMove)
+    map.off("dblclick", downloadSelectedArea)
+    document.removeEventListener("keydown", onAreaKeyDown)
+
+    updateAreaSelect()
+}
+
+function onAreaClick(e) {
+    // the second click of a double-click, which finishes the line rather than extending it
+    const last = areaPoints.at(-1)
+    if (last && map.latLngToContainerPoint(last).distanceTo(e.containerPoint) < 5) return
+
+    areaPoints.push([e.latlng.lat, e.latlng.lng])
+    updateAreaSelect()
+}
+
+function onAreaMouseMove(e) {
+    areaMouse = e.latlng
+    updateAreaRubberBand()
+}
+
+function onAreaKeyDown(e) {
+    if (e.target.closest?.("input, textarea, select, [contenteditable]")) return
+
+    if (e.key === "Escape") stopAreaSelect()
+    else if (e.key === "Enter") downloadSelectedArea()
+    else if (e.key === "Backspace") undoAreaPoint()
+    else return
+
+    e.preventDefault()
+}
+
+function undoAreaPoint() {
+    areaPoints.pop()
+    updateAreaSelect()
+}
+
+function downloadSelectedArea() {
+    const cells = selectedNewCells()
+    if (cells.length === 0 || cells.length > downloadMaxCells || isDownloading()) return
+
+    stopAreaSelect()
+    downloadRegion({ area: cells }, "Downloading the selected area...")
+}
+
+function updateAreaRubberBand() {
+    const band = areaLayer?.rubberBand
+    if (!band) return
+
+    const last = areaPoints.at(-1)
+    band.setLatLngs(last && areaMouse ? [last, areaMouse] : [])
+}
+
+function updateAreaSelect() {
+    const button = document.querySelector("#download-view .area-select-button")
+    button.classList.toggle("area-select-active", areaSelecting)
+    button.setAttribute("aria-pressed", String(areaSelecting))
+
+    const panel = document.getElementById("area-select-panel")
+    panel.classList.toggle("d-none", !areaSelecting)
+    if (!areaSelecting) return
+
+    const cells = selectedNewCells()
+    const tooMany = cells.length > downloadMaxCells
+
+    areaLayer.clearLayers()
+    if (cells.length > 0) {
+        L.polygon(downloadedAreaRings(cells), {
+            pane: "areaSelect",
+            color: tooMany ? "#dc3545" : "#0d6efd",
+            weight: 1,
+            fillOpacity: 0.2,
+            fillRule: "evenodd",
+            interactive: false,
+        }).addTo(areaLayer)
+    }
+    if (areaPoints.length > 1) {
+        L.polyline(areaPoints, {
+            pane: "areaSelect",
+            color: "#0d6efd",
+            weight: 3,
+            interactive: false,
+        }).addTo(areaLayer)
+    }
+    for (const point of areaPoints) {
+        L.circleMarker(point, {
+            pane: "areaSelect",
+            radius: 4,
+            color: "#0d6efd",
+            fillColor: "#fff",
+            fillOpacity: 1,
+            weight: 2,
+            interactive: false,
+        }).addTo(areaLayer)
+    }
+    areaLayer.rubberBand = L.polyline([], {
+        pane: "areaSelect",
+        color: "#0d6efd",
+        weight: 2,
+        dashArray: "4 6",
+        interactive: false,
+    }).addTo(areaLayer)
+    updateAreaRubberBand()
+
+    const status = panel.querySelector(".area-select-status")
+    status.classList.toggle("text-danger", tooMany)
+    status.classList.toggle("text-body-secondary", !tooMany)
+    if (areaPoints.length === 0) status.textContent = "Double-click or press Enter to download, Esc to cancel."
+    else if (cells.length === 0) status.textContent = "Everything selected is already downloaded."
+    else if (tooMany)
+        status.textContent = `${cells.length} cells is too many to download at once (at most ${downloadMaxCells}). Undo a point and download it in parts.`
+    else status.textContent = `${cells.length} new cells. Double-click or press Enter to download.`
+
+    const download = panel.querySelector(".area-select-download")
+    download.disabled = cells.length === 0 || tooMany || isDownloading()
+    panel.querySelector(".area-select-undo").disabled = areaPoints.length === 0
 }

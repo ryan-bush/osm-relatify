@@ -789,3 +789,22 @@
   font-size: 1.25rem;
   line-height: 24px;
 }
+
+/* selecting an area to download along a line */
+.area-select-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 450;
+  cursor: crosshair;
+}
+
+.leaflet-bar a.area-select-active,
+.leaflet-bar a.area-select-active:hover {
+  background: #cfe2ff;
+}
+
+.area-select-panel {
+  max-width: 300px;
+  padding: .5em;
+  background: white;
+}

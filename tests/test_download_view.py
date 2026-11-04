@@ -10,7 +10,7 @@ is fetched or counted against the limit on one request.
 import pytest
 from fastapi import HTTPException
 
-from main import VIEW_DOWNLOAD_MAX_CELLS, view_download_targets
+from main import VIEW_DOWNLOAD_MAX_CELLS, area_download_targets, view_download_targets
 from models.bounding_box import BoundingBox
 from models.download_history import Cell
 from overpass import get_download_triggers
@@ -61,6 +61,39 @@ def test_only_new_cells_count_against_the_limit():
     downloaded = frozenset(c for c in cells if c.x < min_x + 15)
 
     assert len(view_download_targets(wide, downloaded)) <= VIEW_DOWNLOAD_MAX_CELLS
+
+
+# a corridor drawn along a motorway: one row of cells, 40 km long
+CORRIDOR = tuple(Cell(x, 5200) for x in range(40))
+
+
+def test_an_area_is_the_cells_picked():
+    assert set(area_download_targets(CORRIDOR)) == set(CORRIDOR)
+
+
+def test_an_area_leaves_out_what_is_downloaded():
+    downloaded = frozenset(CORRIDOR[:10])
+
+    assert set(area_download_targets(CORRIDOR, downloaded)) == set(CORRIDOR[10:])
+
+
+def test_an_area_lists_each_cell_once_in_a_stable_order():
+    targets = area_download_targets(CORRIDOR + CORRIDOR[::-1])
+
+    assert targets == tuple(sorted(set(CORRIDOR), key=lambda c: (c.x, c.y)))
+
+
+def test_an_area_too_large_is_refused():
+    with pytest.raises(HTTPException) as e:
+        area_download_targets(Cell(x, y) for x in range(20) for y in range(20))
+
+    assert e.value.status_code == 400
+
+
+def test_only_new_cells_of_an_area_count_against_the_limit():
+    area = tuple(Cell(x, y) for x in range(20) for y in range(20))
+
+    assert len(area_download_targets(area, frozenset(c for c in area if c.x < 15))) == 100
 
 
 class _Way:
